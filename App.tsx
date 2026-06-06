@@ -1,6 +1,3 @@
-import "react-native-url-polyfill/auto";
-import { enableScreens } from "react-native-screens";
-enableScreens(false);
 import React, { useEffect, useState } from "react";
 import {
   View,
@@ -104,6 +101,8 @@ function AuthScreen() {
         setMode("signin");
       }
     } catch (e: any) {
+      // Ignore the internal react-native-screens NONE error
+      if (e.message && e.message.includes("NONE")) return;
       Alert.alert("Error", e.message ?? "Something went wrong.");
     } finally {
       setLoading(false);

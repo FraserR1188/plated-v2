@@ -1,30 +1,23 @@
 {
   "expo": {
-    "name": "plated-v2",
-    "slug": "plated-v2",
+    "name": "plated.",
+    "slug": "plated-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
-    "ios": {
-      "supportsTablet": true
-    },
+    "userInterfaceStyle": "dark",
     "android": {
-      "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
-      "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "package": "com.yourname.plated",
+      "permissions": ["android.permission.CAMERA"]
     },
-    "web": {
-      "favicon": "./assets/favicon.png"
+    "plugins": [
+      ["expo-camera", {
+        "cameraPermission": "plated. needs camera access to scan food barcodes."
+      }]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "FILL_THIS_IN_AFTER_EAS_LOGIN"
+      }
     }
   }
 }

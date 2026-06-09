@@ -1,40 +1,51 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef } from "react";
 import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ActivityIndicator, ScrollView, KeyboardAvoidingView, Platform, Alert,
-} from 'react-native';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { NativeStackNavigationProp }          from '@react-navigation/native-stack';
-import { SafeAreaView }                       from 'react-native-safe-area-context';
-import { searchFood }                         from '../lib/openfoodfacts';
-import { useStore }                           from '../store/useStore';
-import { Colors, Spacing, Radius, Typography } from '../theme';
-import { FoodProduct, RootStackParamList, SavedIngredient, MEAL_LABELS } from '../types';
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  ActivityIndicator,
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+} from "react-native";
+import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { searchFood } from "../lib/openfoodfacts";
+import { useStore } from "../store/useStore";
+import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
+import {
+  FoodProduct,
+  RootStackParamList,
+  SavedIngredient,
+  MEAL_LABELS,
+} from "../types";
 
-type Nav   = NativeStackNavigationProp<RootStackParamList, 'AddIngredient'>;
-type Route = RouteProp<RootStackParamList, 'AddIngredient'>;
-
-type Tab = 'search' | 'library';
+type Nav = NativeStackNavigationProp<RootStackParamList, "AddIngredient">;
+type Route = RouteProp<RootStackParamList, "AddIngredient">;
+type Tab = "search" | "library";
 
 export function AddIngredientScreen() {
-  const navigation             = useNavigation<Nav>();
-  const { date, mealType }     = useRoute<Route>().params;
-  const { savedIngredients, addEntry, saveIngredient } = useStore();
+  const navigation = useNavigation<Nav>();
+  const { date, mealType } = useRoute<Route>().params;
+  const { savedIngredients, addEntry } = useStore();
 
-  const [tab,       setTab]       = useState<Tab>('search');
-  const [query,     setQuery]     = useState('');
-  const [results,   setResults]   = useState<FoodProduct[]>([]);
+  const [tab, setTab] = useState<Tab>("search");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<FoodProduct[]>([]);
   const [searching, setSearching] = useState(false);
 
-  // Manual form
-  const [name,  setName]  = useState('');
-  const [cals,  setCals]  = useState('');
-  const [prot,  setProt]  = useState('');
-  const [carbs, setCarbs] = useState('');
-  const [fat,   setFat]   = useState('');
-  const [salt,  setSalt]  = useState('');
-  const [fibre, setFibre] = useState('');
-  const [sugar, setSugar] = useState('');
+  // Manual entry fields
+  const [name, setName] = useState("");
+  const [cals, setCals] = useState("");
+  const [prot, setProt] = useState("");
+  const [carbs, setCarbs] = useState("");
+  const [fat, setFat] = useState("");
+  const [salt, setSalt] = useState("");
+  const [fibre, setFibre] = useState("");
+  const [sugar, setSugar] = useState("");
   const [saving, setSaving] = useState(false);
 
   const timer = useRef<ReturnType<typeof setTimeout>>();
@@ -42,216 +53,820 @@ export function AddIngredientScreen() {
   const handleSearch = (text: string) => {
     setQuery(text);
     clearTimeout(timer.current);
-    if (text.trim().length < 2) { setResults([]); return; }
+    if (text.trim().length < 2) {
+      setResults([]);
+      return;
+    }
     timer.current = setTimeout(async () => {
       setSearching(true);
-      try { setResults(await searchFood(text.trim())); }
-      catch { setResults([]); }
-      finally { setSearching(false); }
+      try {
+        setResults(await searchFood(text.trim()));
+      } catch {
+        setResults([]);
+      } finally {
+        setSearching(false);
+      }
     }, 600);
   };
 
-  const handleSelectProduct = (product: FoodProduct) => {
-    navigation.navigate('Product', { product, date, mealType });
-  };
+  const handleSelectProduct = (product: FoodProduct) =>
+    navigation.navigate("Product", { product, date, mealType });
 
-  // Quick-add from library — goes straight to ProductScreen with saved ingredient data
   const handleLibrarySelect = (saved: SavedIngredient) => {
     const product: FoodProduct = {
-      name: saved.name, brand: saved.brand ?? '',
-      cal_per100: saved.cal_per100, protein_per100: saved.protein_per100,
-      carbs_per100: saved.carbs_per100, fat_per100: saved.fat_per100,
-      salt_per100: saved.salt_per100, fibre_per100: saved.fibre_per100,
-      sugar_per100: saved.sugar_per100, barcode: saved.barcode, off_id: saved.off_id,
+      name: saved.name,
+      brand: saved.brand ?? "",
+      cal_per100: saved.cal_per100,
+      protein_per100: saved.protein_per100,
+      carbs_per100: saved.carbs_per100,
+      fat_per100: saved.fat_per100,
+      salt_per100: saved.salt_per100,
+      fibre_per100: saved.fibre_per100,
+      sugar_per100: saved.sugar_per100,
+      barcode: saved.barcode,
+      off_id: saved.off_id,
     };
-    navigation.navigate('Product', { product, date, mealType });
+    navigation.navigate("Product", { product, date, mealType });
   };
 
   const handleManualAdd = async () => {
     if (!name.trim() || !cals) return;
     setSaving(true);
     await addEntry({
-      date, meal_type: mealType,
-      name: name.trim(), brand: '',
+      date,
+      meal_type: mealType,
+      name: name.trim(),
+      brand: "",
       serving_g: 100,
-      calories: parseFloat(cals)  || 0,
-      protein:  parseFloat(prot)  || 0,
-      carbs:    parseFloat(carbs) || 0,
-      fat:      parseFloat(fat)   || 0,
-      salt:     parseFloat(salt)  || 0,
-      fibre:    parseFloat(fibre) || 0,
-      sugar:    parseFloat(sugar) || 0,
-      source: 'manual',
+      calories: parseFloat(cals) || 0,
+      protein: parseFloat(prot) || 0,
+      carbs: parseFloat(carbs) || 0,
+      fat: parseFloat(fat) || 0,
+      salt: parseFloat(salt) || 0,
+      fibre: parseFloat(fibre) || 0,
+      sugar: parseFloat(sugar) || 0,
+      source: "manual",
     });
     setSaving(false);
     navigation.goBack();
   };
 
-  return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+  const mealLabel = MEAL_LABELS[mealType];
+  const canAdd = name.trim().length > 0 && cals.length > 0;
 
-        {/* Header */}
+  return (
+    // Modal screen — needs bottom inset too
+    <SafeAreaView style={styles.safe} edges={["bottom"]}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        {/* ── Header ──────────────────────────────────── */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backText}>‹</Text>
-          </TouchableOpacity>
-          <View>
-            <Text style={styles.title}>Add ingredient</Text>
-            <Text style={styles.subtitle}>{MEAL_LABELS[mealType]}</Text>
+          <Pressable
+            onPress={() => navigation.goBack()}
+            style={({ pressed }) => [
+              styles.backBtn,
+              pressed && { opacity: 0.6 },
+            ]}
+            hitSlop={12}
+          >
+            <Text style={styles.backArrow}>‹</Text>
+          </Pressable>
+
+          <View style={styles.headerCentre}>
+            <Text style={styles.headerTitle}>Add ingredient</Text>
+            <View style={styles.mealPill}>
+              <Text style={styles.mealPillText}>{mealLabel}</Text>
+            </View>
           </View>
-          <TouchableOpacity style={styles.scanBtn} onPress={() => navigation.navigate('Scanner')}>
-            <Text style={styles.scanText}>📷 Scan</Text>
-          </TouchableOpacity>
+
+          <Pressable
+            style={({ pressed }) => [
+              styles.scanBtn,
+              pressed && { opacity: 0.75 },
+            ]}
+            onPress={() => navigation.navigate("Scanner")}
+          >
+            <Text style={styles.scanIcon}>⌗</Text>
+            <Text style={styles.scanLabel}>Scan</Text>
+          </Pressable>
         </View>
 
-        {/* Tabs */}
-        <View style={styles.tabs}>
-          {(['search', 'library'] as Tab[]).map((t) => (
-            <TouchableOpacity key={t} style={[styles.tab, tab === t && styles.tabActive]} onPress={() => setTab(t)}>
+        {/* ── Tab switcher ────────────────────────────── */}
+        <View style={styles.tabBar}>
+          {(["search", "library"] as Tab[]).map((t) => (
+            <Pressable
+              key={t}
+              style={[styles.tabBtn, tab === t && styles.tabBtnActive]}
+              onPress={() => setTab(t)}
+            >
               <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>
-                {t === 'search' ? '🔍 Search' : `📚 My Library (${savedIngredients.length})`}
+                {t === "search"
+                  ? "Search"
+                  : `My Library${savedIngredients.length > 0 ? ` (${savedIngredients.length})` : ""}`}
               </Text>
-            </TouchableOpacity>
+            </Pressable>
           ))}
         </View>
 
-        <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-          {tab === 'search' && (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.scroll}
+        >
+          {/* ── Search tab ──────────────────────────────── */}
+          {tab === "search" && (
             <>
-              <View style={styles.searchWrap}>
+              {/* Search input */}
+              <View style={styles.searchBox}>
+                <Text style={styles.searchIcon}>⌕</Text>
                 <TextInput
                   style={styles.searchInput}
                   value={query}
                   onChangeText={handleSearch}
-                  placeholder="Search food database…"
-                  placeholderTextColor={Colors.textDim}
+                  placeholder="Search food or brand…"
+                  placeholderTextColor={Colors.textMuted}
                   autoFocus
+                  returnKeyType="search"
                 />
-                {searching && <ActivityIndicator size="small" color={Colors.green} style={{ marginLeft: 8 }} />}
+                {searching ? (
+                  <ActivityIndicator size="small" color={Colors.green} />
+                ) : (
+                  query.length > 0 && (
+                    <Pressable
+                      onPress={() => {
+                        setQuery("");
+                        setResults([]);
+                      }}
+                      hitSlop={8}
+                    >
+                      <Text style={styles.clearBtn}>✕</Text>
+                    </Pressable>
+                  )
+                )}
               </View>
 
-              {results.map((p, i) => (
-                <TouchableOpacity key={i} style={styles.result} onPress={() => handleSelectProduct(p)} activeOpacity={0.7}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.resultName} numberOfLines={1}>{p.name}</Text>
-                    {p.brand ? <Text style={styles.resultBrand}>{p.brand}</Text> : null}
-                    <View style={styles.pillRow}>
-                      {[`${p.cal_per100} kcal`, `P ${p.protein_per100}g`, `C ${p.carbs_per100}g`, `F ${p.fat_per100}g`].map((t) => (
-                        <View key={t} style={styles.pill}><Text style={styles.pillText}>{t}</Text></View>
-                      ))}
-                      <Text style={styles.per100}>per 100g</Text>
-                    </View>
-                  </View>
-                  <Text style={styles.chevron}>›</Text>
-                </TouchableOpacity>
-              ))}
+              {/* Search results */}
+              {results.length > 0 && (
+                <View style={styles.resultsList}>
+                  {results.map((p, i) => (
+                    <Pressable
+                      key={i}
+                      style={({ pressed }) => [
+                        styles.resultRow,
+                        i < results.length - 1 && styles.resultBorder,
+                        pressed && { backgroundColor: Colors.surface2 },
+                      ]}
+                      onPress={() => handleSelectProduct(p)}
+                    >
+                      <View style={styles.resultBody}>
+                        <Text style={styles.resultName} numberOfLines={1}>
+                          {p.name}
+                        </Text>
+                        {p.brand ? (
+                          <Text style={styles.resultBrand}>{p.brand}</Text>
+                        ) : null}
+                        <View style={styles.macroRow}>
+                          <MacroPill
+                            value={`${p.cal_per100}`}
+                            unit="kcal"
+                            color={Colors.green}
+                          />
+                          <MacroPill
+                            value={`${p.protein_per100}`}
+                            label="P"
+                            unit="g"
+                            color={MacroColor.protein}
+                          />
+                          <MacroPill
+                            value={`${p.carbs_per100}`}
+                            label="C"
+                            unit="g"
+                            color={MacroColor.carbs}
+                          />
+                          <MacroPill
+                            value={`${p.fat_per100}`}
+                            label="F"
+                            unit="g"
+                            color={MacroColor.fat}
+                          />
+                          <Text style={styles.per100}>/ 100g</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.chevron}>›</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
 
-              {/* Divider + manual form */}
-              <View style={styles.divider}>
-                <View style={styles.divLine} /><Text style={styles.divText}>or enter manually</Text><View style={styles.divLine} />
+              {/* Empty search hint */}
+              {!searching && query.length >= 2 && results.length === 0 && (
+                <View style={styles.noResults}>
+                  <Text style={styles.noResultsText}>
+                    No results for "{query}"
+                  </Text>
+                  <Text style={styles.noResultsSub}>
+                    Try a different spelling or add it manually below
+                  </Text>
+                </View>
+              )}
+
+              {/* Manual entry divider */}
+              <View style={styles.dividerRow}>
+                <View style={styles.divLine} />
+                <Text style={styles.divLabel}>or add manually</Text>
+                <View style={styles.divLine} />
               </View>
+
+              {/* Manual form */}
               <View style={styles.form}>
-                <Field label="Ingredient name" value={name}  onChange={setName}  placeholder="e.g. Chicken breast" />
-                <Field label="Calories (kcal)"  value={cals}  onChange={setCals}  placeholder="0" numeric />
+                {/* Name — full width */}
+                <FormField
+                  label="Ingredient name"
+                  value={name}
+                  onChange={setName}
+                  placeholder="e.g. Chicken breast"
+                />
+
+                {/* Calories — full width, prominent */}
+                <FormField
+                  label="Calories"
+                  value={cals}
+                  onChange={setCals}
+                  placeholder="0"
+                  unit="kcal"
+                  numeric
+                  accent={Colors.green}
+                />
+
+                {/* 2-col macro rows */}
                 <View style={styles.twoCol}>
-                  <View style={{ flex: 1 }}><Field label="Protein g"  value={prot}  onChange={setProt}  placeholder="0" numeric /></View>
-                  <View style={{ flex: 1 }}><Field label="Carbs g"    value={carbs} onChange={setCarbs} placeholder="0" numeric /></View>
+                  <FormField
+                    label="Protein"
+                    value={prot}
+                    onChange={setProt}
+                    placeholder="0"
+                    unit="g"
+                    numeric
+                    accent={MacroColor.protein}
+                    half
+                  />
+                  <FormField
+                    label="Carbs"
+                    value={carbs}
+                    onChange={setCarbs}
+                    placeholder="0"
+                    unit="g"
+                    numeric
+                    accent={MacroColor.carbs}
+                    half
+                  />
                 </View>
                 <View style={styles.twoCol}>
-                  <View style={{ flex: 1 }}><Field label="Fat g"   value={fat}   onChange={setFat}   placeholder="0" numeric /></View>
-                  <View style={{ flex: 1 }}><Field label="Salt g"  value={salt}  onChange={setSalt}  placeholder="0" numeric /></View>
+                  <FormField
+                    label="Fat"
+                    value={fat}
+                    onChange={setFat}
+                    placeholder="0"
+                    unit="g"
+                    numeric
+                    accent={MacroColor.fat}
+                    half
+                  />
+                  <FormField
+                    label="Salt"
+                    value={salt}
+                    onChange={setSalt}
+                    placeholder="0"
+                    unit="g"
+                    numeric
+                    accent={MacroColor.salt}
+                    half
+                  />
                 </View>
                 <View style={styles.twoCol}>
-                  <View style={{ flex: 1 }}><Field label="Fibre g" value={fibre} onChange={setFibre} placeholder="0" numeric /></View>
-                  <View style={{ flex: 1 }}><Field label="Sugar g" value={sugar} onChange={setSugar} placeholder="0" numeric /></View>
+                  <FormField
+                    label="Fibre"
+                    value={fibre}
+                    onChange={setFibre}
+                    placeholder="0"
+                    unit="g"
+                    numeric
+                    accent={MacroColor.fibre}
+                    half
+                  />
+                  <FormField
+                    label="Sugar"
+                    value={sugar}
+                    onChange={setSugar}
+                    placeholder="0"
+                    unit="g"
+                    numeric
+                    accent={MacroColor.sugar}
+                    half
+                  />
                 </View>
-                <TouchableOpacity
-                  style={[styles.addBtn, (!name.trim() || !cals) && { opacity: 0.4 }]}
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.addBtn,
+                    !canAdd && styles.addBtnDisabled,
+                    pressed && canAdd && { opacity: 0.85 },
+                  ]}
                   onPress={handleManualAdd}
-                  disabled={!name.trim() || !cals || saving}
+                  disabled={!canAdd || saving}
                 >
-                  {saving ? <ActivityIndicator color={Colors.bg} /> : <Text style={styles.addBtnText}>Add to {MEAL_LABELS[mealType]}</Text>}
-                </TouchableOpacity>
+                  {saving ? (
+                    <ActivityIndicator color={Colors.bg} />
+                  ) : (
+                    <Text
+                      style={[
+                        styles.addBtnText,
+                        !canAdd && styles.addBtnTextDisabled,
+                      ]}
+                    >
+                      Add to {mealLabel}
+                    </Text>
+                  )}
+                </Pressable>
               </View>
             </>
           )}
 
-          {tab === 'library' && (
-            <View style={{ padding: Spacing.md }}>
-              {savedIngredients.length === 0 ? (
-                <View style={styles.empty}>
-                  <Text style={styles.emptyIcon}>📚</Text>
-                  <Text style={styles.emptyTitle}>Library is empty</Text>
-                  <Text style={styles.emptySub}>Ingredients you search or scan will be saved here for quick re-adding</Text>
-                </View>
-              ) : (
-                savedIngredients.map((item) => (
-                  <TouchableOpacity key={item.id} style={styles.result} onPress={() => handleLibrarySelect(item)} activeOpacity={0.7}>
-                    <View style={{ flex: 1 }}>
+          {/* ── Library tab ─────────────────────────────── */}
+          {tab === "library" &&
+            (savedIngredients.length === 0 ? (
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyEmoji}>📚</Text>
+                <Text style={styles.emptyTitle}>Library is empty</Text>
+                <Text style={styles.emptySub}>
+                  Ingredients you search or scan will be saved here for quick
+                  re-use.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.resultsList}>
+                {savedIngredients.map((item, i) => (
+                  <Pressable
+                    key={item.id}
+                    style={({ pressed }) => [
+                      styles.resultRow,
+                      i < savedIngredients.length - 1 && styles.resultBorder,
+                      pressed && { backgroundColor: Colors.surface2 },
+                    ]}
+                    onPress={() => handleLibrarySelect(item)}
+                  >
+                    <View style={styles.resultBody}>
                       <Text style={styles.resultName}>{item.name}</Text>
-                      {item.brand ? <Text style={styles.resultBrand}>{item.brand}</Text> : null}
-                      <View style={styles.pillRow}>
-                        {[`${Math.round(item.cal_per100)} kcal`, `P ${item.protein_per100}g`, `C ${item.carbs_per100}g`, `F ${item.fat_per100}g`].map((t) => (
-                          <View key={t} style={styles.pill}><Text style={styles.pillText}>{t}</Text></View>
-                        ))}
-                        <Text style={styles.per100}>per 100g · used {item.use_count}×</Text>
+                      {item.brand ? (
+                        <Text style={styles.resultBrand}>{item.brand}</Text>
+                      ) : null}
+                      <View style={styles.macroRow}>
+                        <MacroPill
+                          value={`${Math.round(item.cal_per100)}`}
+                          unit="kcal"
+                          color={Colors.green}
+                        />
+                        <MacroPill
+                          value={`${item.protein_per100}`}
+                          label="P"
+                          unit="g"
+                          color={MacroColor.protein}
+                        />
+                        <MacroPill
+                          value={`${item.carbs_per100}`}
+                          label="C"
+                          unit="g"
+                          color={MacroColor.carbs}
+                        />
+                        <MacroPill
+                          value={`${item.fat_per100}`}
+                          label="F"
+                          unit="g"
+                          color={MacroColor.fat}
+                        />
+                        <Text style={styles.per100}>· {item.use_count}×</Text>
                       </View>
                     </View>
                     <Text style={styles.chevron}>›</Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </View>
-          )}
+                  </Pressable>
+                ))}
+              </View>
+            ))}
+
+          <View style={{ height: Spacing.xxl }} />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
-function Field({ label, value, onChange, placeholder, numeric }: { label: string; value: string; onChange: (t: string) => void; placeholder: string; numeric?: boolean }) {
+// ─── MacroPill ───────────────────────────────────────────────────────────────
+
+function MacroPill({
+  value,
+  label,
+  unit,
+  color,
+}: {
+  value: string;
+  label?: string;
+  unit: string;
+  color: string;
+}) {
   return (
-    <View style={{ marginBottom: Spacing.sm }}>
-      <Text style={{ fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.textMuted, marginBottom: 3, textTransform: 'uppercase', letterSpacing: 0.5 }}>{label}</Text>
-      <TextInput style={{ backgroundColor: Colors.surface2, borderRadius: Radius.sm, padding: Spacing.sm + 2, fontSize: Typography.base, color: Colors.text }} value={value} onChangeText={onChange} placeholder={placeholder} placeholderTextColor={Colors.textDim} keyboardType={numeric ? 'decimal-pad' : 'default'} />
+    <View style={[pillStyles.pill, { backgroundColor: `${color}18` }]}>
+      {label && <Text style={[pillStyles.label, { color }]}>{label} </Text>}
+      <Text style={[pillStyles.value, { color }]}>{value}</Text>
+      <Text style={[pillStyles.unit, { color }]}>{unit}</Text>
     </View>
   );
 }
 
+const pillStyles = StyleSheet.create({
+  pill: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    borderRadius: Radius.full,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  label: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.bold,
+    letterSpacing: 0.2,
+  },
+  value: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+  },
+  unit: {
+    fontSize: 9,
+    fontWeight: Typography.medium,
+    marginLeft: 1,
+  },
+});
+
+// ─── FormField ───────────────────────────────────────────────────────────────
+
+function FormField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  unit,
+  numeric,
+  accent,
+  half,
+}: {
+  label: string;
+  value: string;
+  onChange: (t: string) => void;
+  placeholder: string;
+  unit?: string;
+  numeric?: boolean;
+  accent?: string;
+  half?: boolean;
+}) {
+  return (
+    <View style={[fieldStyles.wrap, half && fieldStyles.half]}>
+      <Text style={fieldStyles.label}>{label}</Text>
+      <View
+        style={[fieldStyles.inputRow, accent && { borderColor: `${accent}30` }]}
+      >
+        <TextInput
+          style={fieldStyles.input}
+          value={value}
+          onChangeText={onChange}
+          placeholder={placeholder}
+          placeholderTextColor={Colors.textMuted}
+          keyboardType={numeric ? "decimal-pad" : "default"}
+        />
+        {unit && (
+          <Text style={[fieldStyles.unit, accent && { color: accent }]}>
+            {unit}
+          </Text>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const fieldStyles = StyleSheet.create({
+  wrap: {
+    marginBottom: Spacing.sm,
+  },
+  half: {
+    flex: 1,
+  },
+  label: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 5,
+  },
+  inputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 8,
+  },
+  input: {
+    flex: 1,
+    fontSize: Typography.base,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+  },
+  unit: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.textMuted,
+    marginLeft: 4,
+  },
+});
+
+// ─── Main styles ─────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  safe:        { flex: 1, backgroundColor: Colors.bg },
-  header:      { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, paddingBottom: Spacing.sm, gap: Spacing.sm },
-  backBtn:     { padding: Spacing.xs },
-  backText:    { fontSize: 28, color: Colors.textMuted, lineHeight: 32 },
-  title:       { fontSize: Typography.md, fontWeight: Typography.semibold, color: Colors.text },
-  subtitle:    { fontSize: Typography.xs, color: Colors.green, fontWeight: Typography.medium },
-  scanBtn:     { marginLeft: 'auto', backgroundColor: Colors.surface, borderRadius: Radius.full, paddingHorizontal: Spacing.md, paddingVertical: Spacing.xs },
-  scanText:    { fontSize: Typography.sm, color: Colors.text },
-  tabs:        { flexDirection: 'row', margin: Spacing.md, marginTop: 0, backgroundColor: Colors.surface, borderRadius: Radius.full, padding: 4 },
-  tab:         { flex: 1, paddingVertical: 8, borderRadius: Radius.full, alignItems: 'center' },
-  tabActive:   { backgroundColor: Colors.green },
-  tabText:     { fontSize: Typography.sm, color: Colors.textMuted, fontWeight: Typography.medium },
-  tabTextActive:{ color: Colors.bg, fontWeight: Typography.bold },
-  searchWrap:  { flexDirection: 'row', alignItems: 'center', marginHorizontal: Spacing.md, backgroundColor: Colors.surface, borderRadius: Radius.md, paddingHorizontal: Spacing.md, marginBottom: Spacing.sm },
-  searchInput: { flex: 1, fontSize: Typography.base, color: Colors.text, paddingVertical: Spacing.md },
-  result:      { backgroundColor: Colors.surface, borderRadius: Radius.md, padding: Spacing.md, marginHorizontal: Spacing.md, marginBottom: Spacing.sm, flexDirection: 'row', alignItems: 'center' },
-  resultName:  { fontSize: Typography.base, fontWeight: Typography.semibold, color: Colors.text, marginBottom: 2 },
-  resultBrand: { fontSize: Typography.xs, color: Colors.textMuted, marginBottom: 4 },
-  pillRow:     { flexDirection: 'row', flexWrap: 'wrap', gap: 4, alignItems: 'center' },
-  pill:        { backgroundColor: Colors.surface2, borderRadius: Radius.full, paddingHorizontal: 8, paddingVertical: 2 },
-  pillText:    { fontSize: Typography.xs, color: Colors.textMuted },
-  per100:      { fontSize: Typography.xs, color: Colors.textDim },
-  chevron:     { fontSize: Typography.lg, color: Colors.textDim, paddingLeft: Spacing.sm },
-  divider:     { flexDirection: 'row', alignItems: 'center', margin: Spacing.md, gap: Spacing.sm },
-  divLine:     { flex: 1, height: 1, backgroundColor: Colors.border },
-  divText:     { fontSize: Typography.xs, color: Colors.textMuted, fontWeight: Typography.medium },
-  form:        { padding: Spacing.md, paddingTop: 0 },
-  twoCol:      { flexDirection: 'row', gap: Spacing.sm },
-  addBtn:      { backgroundColor: Colors.green, borderRadius: Radius.xl, paddingVertical: 14, alignItems: 'center', marginTop: Spacing.sm },
-  addBtnText:  { fontSize: Typography.md, fontWeight: Typography.bold, color: Colors.bg },
-  empty:       { alignItems: 'center', paddingVertical: Spacing.xl },
-  emptyIcon:   { fontSize: 40, marginBottom: Spacing.sm },
-  emptyTitle:  { fontSize: Typography.base, fontWeight: Typography.semibold, color: Colors.text, marginBottom: 4 },
-  emptySub:    { fontSize: Typography.sm, color: Colors.textMuted, textAlign: 'center', lineHeight: 20 },
+  safe: {
+    flex: 1,
+    backgroundColor: Colors.bg,
+  },
+  scroll: {
+    paddingHorizontal: Spacing.md,
+  },
+
+  // Header
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  backArrow: {
+    fontSize: 22,
+    color: Colors.textSub,
+    lineHeight: 26,
+    marginTop: -2,
+  },
+  headerCentre: {
+    flex: 1,
+    alignItems: "flex-start",
+    gap: 3,
+  },
+  headerTitle: {
+    fontSize: Typography.md,
+    fontWeight: Typography.bold,
+    color: Colors.text,
+    letterSpacing: -0.3,
+  },
+  mealPill: {
+    backgroundColor: Colors.greenSoft,
+    borderRadius: Radius.full,
+    paddingHorizontal: 9,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: `${Colors.green}35`,
+  },
+  mealPillText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.green,
+  },
+  scanBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 7,
+  },
+  scanIcon: {
+    fontSize: 14,
+    color: Colors.textSub,
+  },
+  scanLabel: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.textSub,
+  },
+
+  // Tab bar
+  tabBar: {
+    flexDirection: "row",
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 3,
+  },
+  tabBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: Radius.full,
+    alignItems: "center",
+  },
+  tabBtnActive: {
+    backgroundColor: Colors.green,
+  },
+  tabText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.medium,
+    color: Colors.textSub,
+  },
+  tabTextActive: {
+    color: Colors.bg,
+    fontWeight: Typography.bold,
+  },
+
+  // Search box
+  searchBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+    gap: Spacing.sm,
+  },
+  searchIcon: {
+    fontSize: 18,
+    color: Colors.textMuted,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: Typography.base,
+    color: Colors.text,
+    paddingVertical: 13,
+  },
+  clearBtn: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    paddingLeft: 4,
+  },
+
+  // Results list
+  resultsList: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: Spacing.md,
+    overflow: "hidden",
+  },
+  resultRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: Spacing.md,
+  },
+  resultBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderSub,
+  },
+  resultBody: {
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  resultName: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+    letterSpacing: -0.1,
+    marginBottom: 2,
+  },
+  resultBrand: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+    marginBottom: 5,
+  },
+  macroRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 4,
+  },
+  per100: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+  },
+  chevron: {
+    fontSize: Typography.lg,
+    color: Colors.textDim,
+  },
+
+  // No results
+  noResults: {
+    alignItems: "center",
+    paddingVertical: Spacing.lg,
+    gap: 4,
+  },
+  noResultsText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+    color: Colors.textSub,
+  },
+  noResultsSub: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    textAlign: "center",
+  },
+
+  // Divider
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    marginVertical: Spacing.md,
+  },
+  divLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Colors.border,
+  },
+  divLabel: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+  },
+
+  // Form
+  form: {
+    gap: 0,
+  },
+  twoCol: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+  },
+
+  // Add button
+  addBtn: {
+    backgroundColor: Colors.green,
+    borderRadius: Radius.full,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginTop: Spacing.sm,
+  },
+  addBtnDisabled: {
+    backgroundColor: Colors.surface2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  addBtnText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    color: Colors.bg,
+  },
+  addBtnTextDisabled: {
+    color: Colors.textMuted,
+  },
+
+  // Empty state
+  emptyState: {
+    alignItems: "center",
+    paddingVertical: Spacing.xxl,
+    gap: Spacing.sm,
+  },
+  emptyEmoji: {
+    fontSize: 40,
+    marginBottom: Spacing.xs,
+  },
+  emptyTitle: {
+    fontSize: Typography.md,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+  },
+  emptySub: {
+    fontSize: Typography.sm,
+    color: Colors.textSub,
+    textAlign: "center",
+    lineHeight: 20,
+    maxWidth: 260,
+  },
 });

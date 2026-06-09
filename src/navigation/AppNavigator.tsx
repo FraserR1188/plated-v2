@@ -87,7 +87,7 @@ export function AppNavigator() {
       <Stack.Navigator
         screenOptions={{
           headerShown: false,
-          cardStyle: { backgroundColor: Colors.bg },
+          contentStyle: { backgroundColor: Colors.bg },
         }}
       >
         <Stack.Screen name="MainTabs" component={MainTabs} />

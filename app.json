@@ -1,23 +1,31 @@
 {
   "expo": {
-    "name": "plated.",
+    "name": "plated",
     "slug": "plated-app",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "android": {
       "package": "com.yourname.plated",
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "plugins": [
-      ["expo-camera", {
-        "cameraPermission": "plated. needs camera access to scan food barcodes."
-      }]
+      "expo-dev-client",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "plated. needs camera access to scan food barcodes."
+        }
+      ]
     ],
     "extra": {
       "eas": {
-        "projectId": "FILL_THIS_IN_AFTER_EAS_LOGIN"
+        "projectId": "78f8ff94-9f52-4fd1-b9df-289dd06f91a5"
       }
-    }
+    },
+    "owner": "fraserr1188"
   }
 }

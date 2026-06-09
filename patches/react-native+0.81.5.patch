@@ -1,0 +1,67 @@
+diff --git a/node_modules/react-native/src/private/webapis/dom/events/Event.js b/node_modules/react-native/src/private/webapis/dom/events/Event.js
+index 6f61673..be48440 100644
+--- a/node_modules/react-native/src/private/webapis/dom/events/Event.js
++++ b/node_modules/react-native/src/private/webapis/dom/events/Event.js
+@@ -182,53 +182,15 @@ export default class Event {
+   }
+ }
+ 
+-// $FlowExpectedError[cannot-write]
+-Object.defineProperty(Event, 'NONE', {
+-  enumerable: true,
+-  value: 0,
+-});
+-
+-// $FlowExpectedError[cannot-write]
+-Object.defineProperty(Event.prototype, 'NONE', {
+-  enumerable: true,
+-  value: 0,
+-});
+-
+-// $FlowExpectedError[cannot-write]
+-Object.defineProperty(Event, 'CAPTURING_PHASE', {
+-  enumerable: true,
+-  value: 1,
+-});
+-
+-// $FlowExpectedError[cannot-write]
+-Object.defineProperty(Event.prototype, 'CAPTURING_PHASE', {
+-  enumerable: true,
+-  value: 1,
+-});
+-
+-// $FlowExpectedError[cannot-write]
+-Object.defineProperty(Event, 'AT_TARGET', {
+-  enumerable: true,
+-  value: 2,
+-});
+-
+-// $FlowExpectedError[cannot-write]
+-Object.defineProperty(Event.prototype, 'AT_TARGET', {
+-  enumerable: true,
+-  value: 2,
+-});
+-
+-// $FlowExpectedError[cannot-write]
+-Object.defineProperty(Event, 'BUBBLING_PHASE', {
+-  enumerable: true,
+-  value: 3,
+-});
+-
+-// $FlowExpectedError[cannot-write]
+-Object.defineProperty(Event.prototype, 'BUBBLING_PHASE', {
+-  enumerable: true,
+-  value: 3,
+-});
++Object.defineProperty(Event, 'NONE', { value: 0, configurable: true, writable: true });
++Object.defineProperty(Event, 'CAPTURING_PHASE', { value: 1, configurable: true, writable: true });
++Object.defineProperty(Event, 'AT_TARGET', { value: 2, configurable: true, writable: true });
++Object.defineProperty(Event, 'BUBBLING_PHASE', { value: 3, configurable: true, writable: true });
++
++Object.defineProperty(Event.prototype, 'NONE', { value: 0, configurable: true, writable: true });
++Object.defineProperty(Event.prototype, 'CAPTURING_PHASE', { value: 1, configurable: true, writable: true });
++Object.defineProperty(Event.prototype, 'AT_TARGET', { value: 2, configurable: true, writable: true });
++Object.defineProperty(Event.prototype, 'BUBBLING_PHASE', { value: 3, configurable: true, writable: true });
+ 
+ export type EventPhase =
+   | (typeof Event)['NONE']

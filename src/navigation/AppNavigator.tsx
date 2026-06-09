@@ -1,6 +1,6 @@
 import React from "react";
 import { Text } from "react-native";
-import { NavigationContainer } from "@react-navigation/native";
+import { NavigationContainer, DarkTheme } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { TodayScreen } from "../screens/TodayScreen";
@@ -73,8 +73,10 @@ export function AppNavigator() {
   return (
     <NavigationContainer
       theme={{
+        ...DarkTheme,
         dark: true,
         colors: {
+          ...DarkTheme.colors,
           background: Colors.bg,
           card: Colors.surface,
           text: Colors.text,

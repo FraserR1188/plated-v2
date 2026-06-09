@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "plated",
-    "slug": "plated-app",
+    "slug": "plated-v2",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
@@ -23,7 +23,7 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "78f8ff94-9f52-4fd1-b9df-289dd06f91a5"
+        "projectId": "7b2c1a05-5a75-4a60-80bf-a09d4e09d768"
       }
     },
     "owner": "fraserr1188"

@@ -15,7 +15,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { CalorieRing } from "../components/CalorieRing";
 import { MacroBar } from "../components/MacroBar";
 import { useStore, todayKey } from "../store/useStore";
-import { Colors, Spacing, Radius, Typography, Shadow } from "../theme";
+import { Colors, Spacing, Radius, Typography } from "../theme";
 import {
   RootStackParamList,
   MealEntry,

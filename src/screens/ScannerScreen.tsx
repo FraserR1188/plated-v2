@@ -8,15 +8,16 @@ import {
   Animated,
 } from "react-native";
 import { Camera, CameraView } from "expo-camera";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { lookupBarcode } from "../lib/openfoodfacts";
 import { Colors, Spacing, Radius, Typography } from "../theme";
 import { RootStackParamList } from "../types";
-import { todayKey } from "../store/useStore";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Scanner">;
+type Route = RouteProp<RootStackParamList, "Scanner">;
 
 const VF_WIDTH = 260;
 const VF_HEIGHT = 160;
@@ -25,12 +26,13 @@ const CORNER_W = 3;
 
 export function ScannerScreen() {
   const navigation = useNavigation<Nav>();
+  const { date, mealType } = useRoute<Route>().params; // ← read params
+  const insets = useSafeAreaInsets();
   const [hasPermission, setPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Scanning line animation
   const scanLine = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -68,11 +70,8 @@ export function ScannerScreen() {
     try {
       const product = await lookupBarcode(data);
       if (product) {
-        navigation.replace("Product", {
-          product,
-          date: todayKey(),
-          mealType: "breakfast",
-        });
+        // ← now uses the real date + mealType from params
+        navigation.replace("Product", { product, date, mealType });
       } else {
         setError(
           `No product found for barcode ${data}.\nTry searching by name instead.`,
@@ -90,7 +89,7 @@ export function ScannerScreen() {
     setError("");
   };
 
-  // ── Permission loading ──────────────────────────────────────────────────────
+  // ── Permission loading ────────────────────────────────────────────────────
   if (hasPermission === null) {
     return (
       <SafeAreaView style={styles.permSafe}>
@@ -102,7 +101,7 @@ export function ScannerScreen() {
     );
   }
 
-  // ── Permission denied ───────────────────────────────────────────────────────
+  // ── Permission denied ─────────────────────────────────────────────────────
   if (!hasPermission) {
     return (
       <SafeAreaView style={styles.permSafe}>
@@ -127,7 +126,7 @@ export function ScannerScreen() {
     );
   }
 
-  // ── Camera view ─────────────────────────────────────────────────────────────
+  // ── Camera view ───────────────────────────────────────────────────────────
   const scanLineTranslateY = scanLine.interpolate({
     inputRange: [0, 1],
     outputRange: [0, VF_HEIGHT - 2],
@@ -153,26 +152,21 @@ export function ScannerScreen() {
         }}
       />
 
-      {/* Dark vignette overlay — everything except the viewfinder */}
+      {/* Vignette overlay */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        {/* Top mask */}
-        <View style={styles.maskTop} />
+        <View style={[styles.maskTop, { height: insets.top + 60 }]} />
         <View style={styles.maskMiddleRow}>
-          {/* Left mask */}
           <View style={styles.maskSide} />
-          {/* Clear viewfinder hole */}
           <View style={styles.vfHole} />
-          {/* Right mask */}
           <View style={styles.maskSide} />
         </View>
-        {/* Bottom mask */}
         <View style={styles.maskBottom} />
       </View>
 
       {/* UI layer */}
       <SafeAreaView style={styles.ui}>
-        {/* ── Top bar ──────────────────────────────────── */}
-        <View style={styles.topBar}>
+        {/* Top bar */}
+        <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
           <Pressable
             style={({ pressed }) => [
               styles.closeBtn,
@@ -184,20 +178,17 @@ export function ScannerScreen() {
             <Text style={styles.closeTxt}>✕</Text>
           </Pressable>
           <Text style={styles.topTitle}>Scan barcode</Text>
-          {/* Spacer to balance close button */}
           <View style={{ width: 40 }} />
         </View>
 
-        {/* ── Viewfinder ───────────────────────────────── */}
+        {/* Viewfinder */}
         <View style={styles.vfWrap}>
           <View style={[styles.vf, { width: VF_WIDTH, height: VF_HEIGHT }]}>
-            {/* Corner brackets */}
             <Corner position="tl" />
             <Corner position="tr" />
             <Corner position="bl" />
             <Corner position="br" />
 
-            {/* Animated scan line */}
             {!scanned && !loading && (
               <Animated.View
                 style={[
@@ -207,12 +198,11 @@ export function ScannerScreen() {
               />
             )}
 
-            {/* Scanned flash */}
             {scanned && !error && <View style={styles.scannedFlash} />}
           </View>
         </View>
 
-        {/* ── Bottom status area ───────────────────────── */}
+        {/* Bottom status */}
         <View style={styles.bottom}>
           {loading ? (
             <View style={styles.statusCard}>
@@ -257,14 +247,13 @@ export function ScannerScreen() {
   );
 }
 
-// ─── Corner bracket component ────────────────────────────────────────────────
+// ─── Corner bracket ───────────────────────────────────────────────────────────
 
 type CornerPos = "tl" | "tr" | "bl" | "br";
 
 function Corner({ position }: { position: CornerPos }) {
   const isTop = position[0] === "t";
   const isLeft = position[1] === "l";
-
   return (
     <View
       style={[
@@ -286,22 +275,12 @@ function Corner({ position }: { position: CornerPos }) {
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
-
-// Viewfinder vertical position from top of screen
-const VF_TOP_OFFSET = 180;
+// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: "#000",
-  },
+  root: { flex: 1, backgroundColor: "#000" },
 
-  // Permission screens
-  permSafe: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-  },
+  permSafe: { flex: 1, backgroundColor: Colors.bg },
   centred: {
     flex: 1,
     alignItems: "center",
@@ -309,10 +288,7 @@ const styles = StyleSheet.create({
     padding: Spacing.xl,
     gap: Spacing.md,
   },
-  permEmoji: {
-    fontSize: 48,
-    marginBottom: Spacing.xs,
-  },
+  permEmoji: { fontSize: 48, marginBottom: Spacing.xs },
   permTitle: {
     fontSize: Typography.md,
     fontWeight: Typography.bold,
@@ -341,40 +317,18 @@ const styles = StyleSheet.create({
     fontSize: Typography.base,
   },
 
-  // Vignette masks — punch a hole for the viewfinder
-  maskTop: {
-    height: VF_TOP_OFFSET,
-    backgroundColor: "rgba(0,0,0,0.65)",
-  },
-  maskMiddleRow: {
-    flexDirection: "row",
-    height: VF_HEIGHT,
-  },
-  maskSide: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.65)",
-  },
-  vfHole: {
-    width: VF_WIDTH,
-  },
-  maskBottom: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.65)",
-  },
+  maskTop: { backgroundColor: "rgba(0,0,0,0.65)" }, // height set dynamically
+  maskMiddleRow: { flexDirection: "row", height: VF_HEIGHT },
+  maskSide: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)" },
+  vfHole: { width: VF_WIDTH },
+  maskBottom: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)" },
 
-  // UI overlay
-  ui: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: "space-between",
-  },
-
-  // Top bar
+  ui: { ...StyleSheet.absoluteFillObject, justifyContent: "space-between" },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.sm,
     paddingBottom: Spacing.md,
   },
   closeBtn: {
@@ -399,15 +353,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
 
-  // Viewfinder
-  vfWrap: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  vf: {
-    position: "relative",
-  },
+  vfWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
+  vf: { position: "relative" },
   corner: {
     position: "absolute",
     width: CORNER,
@@ -415,7 +362,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.green,
   },
 
-  // Animated scan line
   scanLine: {
     position: "absolute",
     left: 8,
@@ -430,15 +376,12 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 4,
   },
-
-  // Scanned flash
   scannedFlash: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: `${Colors.green}30`,
     borderRadius: 2,
   },
 
-  // Bottom area
   bottom: {
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.xl,
@@ -447,8 +390,6 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
     paddingTop: Spacing.lg,
   },
-
-  // Hint card
   hintCard: {
     backgroundColor: "rgba(0,0,0,0.6)",
     borderRadius: Radius.lg,
@@ -465,8 +406,6 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontWeight: Typography.medium,
   },
-
-  // Status card (loading)
   statusCard: {
     flexDirection: "row",
     gap: Spacing.sm,
@@ -483,8 +422,6 @@ const styles = StyleSheet.create({
     fontSize: Typography.base,
     fontWeight: Typography.medium,
   },
-
-  // Error card
   errorCard: {
     backgroundColor: "rgba(0,0,0,0.88)",
     borderRadius: Radius.lg,
@@ -495,9 +432,7 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     width: "100%",
   },
-  errorEmoji: {
-    fontSize: 28,
-  },
+  errorEmoji: { fontSize: 28 },
   errorText: {
     color: "rgba(255,255,255,0.75)",
     fontSize: Typography.sm,

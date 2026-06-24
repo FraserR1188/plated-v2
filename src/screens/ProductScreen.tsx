@@ -11,6 +11,7 @@ import {
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context"; // ← ADD
 import { useStore } from "../store/useStore";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
 import { RootStackParamList, MEAL_LABELS } from "../types";
@@ -24,6 +25,7 @@ export function ProductScreen() {
   const navigation = useNavigation<Nav>();
   const { product, date, mealType } = useRoute<Route>().params;
   const { addEntry, saveIngredient } = useStore();
+  const insets = useSafeAreaInsets(); // ← ADD
   const [serving, setServing] = useState("100");
   const [saving, setSaving] = useState(false);
 
@@ -68,7 +70,6 @@ export function ProductScreen() {
   const mealLabel = MEAL_LABELS[mealType];
   const canAdd = g > 0;
 
-  // Per-100g macro definitions for the reference card
   const macroRows: {
     key: string;
     label: string;
@@ -184,7 +185,8 @@ export function ProductScreen() {
         contentContainerStyle={styles.scroll}
       >
         {/* ── Header ──────────────────────────────────── */}
-        <View style={styles.header}>
+        {/* ↓ paddingTop uses insets.top so header clears the status bar */}
+        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable
             onPress={() => navigation.goBack()}
             style={({ pressed }) => [
@@ -205,19 +207,12 @@ export function ProductScreen() {
 
         {/* ── Product identity card ───────────────────── */}
         <View style={styles.productCard}>
-          {/* Name + brand */}
           <Text style={styles.productName}>{product.name}</Text>
           {product.brand ? (
             <Text style={styles.productBrand}>{product.brand}</Text>
           ) : null}
-
-          {/* Divider */}
           <View style={styles.cardDivider} />
-
-          {/* Per 100g label */}
           <Text style={styles.refLabel}>Per 100g</Text>
-
-          {/* Macro grid — 4 columns */}
           <View style={styles.macroGrid}>
             {macroRows.map((m) => (
               <View
@@ -237,8 +232,6 @@ export function ProductScreen() {
         {/* ── Serving size card ───────────────────────── */}
         <View style={styles.card}>
           <Text style={styles.cardSectionLabel}>Serving size</Text>
-
-          {/* Large numeric input */}
           <View style={styles.servingRow}>
             <TextInput
               style={styles.servingInput}
@@ -249,8 +242,6 @@ export function ProductScreen() {
             />
             <Text style={styles.servingUnit}>g</Text>
           </View>
-
-          {/* Preset buttons */}
           <View style={styles.presets}>
             {PRESETS.map((v) => {
               const active = serving === String(v);
@@ -280,24 +271,17 @@ export function ProductScreen() {
 
         {/* ── Live preview card ───────────────────────── */}
         <View style={styles.card}>
-          {/* Header row */}
           <View style={styles.previewHeader}>
             <Text style={styles.cardSectionLabel}>Nutrition preview</Text>
             <View style={styles.previewServingBadge}>
               <Text style={styles.previewServingText}>for {g || 0}g</Text>
             </View>
           </View>
-
-          {/* Calorie hero row */}
           <View style={styles.calRow}>
             <Text style={styles.calValue}>{preview.calories}</Text>
             <Text style={styles.calUnit}>kcal</Text>
           </View>
-
-          {/* Divider */}
           <View style={styles.cardDivider} />
-
-          {/* Secondary macros grid */}
           <View style={styles.previewGrid}>
             {previewRows.slice(1).map((m) => (
               <View key={m.label} style={styles.previewCell}>
@@ -311,7 +295,6 @@ export function ProductScreen() {
           </View>
         </View>
 
-        {/* Scroll padding for FAB */}
         <View style={{ height: 100 }} />
       </ScrollView>
 
@@ -353,7 +336,7 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.sm,
   },
 
-  // Header
+  // Header — paddingTop applied inline via insets
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -437,7 +420,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
 
-  // Macro grid — 4 per row
+  // Macro grid
   macroGrid: {
     flexDirection: "row",
     flexWrap: "wrap",

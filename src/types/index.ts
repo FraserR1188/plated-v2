@@ -2,28 +2,33 @@
 // Shared TypeScript types
 // ================================================================
 
-export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snacks';
+export type MealType = "breakfast" | "lunch" | "dinner" | "snacks";
 
-export const MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snacks'];
+export const MEAL_TYPES: MealType[] = [
+  "breakfast",
+  "lunch",
+  "dinner",
+  "snacks",
+];
 
 export const MEAL_LABELS: Record<MealType, string> = {
-  breakfast: 'Breakfast',
-  lunch:     'Lunch',
-  dinner:    'Dinner',
-  snacks:    'Snacks',
+  breakfast: "Breakfast",
+  lunch: "Lunch",
+  dinner: "Dinner",
+  snacks: "Snacks",
 };
 
 export const MEAL_ICONS: Record<MealType, string> = {
-  breakfast: '🌅',
-  lunch:     '☀️',
-  dinner:    '🌙',
-  snacks:    '🍎',
+  breakfast: "🌅",
+  lunch: "☀️",
+  dinner: "🌙",
+  snacks: "🍎",
 };
 
 export interface MealEntry {
   id: string;
   user_id: string;
-  date: string;         // 'YYYY-MM-DD'
+  date: string; // 'YYYY-MM-DD'
   logged_at: string;
   meal_type: MealType;
   name: string;
@@ -36,7 +41,7 @@ export interface MealEntry {
   salt: number;
   fibre: number;
   sugar: number;
-  source: 'manual' | 'search' | 'barcode' | 'library';
+  source: "manual" | "search" | "barcode" | "library";
   barcode?: string;
   off_id?: string;
   saved_ingredient_id?: string;
@@ -97,14 +102,14 @@ export interface FoodProduct {
 
 // Navigation
 export type RootStackParamList = {
-  MainTabs:      undefined;
+  MainTabs: undefined;
   AddIngredient: { date: string; mealType: MealType };
-  Scanner:       undefined;
-  Product:       { product: FoodProduct; date: string; mealType: MealType };
+  Scanner: { date: string; mealType: MealType };
+  Product: { product: FoodProduct; date: string; mealType: MealType };
 };
 
 export type BottomTabParamList = {
-  Today:    undefined;
-  History:  undefined;
+  Today: undefined;
+  History: undefined;
   Settings: undefined;
 };

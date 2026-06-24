@@ -13,6 +13,7 @@ import {
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useSafeAreaInsets } from "react-native-safe-area-context"; // ← ADD
 import { searchFood } from "../lib/openfoodfacts";
 import { useStore } from "../store/useStore";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
@@ -31,6 +32,7 @@ export function AddIngredientScreen() {
   const navigation = useNavigation<Nav>();
   const { date, mealType } = useRoute<Route>().params;
   const { savedIngredients, addEntry } = useStore();
+  const insets = useSafeAreaInsets(); // ← ADD
 
   const [tab, setTab] = useState<Tab>("search");
   const [query, setQuery] = useState("");
@@ -115,14 +117,14 @@ export function AddIngredientScreen() {
   const canAdd = name.trim().length > 0 && cals.length > 0;
 
   return (
-    // Modal screen — needs bottom inset too
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         {/* ── Header ──────────────────────────────────── */}
-        <View style={styles.header}>
+        {/* ↓ paddingTop now uses insets.top so header clears the status bar */}
+        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable
             onPress={() => navigation.goBack()}
             style={({ pressed }) => [
@@ -146,7 +148,7 @@ export function AddIngredientScreen() {
               styles.scanBtn,
               pressed && { opacity: 0.75 },
             ]}
-            onPress={() => navigation.navigate("Scanner")}
+            onPress={() => navigation.navigate("Scanner", { date, mealType })}
           >
             <Text style={styles.scanIcon}>⌗</Text>
             <Text style={styles.scanLabel}>Scan</Text>
@@ -178,7 +180,6 @@ export function AddIngredientScreen() {
           {/* ── Search tab ──────────────────────────────── */}
           {tab === "search" && (
             <>
-              {/* Search input */}
               <View style={styles.searchBox}>
                 <Text style={styles.searchIcon}>⌕</Text>
                 <TextInput
@@ -207,7 +208,6 @@ export function AddIngredientScreen() {
                 )}
               </View>
 
-              {/* Search results */}
               {results.length > 0 && (
                 <View style={styles.resultsList}>
                   {results.map((p, i) => (
@@ -260,7 +260,6 @@ export function AddIngredientScreen() {
                 </View>
               )}
 
-              {/* Empty search hint */}
               {!searching && query.length >= 2 && results.length === 0 && (
                 <View style={styles.noResults}>
                   <Text style={styles.noResultsText}>
@@ -272,24 +271,19 @@ export function AddIngredientScreen() {
                 </View>
               )}
 
-              {/* Manual entry divider */}
               <View style={styles.dividerRow}>
                 <View style={styles.divLine} />
                 <Text style={styles.divLabel}>or add manually</Text>
                 <View style={styles.divLine} />
               </View>
 
-              {/* Manual form */}
               <View style={styles.form}>
-                {/* Name — full width */}
                 <FormField
                   label="Ingredient name"
                   value={name}
                   onChange={setName}
                   placeholder="e.g. Chicken breast"
                 />
-
-                {/* Calories — full width, prominent */}
                 <FormField
                   label="Calories"
                   value={cals}
@@ -299,8 +293,6 @@ export function AddIngredientScreen() {
                   numeric
                   accent={Colors.green}
                 />
-
-                {/* 2-col macro rows */}
                 <View style={styles.twoCol}>
                   <FormField
                     label="Protein"
@@ -603,12 +595,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
   },
 
-  // Header
+  // Header — paddingTop is applied inline via insets, so only horizontal/bottom here
   header: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
+    paddingBottom: Spacing.sm, // ← was paddingVertical; top is now dynamic
     gap: Spacing.sm,
   },
   backBtn: {

@@ -1,3 +1,5 @@
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
 // ─── Colors ─────────────────────────────────────────────────────────────────
 
 export const Colors = {
@@ -205,3 +207,12 @@ export const NavTheme = {
     notification: Colors.green,
   },
 };
+
+// Add at the bottom of theme/index.ts
+export function useHeaderInsets() {
+  const insets = useSafeAreaInsets();
+  return {
+    paddingTop: insets.top + 8, // status bar + breathing room
+    paddingBottom: 8,
+  };
+}

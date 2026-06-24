@@ -28,10 +28,17 @@ export function ScannerScreen() {
   const navigation = useNavigation<Nav>();
   const { date, mealType } = useRoute<Route>().params;
   const insets = useSafeAreaInsets();
+
   const [hasPermission, setPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Measured position of the vfWrap — drives the mask hole
+  const [vfLayout, setVfLayout] = useState<{
+    y: number;
+    height: number;
+  } | null>(null);
 
   const scanLine = useRef(new Animated.Value(0)).current;
 
@@ -125,20 +132,21 @@ export function ScannerScreen() {
     );
   }
 
-  // ── Camera view ───────────────────────────────────────────────────────────
+  // ── Derived mask measurements ─────────────────────────────────────────────
+  // Once vfWrap has been measured, calculate where the VF_HEIGHT centred
+  // rectangle sits within it so the mask hole matches exactly.
+  const maskTopHeight = vfLayout
+    ? vfLayout.y + (vfLayout.height - VF_HEIGHT) / 2
+    : null;
+
   const scanLineTranslateY = scanLine.interpolate({
     inputRange: [0, 1],
     outputRange: [0, VF_HEIGHT - 2],
   });
 
-  // Top bar height = status bar + padding top (8) + button height (40) + padding bottom (md)
-  // We derive it so the mask hole sits in exactly the same vertical position as the vfWrap centre
-  const topBarHeight = insets.top + 8 + 40 + Spacing.md;
-  const bottomHeight = 140; // matches minHeight on bottom style
-
   return (
     <View style={styles.root}>
-      {/* Full-screen camera feed */}
+      {/* ── Full-screen camera feed ─────────────────────────────────────── */}
       <CameraView
         style={StyleSheet.absoluteFill}
         facing="back"
@@ -156,27 +164,33 @@ export function ScannerScreen() {
         }}
       />
 
-      {/* ── Vignette overlay ─────────────────────────────────────────────────
-          The mask is built with the same fixed heights as the UI layer's
-          topBar and bottom areas, so the hole aligns perfectly with vfWrap.  */}
+      {/* ── Vignette overlay ─────────────────────────────────────────────
+          Fully black until vfLayout is measured (single imperceptible frame),
+          then splits into top mask / hole row / bottom mask derived from the
+          actual measured position of the viewfinder on this device.          */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
-        {/* Mirrors topBar height exactly */}
-        <View style={[styles.maskTop, { height: topBarHeight }]} />
-        {/* Middle row: sides + transparent hole */}
-        <View style={styles.maskMiddleRow}>
-          <View style={styles.maskSide} />
-          <View style={styles.vfHole} />
-          <View style={styles.maskSide} />
-        </View>
-        {/* Mirrors bottom area height exactly */}
-        <View style={[styles.maskBottom, { height: bottomHeight }]} />
-        {/* Remainder (if any) */}
-        <View style={styles.maskRemainder} />
+        {maskTopHeight === null ? (
+          // Pre-measurement: black out everything
+          <View style={styles.maskFull} />
+        ) : (
+          <>
+            {/* Above the viewfinder */}
+            <View style={[styles.maskTop, { height: maskTopHeight }]} />
+            {/* The row with the transparent hole */}
+            <View style={styles.maskMiddleRow}>
+              <View style={styles.maskSide} />
+              <View style={styles.vfHole} />
+              <View style={styles.maskSide} />
+            </View>
+            {/* Below the viewfinder — flex fills the rest */}
+            <View style={styles.maskBottom} />
+          </>
+        )}
       </View>
 
       {/* ── UI layer ─────────────────────────────────────────────────────── */}
       <View style={styles.ui}>
-        {/* Top bar — fixed height matches mask */}
+        {/* Top bar */}
         <View style={[styles.topBar, { paddingTop: insets.top + 8 }]}>
           <Pressable
             style={({ pressed }) => [
@@ -192,8 +206,14 @@ export function ScannerScreen() {
           <View style={{ width: 40 }} />
         </View>
 
-        {/* Viewfinder — flex:1 centres between topBar and bottom */}
-        <View style={styles.vfWrap}>
+        {/* Viewfinder — onLayout measures its position to drive the mask */}
+        <View
+          style={styles.vfWrap}
+          onLayout={(e) => {
+            const { y, height } = e.nativeEvent.layout;
+            setVfLayout({ y, height });
+          }}
+        >
           <View style={[styles.vf, { width: VF_WIDTH, height: VF_HEIGHT }]}>
             <Corner position="tl" />
             <Corner position="tr" />
@@ -213,7 +233,7 @@ export function ScannerScreen() {
           </View>
         </View>
 
-        {/* Bottom status — fixed height matches mask */}
+        {/* Bottom status */}
         <View style={styles.bottom}>
           {loading ? (
             <View style={styles.statusCard}>
@@ -291,7 +311,7 @@ function Corner({ position }: { position: CornerPos }) {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
 
-  // ── Permission screens ──────────────────────────────────────────────────
+  // ── Permission screens ───────────────────────────────────────────────────
   permSafe: { flex: 1, backgroundColor: Colors.bg },
   centred: {
     flex: 1,
@@ -329,28 +349,24 @@ const styles = StyleSheet.create({
     fontSize: Typography.base,
   },
 
-  // ── Vignette mask ───────────────────────────────────────────────────────
-  // Heights for maskTop and maskBottom are set inline from computed values
-  maskTop: { backgroundColor: "rgba(0,0,0,0.65)" },
+  // ── Vignette mask ────────────────────────────────────────────────────────
+  maskFull: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)" },
+  maskTop: { backgroundColor: "rgba(0,0,0,0.65)" }, // height set inline
   maskMiddleRow: { flexDirection: "row", height: VF_HEIGHT },
   maskSide: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)" },
   vfHole: { width: VF_WIDTH },
-  maskBottom: { backgroundColor: "rgba(0,0,0,0.65)" },
-  maskRemainder: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)" },
+  maskBottom: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)" }, // fills remainder
 
-  // ── UI layer ────────────────────────────────────────────────────────────
-  ui: {
-    ...StyleSheet.absoluteFillObject,
-    flexDirection: "column", // stack top → middle → bottom
-  },
+  // ── UI layer ─────────────────────────────────────────────────────────────
+  ui: { ...StyleSheet.absoluteFillObject, flexDirection: "column" },
 
-  // Top bar — paddingTop set inline via insets
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: Spacing.md,
     paddingBottom: Spacing.md,
+    // paddingTop set inline via insets
   },
   closeBtn: {
     width: 40,
@@ -374,7 +390,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
 
-  // Viewfinder wrapper — flex:1 fills space between topBar and bottom
+  // vfWrap: flex:1 fills space between topBar and bottom
   vfWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
   vf: { position: "relative" },
   corner: {
@@ -404,7 +420,7 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
 
-  // Bottom status area — minHeight matches maskBottom height constant
+  // Bottom status area
   bottom: {
     minHeight: 140,
     paddingHorizontal: Spacing.lg,

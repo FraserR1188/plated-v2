@@ -43,9 +43,12 @@ export async function searchFood(query: string): Promise<FoodProduct[]> {
     search_simple: "1",
     action: "process",
     json: "1",
-    page_size: "20", // fetch more since we still filter some out
+    page_size: "20",
     fields: "product_name,abbreviated_product_name,brands,nutriments,code,_id",
-    sort_by: "unique_scans_n", // most scanned = most complete data first
+    sort_by: "unique_scans_n",
+    countries_tags: "en:united-kingdom", // ← UK products first
+    lc: "en", // ← English language names
+    language: "en", // ← English language names
   });
 
   const res = await fetch(`${BASE}/cgi/search.pl?${params}`);

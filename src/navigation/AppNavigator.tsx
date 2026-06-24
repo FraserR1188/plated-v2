@@ -1,51 +1,87 @@
+// ============================================================
+// src/navigation/AppNavigator.tsx — updated for social feature
+// ============================================================
+//
+// Structure:
+//   Stack navigator (root)
+//   └── MainTabs (bottom tab bar)
+//       ├── Today    → TodayScreen
+//       ├── History  → HistoryScreen
+//       ├── Friends  → FriendsScreen        ← NEW
+//       └── Settings → SettingsScreen
+//   ├── AddIngredient  (modal)
+//   ├── Scanner        (full-screen modal)
+//   ├── Product        (modal)
+//   ├── ConnectedUserLog  (push)             ← NEW
+//   └── CopyConfirm       (push)             ← NEW
+// ============================================================
+
 import React from "react";
 import { Text } from "react-native";
-import { NavigationContainer, DarkTheme } from "@react-navigation/native";
+import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+
 import { TodayScreen } from "../screens/TodayScreen";
 import { HistoryScreen } from "../screens/HistoryScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
 import { AddIngredientScreen } from "../screens/AddIngredientScreen";
 import { ScannerScreen } from "../screens/ScannerScreen";
 import { ProductScreen } from "../screens/ProductScreen";
-import { Colors, Typography } from "../theme";
+import { FriendsScreen } from "../screens/FriendsScreen";
+import { ConnectedUserLogScreen } from "../screens/ConnectedUserLogScreen";
+import { CopyConfirmScreen } from "../screens/CopyConfirmScreen";
+import { TabBar } from "../components/TabBar";
+import { NavTheme } from "../theme";
 import { RootStackParamList, BottomTabParamList } from "../types";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<BottomTabParamList>();
 
-function TabIcon({ icon, focused }: { icon: string; focused: boolean }) {
+// ─── Tab icons ───────────────────────────────────────────────
+
+const TAB_ICONS: Record<keyof BottomTabParamList, string> = {
+  Today: "○", // replace with your SVG icon components
+  History: "◫",
+  Friends: "◎", // ← people / friends icon
+  Settings: "⊙",
+};
+
+function TabIcon({
+  name,
+  focused,
+}: {
+  name: keyof BottomTabParamList;
+  focused: boolean;
+}) {
   return (
-    <Text style={{ fontSize: 22, opacity: focused ? 1 : 0.4 }}>{icon}</Text>
+    <Text
+      style={{
+        fontSize: 22,
+        opacity: focused ? 1 : 0.45,
+        color: focused ? "#00D97E" : "#F2F2F7",
+      }}
+    >
+      {TAB_ICONS[name]}
+    </Text>
   );
 }
+
+// ─── Bottom tabs ─────────────────────────────────────────────
 
 function MainTabs() {
   return (
     <Tab.Navigator
-      screenOptions={{
-        headerShown: false,
-        tabBarStyle: {
-          backgroundColor: Colors.surface,
-          borderTopColor: Colors.border,
-          borderTopWidth: 1,
-          height: 62,
-          paddingBottom: 10,
-        },
-        tabBarActiveTintColor: Colors.green,
-        tabBarInactiveTintColor: Colors.textDim,
-        tabBarLabelStyle: {
-          fontSize: Typography.xs,
-          fontWeight: Typography.medium,
-        },
-      }}
+      tabBar={(props) => <TabBar {...props} />}
+      screenOptions={{ headerShown: false }}
     >
       <Tab.Screen
         name="Today"
         component={TodayScreen}
         options={{
-          tabBarIcon: ({ focused }) => <TabIcon icon="🍽️" focused={focused} />,
+          tabBarIcon: ({ focused }) => (
+            <TabIcon name="Today" focused={focused} />
+          ),
           tabBarLabel: "Today",
         }}
       />
@@ -53,15 +89,29 @@ function MainTabs() {
         name="History"
         component={HistoryScreen}
         options={{
-          tabBarIcon: ({ focused }) => <TabIcon icon="📊" focused={focused} />,
+          tabBarIcon: ({ focused }) => (
+            <TabIcon name="History" focused={focused} />
+          ),
           tabBarLabel: "History",
+        }}
+      />
+      <Tab.Screen
+        name="Friends"
+        component={FriendsScreen}
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <TabIcon name="Friends" focused={focused} />
+          ),
+          tabBarLabel: "Friends",
         }}
       />
       <Tab.Screen
         name="Settings"
         component={SettingsScreen}
         options={{
-          tabBarIcon: ({ focused }) => <TabIcon icon="⚙️" focused={focused} />,
+          tabBarIcon: ({ focused }) => (
+            <TabIcon name="Settings" focused={focused} />
+          ),
           tabBarLabel: "Settings",
         }}
       />
@@ -69,33 +119,64 @@ function MainTabs() {
   );
 }
 
+// ─── Root stack ──────────────────────────────────────────────
+
 export function AppNavigator() {
   return (
-    <NavigationContainer
-      theme={{
-        ...DarkTheme,
-        dark: true,
-        colors: {
-          ...DarkTheme.colors,
-          background: Colors.bg,
-          card: Colors.surface,
-          text: Colors.text,
-          border: Colors.border,
-          primary: Colors.green,
-          notification: Colors.green,
-        },
-      }}
-    >
+    <NavigationContainer theme={NavTheme}>
       <Stack.Navigator
         screenOptions={{
-          headerShown: false,
-          contentStyle: { backgroundColor: Colors.bg },
+          headerStyle: { backgroundColor: "#161616" },
+          headerTintColor: "#F2F2F7",
+          headerTitleStyle: { fontWeight: "600", fontSize: 17 },
+          headerShadowVisible: false,
+          contentStyle: { backgroundColor: "#0D0D0D" },
         }}
       >
-        <Stack.Screen name="MainTabs" component={MainTabs} />
-        <Stack.Screen name="AddIngredient" component={AddIngredientScreen} />
-        <Stack.Screen name="Scanner" component={ScannerScreen} />
-        <Stack.Screen name="Product" component={ProductScreen} />
+        {/* Tabs — no header */}
+        <Stack.Screen
+          name="MainTabs"
+          component={MainTabs}
+          options={{ headerShown: false }}
+        />
+
+        {/* Existing modals */}
+        <Stack.Screen
+          name="AddIngredient"
+          component={AddIngredientScreen}
+          options={{
+            presentation: "modal",
+            title: "Add ingredient",
+          }}
+        />
+        <Stack.Screen
+          name="Scanner"
+          component={ScannerScreen}
+          options={{
+            presentation: "fullScreenModal",
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
+          name="Product"
+          component={ProductScreen}
+          options={{
+            presentation: "modal",
+            title: "Log ingredient",
+          }}
+        />
+
+        {/* Social screens — standard push transitions */}
+        <Stack.Screen
+          name="ConnectedUserLog"
+          component={ConnectedUserLogScreen}
+          options={{ title: "" }} // title set dynamically in screen via setOptions
+        />
+        <Stack.Screen
+          name="CopyConfirm"
+          component={CopyConfirmScreen}
+          options={{ title: "Confirm copy" }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );

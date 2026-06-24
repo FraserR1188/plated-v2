@@ -1,179 +1,637 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import {
-  View, Text, TextInput, TouchableOpacity,
-  StyleSheet, ScrollView, ActivityIndicator,
-} from 'react-native';
-import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { NativeStackNavigationProp }          from '@react-navigation/native-stack';
-import { SafeAreaView }                       from 'react-native-safe-area-context';
-import { useStore }                           from '../store/useStore';
-import { Colors, Spacing, Radius, Typography, MacroColor } from '../theme';
-import { RootStackParamList, MEAL_LABELS }    from '../types';
+  View,
+  Text,
+  TextInput,
+  StyleSheet,
+  ScrollView,
+  ActivityIndicator,
+  Pressable,
+} from "react-native";
+import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useStore } from "../store/useStore";
+import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
+import { RootStackParamList, MEAL_LABELS } from "../types";
 
-type Nav   = NativeStackNavigationProp<RootStackParamList, 'Product'>;
-type Route = RouteProp<RootStackParamList, 'Product'>;
+type Nav = NativeStackNavigationProp<RootStackParamList, "Product">;
+type Route = RouteProp<RootStackParamList, "Product">;
+
+const PRESETS = [50, 75, 100, 150, 200];
 
 export function ProductScreen() {
-  const navigation              = useNavigation<Nav>();
+  const navigation = useNavigation<Nav>();
   const { product, date, mealType } = useRoute<Route>().params;
   const { addEntry, saveIngredient } = useStore();
-  const [serving, setServing]   = useState('100');
-  const [saving,  setSaving]    = useState(false);
+  const [serving, setServing] = useState("100");
+  const [saving, setSaving] = useState(false);
 
   const g = parseFloat(serving) || 0;
   const f = g / 100;
 
   const preview = {
-    calories: Math.round(product.cal_per100     * f),
-    protein:  +(product.protein_per100 * f).toFixed(1),
-    carbs:    +(product.carbs_per100   * f).toFixed(1),
-    fat:      +(product.fat_per100     * f).toFixed(1),
-    salt:     +(product.salt_per100    * f).toFixed(2),
-    fibre:    +(product.fibre_per100   * f).toFixed(1),
-    sugar:    +(product.sugar_per100   * f).toFixed(1),
+    calories: Math.round(product.cal_per100 * f),
+    protein: +(product.protein_per100 * f).toFixed(1),
+    carbs: +(product.carbs_per100 * f).toFixed(1),
+    fat: +(product.fat_per100 * f).toFixed(1),
+    salt: +(product.salt_per100 * f).toFixed(2),
+    fibre: +(product.fibre_per100 * f).toFixed(1),
+    sugar: +(product.sugar_per100 * f).toFixed(1),
   };
 
   const handleAdd = async () => {
     if (!g) return;
     setSaving(true);
-    // Save to library for future quick-access
     await saveIngredient(product);
-    // Log the entry
     await addEntry({
-      date, meal_type: mealType,
-      name: product.name, brand: product.brand,
-      serving_g:  g,
-      calories:   product.cal_per100     * f,
-      protein:    product.protein_per100 * f,
-      carbs:      product.carbs_per100   * f,
-      fat:        product.fat_per100     * f,
-      salt:       product.salt_per100    * f,
-      fibre:      product.fibre_per100   * f,
-      sugar:      product.sugar_per100   * f,
-      source:     product.barcode ? 'barcode' : 'search',
-      barcode:    product.barcode,
-      off_id:     product.off_id,
+      date,
+      meal_type: mealType,
+      name: product.name,
+      brand: product.brand,
+      serving_g: g,
+      calories: product.cal_per100 * f,
+      protein: product.protein_per100 * f,
+      carbs: product.carbs_per100 * f,
+      fat: product.fat_per100 * f,
+      salt: product.salt_per100 * f,
+      fibre: product.fibre_per100 * f,
+      sugar: product.sugar_per100 * f,
+      source: product.barcode ? "barcode" : "search",
+      barcode: product.barcode,
+      off_id: product.off_id,
     });
     setSaving(false);
     navigation.popToTop();
   };
 
-  const macros100 = [
-    ['kcal',    String(product.cal_per100),              Colors.green],
-    ['protein', `${product.protein_per100}g`,            MacroColor.protein],
-    ['carbs',   `${product.carbs_per100}g`,              MacroColor.carbs],
-    ['fat',     `${product.fat_per100}g`,                MacroColor.fat],
-    ['salt',    `${product.salt_per100}g`,               MacroColor.salt],
-    ['fibre',   `${product.fibre_per100}g`,              MacroColor.fibre],
-    ['sugar',   `${product.sugar_per100}g`,              MacroColor.sugar],
-  ] as const;
+  const mealLabel = MEAL_LABELS[mealType];
+  const canAdd = g > 0;
+
+  // Per-100g macro definitions for the reference card
+  const macroRows: {
+    key: string;
+    label: string;
+    value: string;
+    unit: string;
+    color: string;
+  }[] = [
+    {
+      key: "cal",
+      label: "Calories",
+      value: String(product.cal_per100),
+      unit: "kcal",
+      color: Colors.green,
+    },
+    {
+      key: "protein",
+      label: "Protein",
+      value: `${product.protein_per100}`,
+      unit: "g",
+      color: MacroColor.protein,
+    },
+    {
+      key: "carbs",
+      label: "Carbs",
+      value: `${product.carbs_per100}`,
+      unit: "g",
+      color: MacroColor.carbs,
+    },
+    {
+      key: "fat",
+      label: "Fat",
+      value: `${product.fat_per100}`,
+      unit: "g",
+      color: MacroColor.fat,
+    },
+    {
+      key: "salt",
+      label: "Salt",
+      value: `${product.salt_per100}`,
+      unit: "g",
+      color: MacroColor.salt,
+    },
+    {
+      key: "fibre",
+      label: "Fibre",
+      value: `${product.fibre_per100}`,
+      unit: "g",
+      color: MacroColor.fibre,
+    },
+    {
+      key: "sugar",
+      label: "Sugar",
+      value: `${product.sugar_per100}`,
+      unit: "g",
+      color: MacroColor.sugar,
+    },
+  ];
+
+  const previewRows: {
+    label: string;
+    value: string;
+    unit: string;
+    color: string;
+  }[] = [
+    {
+      label: "Calories",
+      value: String(preview.calories),
+      unit: "kcal",
+      color: Colors.green,
+    },
+    {
+      label: "Protein",
+      value: String(preview.protein),
+      unit: "g",
+      color: MacroColor.protein,
+    },
+    {
+      label: "Carbs",
+      value: String(preview.carbs),
+      unit: "g",
+      color: MacroColor.carbs,
+    },
+    {
+      label: "Fat",
+      value: String(preview.fat),
+      unit: "g",
+      color: MacroColor.fat,
+    },
+    {
+      label: "Salt",
+      value: String(preview.salt),
+      unit: "g",
+      color: MacroColor.salt,
+    },
+    {
+      label: "Fibre",
+      value: String(preview.fibre),
+      unit: "g",
+      color: MacroColor.fibre,
+    },
+    {
+      label: "Sugar",
+      value: String(preview.sugar),
+      unit: "g",
+      color: MacroColor.sugar,
+    },
+  ];
 
   return (
-    <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <ScrollView showsVerticalScrollIndicator={false}>
+    <SafeAreaView style={styles.safe} edges={["bottom"]}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scroll}
+      >
+        {/* ── Header ──────────────────────────────────── */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-            <Text style={styles.backText}>‹</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.title}>Add to {MEAL_LABELS[mealType]}</Text>
+          <Pressable
+            onPress={() => navigation.goBack()}
+            style={({ pressed }) => [
+              styles.backBtn,
+              pressed && { opacity: 0.6 },
+            ]}
+            hitSlop={12}
+          >
+            <Text style={styles.backArrow}>‹</Text>
+          </Pressable>
+          <View style={styles.headerCentre}>
+            <Text style={styles.headerTitle}>Add to meal</Text>
+            <View style={styles.mealPill}>
+              <Text style={styles.mealPillText}>{mealLabel}</Text>
+            </View>
           </View>
         </View>
 
-        {/* Per 100g card */}
-        <View style={styles.card}>
+        {/* ── Product identity card ───────────────────── */}
+        <View style={styles.productCard}>
+          {/* Name + brand */}
           <Text style={styles.productName}>{product.name}</Text>
-          {product.brand ? <Text style={styles.productBrand}>{product.brand}</Text> : null}
-          <Text style={styles.per100}>Per 100g</Text>
+          {product.brand ? (
+            <Text style={styles.productBrand}>{product.brand}</Text>
+          ) : null}
+
+          {/* Divider */}
+          <View style={styles.cardDivider} />
+
+          {/* Per 100g label */}
+          <Text style={styles.refLabel}>Per 100g</Text>
+
+          {/* Macro grid — 4 columns */}
           <View style={styles.macroGrid}>
-            {macros100.map(([label, val, color]) => (
-              <View key={label} style={styles.macroPill}>
-                <Text style={[styles.macroVal, { color }]}>{val}</Text>
-                <Text style={styles.macroLabel}>{label}</Text>
+            {macroRows.map((m) => (
+              <View
+                key={m.key}
+                style={[styles.macroCell, { backgroundColor: `${m.color}12` }]}
+              >
+                <Text style={[styles.macroCellVal, { color: m.color }]}>
+                  {m.value}
+                  <Text style={styles.macroCellUnit}> {m.unit}</Text>
+                </Text>
+                <Text style={styles.macroCellLabel}>{m.label}</Text>
               </View>
             ))}
           </View>
         </View>
 
-        {/* Serving */}
+        {/* ── Serving size card ───────────────────────── */}
         <View style={styles.card}>
-          <Text style={styles.sectionLabel}>Serving size</Text>
+          <Text style={styles.cardSectionLabel}>Serving size</Text>
+
+          {/* Large numeric input */}
           <View style={styles.servingRow}>
-            <TextInput style={styles.servingInput} value={serving} onChangeText={setServing} keyboardType="decimal-pad" selectTextOnFocus />
+            <TextInput
+              style={styles.servingInput}
+              value={serving}
+              onChangeText={setServing}
+              keyboardType="decimal-pad"
+              selectTextOnFocus
+            />
             <Text style={styles.servingUnit}>g</Text>
           </View>
+
+          {/* Preset buttons */}
           <View style={styles.presets}>
-            {[50, 100, 150, 200, 250].map((v) => (
-              <TouchableOpacity key={v} style={[styles.preset, serving === String(v) && styles.presetActive]} onPress={() => setServing(String(v))}>
-                <Text style={[styles.presetText, serving === String(v) && styles.presetTextActive]}>{v}g</Text>
-              </TouchableOpacity>
-            ))}
+            {PRESETS.map((v) => {
+              const active = serving === String(v);
+              return (
+                <Pressable
+                  key={v}
+                  style={({ pressed }) => [
+                    styles.preset,
+                    active && styles.presetActive,
+                    pressed && !active && { opacity: 0.7 },
+                  ]}
+                  onPress={() => setServing(String(v))}
+                >
+                  <Text
+                    style={[
+                      styles.presetText,
+                      active && styles.presetTextActive,
+                    ]}
+                  >
+                    {v}g
+                  </Text>
+                </Pressable>
+              );
+            })}
           </View>
         </View>
 
-        {/* Live preview */}
+        {/* ── Live preview card ───────────────────────── */}
         <View style={styles.card}>
-          <Text style={styles.previewLabel}>For {g || 0}g</Text>
+          {/* Header row */}
+          <View style={styles.previewHeader}>
+            <Text style={styles.cardSectionLabel}>Nutrition preview</Text>
+            <View style={styles.previewServingBadge}>
+              <Text style={styles.previewServingText}>for {g || 0}g</Text>
+            </View>
+          </View>
+
+          {/* Calorie hero row */}
+          <View style={styles.calRow}>
+            <Text style={styles.calValue}>{preview.calories}</Text>
+            <Text style={styles.calUnit}>kcal</Text>
+          </View>
+
+          {/* Divider */}
+          <View style={styles.cardDivider} />
+
+          {/* Secondary macros grid */}
           <View style={styles.previewGrid}>
-            {[
-              ['Calories', `${preview.calories}`, 'kcal', Colors.green],
-              ['Protein',  `${preview.protein}`,  'g',    MacroColor.protein],
-              ['Carbs',    `${preview.carbs}`,     'g',    MacroColor.carbs],
-              ['Fat',      `${preview.fat}`,       'g',    MacroColor.fat],
-              ['Salt',     `${preview.salt}`,      'g',    MacroColor.salt],
-              ['Fibre',    `${preview.fibre}`,     'g',    MacroColor.fibre],
-              ['Sugar',    `${preview.sugar}`,     'g',    MacroColor.sugar],
-            ].map(([label, val, unit, color]) => (
-              <View key={label} style={styles.previewStat}>
-                <Text style={[styles.previewVal, { color }]}>{val}<Text style={styles.previewUnit}>{unit}</Text></Text>
-                <Text style={styles.previewStatLabel}>{label}</Text>
+            {previewRows.slice(1).map((m) => (
+              <View key={m.label} style={styles.previewCell}>
+                <Text style={[styles.previewCellVal, { color: m.color }]}>
+                  {m.value}
+                  <Text style={styles.previewCellUnit}>{m.unit}</Text>
+                </Text>
+                <Text style={styles.previewCellLabel}>{m.label}</Text>
               </View>
             ))}
           </View>
         </View>
 
-        <View style={{ height: 120 }} />
+        {/* Scroll padding for FAB */}
+        <View style={{ height: 100 }} />
       </ScrollView>
 
-      <View style={styles.fabWrap}>
-        <TouchableOpacity style={[styles.addBtn, (!g || saving) && { opacity: 0.4 }]} onPress={handleAdd} disabled={!g || saving}>
-          {saving ? <ActivityIndicator color={Colors.bg} /> : <Text style={styles.addBtnText}>Add to {MEAL_LABELS[mealType]}</Text>}
-        </TouchableOpacity>
+      {/* ── Sticky add button ───────────────────────── */}
+      <View style={styles.fab}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.addBtn,
+            !canAdd && styles.addBtnDisabled,
+            pressed && canAdd && { opacity: 0.88 },
+          ]}
+          onPress={handleAdd}
+          disabled={!canAdd || saving}
+        >
+          {saving ? (
+            <ActivityIndicator color={Colors.bg} />
+          ) : (
+            <Text
+              style={[styles.addBtnText, !canAdd && styles.addBtnTextDisabled]}
+            >
+              Add to {mealLabel}
+            </Text>
+          )}
+        </Pressable>
       </View>
     </SafeAreaView>
   );
 }
 
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  safe:         { flex: 1, backgroundColor: Colors.bg },
-  header:       { flexDirection: 'row', alignItems: 'center', padding: Spacing.md },
-  backBtn:      { width: 44, height: 44, justifyContent: 'center' },
-  backText:     { fontSize: 28, color: Colors.textMuted, lineHeight: 32 },
-  title:        { fontSize: Typography.md, fontWeight: Typography.semibold, color: Colors.text },
-  card:         { backgroundColor: Colors.surface, borderRadius: Radius.lg, padding: Spacing.lg, margin: Spacing.md, marginTop: 0 },
-  productName:  { fontSize: Typography.lg, fontWeight: Typography.bold, color: Colors.text, marginBottom: 4 },
-  productBrand: { fontSize: Typography.sm, color: Colors.textMuted, marginBottom: Spacing.md },
-  per100:       { fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: Spacing.sm },
-  macroGrid:    { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  macroPill:    { backgroundColor: Colors.surface2, borderRadius: Radius.sm, padding: Spacing.sm, alignItems: 'center', minWidth: 70, flex: 1 },
-  macroVal:     { fontSize: Typography.sm, fontWeight: Typography.bold },
-  macroLabel:   { fontSize: Typography.xs, color: Colors.textMuted, marginTop: 2 },
-  sectionLabel: { fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: Spacing.sm },
-  servingRow:   { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.md },
-  servingInput: { flex: 1, backgroundColor: Colors.surface2, borderRadius: Radius.sm, padding: Spacing.md, fontSize: Typography.xl, fontWeight: Typography.bold, color: Colors.text, textAlign: 'center' },
-  servingUnit:  { fontSize: Typography.lg, color: Colors.textMuted },
-  presets:      { flexDirection: 'row', gap: Spacing.sm },
-  preset:       { flex: 1, backgroundColor: Colors.surface2, borderRadius: Radius.sm, paddingVertical: Spacing.sm, alignItems: 'center' },
-  presetActive: { backgroundColor: Colors.greenDim },
-  presetText:   { fontSize: Typography.sm, color: Colors.textMuted, fontWeight: Typography.medium },
-  presetTextActive: { color: Colors.green, fontWeight: Typography.bold },
-  previewLabel: { fontSize: Typography.sm, color: Colors.textMuted, textAlign: 'center', marginBottom: Spacing.md },
-  previewGrid:  { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm },
-  previewStat:  { alignItems: 'center', minWidth: 70, flex: 1 },
-  previewVal:   { fontSize: Typography.md, fontWeight: Typography.bold },
-  previewUnit:  { fontSize: Typography.xs, fontWeight: Typography.regular },
-  previewStatLabel: { fontSize: Typography.xs, color: Colors.textMuted, marginTop: 2 },
-  fabWrap:      { position: 'absolute', bottom: 0, left: 0, right: 0, padding: Spacing.md, paddingBottom: Spacing.lg, backgroundColor: Colors.bg },
-  addBtn:       { backgroundColor: Colors.green, borderRadius: Radius.xl, paddingVertical: 16, alignItems: 'center' },
-  addBtnText:   { fontSize: Typography.md, fontWeight: Typography.bold, color: Colors.bg },
+  safe: {
+    flex: 1,
+    backgroundColor: Colors.bg,
+  },
+  scroll: {
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+  },
+
+  // Header
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  backArrow: {
+    fontSize: 22,
+    color: Colors.textSub,
+    lineHeight: 26,
+    marginTop: -2,
+  },
+  headerCentre: {
+    flex: 1,
+    gap: 3,
+  },
+  headerTitle: {
+    fontSize: Typography.md,
+    fontWeight: Typography.bold,
+    color: Colors.text,
+    letterSpacing: -0.3,
+  },
+  mealPill: {
+    alignSelf: "flex-start",
+    backgroundColor: Colors.greenSoft,
+    borderRadius: Radius.full,
+    paddingHorizontal: 9,
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: `${Colors.green}35`,
+  },
+  mealPillText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.green,
+  },
+
+  // Product card
+  productCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  productName: {
+    fontSize: Typography.md,
+    fontWeight: Typography.bold,
+    color: Colors.text,
+    letterSpacing: -0.3,
+    marginBottom: 3,
+  },
+  productBrand: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+    marginBottom: Spacing.sm,
+  },
+  cardDivider: {
+    height: 1,
+    backgroundColor: Colors.border,
+    marginVertical: Spacing.sm,
+  },
+  refLabel: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: Spacing.sm,
+  },
+
+  // Macro grid — 4 per row
+  macroGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  macroCell: {
+    borderRadius: Radius.sm,
+    padding: Spacing.sm,
+    alignItems: "center",
+    minWidth: "22%",
+    flex: 1,
+  },
+  macroCellVal: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    letterSpacing: -0.2,
+  },
+  macroCellUnit: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.regular,
+  },
+  macroCellLabel: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: 2,
+    fontWeight: Typography.medium,
+  },
+
+  // Shared card
+  card: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  cardSectionLabel: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    marginBottom: Spacing.sm,
+  },
+
+  // Serving
+  servingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  servingInput: {
+    flex: 1,
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    fontSize: Typography.xxl,
+    fontWeight: Typography.bold,
+    color: Colors.text,
+    textAlign: "center",
+    letterSpacing: -1,
+  },
+  servingUnit: {
+    fontSize: Typography.xl,
+    fontWeight: Typography.semibold,
+    color: Colors.textSub,
+    width: 28,
+  },
+  presets: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  preset: {
+    flex: 1,
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.sm,
+    paddingVertical: 8,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: Colors.borderSub,
+  },
+  presetActive: {
+    backgroundColor: Colors.greenSoft,
+    borderColor: `${Colors.green}40`,
+  },
+  presetText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.textMuted,
+  },
+  presetTextActive: {
+    color: Colors.green,
+  },
+
+  // Preview
+  previewHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: Spacing.sm,
+  },
+  previewServingBadge: {
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.full,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  previewServingText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.textSub,
+  },
+  calRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 5,
+    marginBottom: Spacing.sm,
+  },
+  calValue: {
+    fontSize: Typography.hero,
+    fontWeight: Typography.bold,
+    color: Colors.green,
+    letterSpacing: -2,
+    lineHeight: Typography.hero * 1.0,
+  },
+  calUnit: {
+    fontSize: Typography.md,
+    fontWeight: Typography.semibold,
+    color: Colors.green,
+    opacity: 0.7,
+  },
+  previewGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Spacing.sm,
+    paddingTop: Spacing.xs,
+  },
+  previewCell: {
+    alignItems: "center",
+    minWidth: "22%",
+    flex: 1,
+  },
+  previewCellVal: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    letterSpacing: -0.3,
+  },
+  previewCellUnit: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.regular,
+  },
+  previewCellLabel: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: 2,
+    fontWeight: Typography.medium,
+  },
+
+  // FAB
+  fab: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.lg,
+    backgroundColor: Colors.bg,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  addBtn: {
+    backgroundColor: Colors.green,
+    borderRadius: Radius.full,
+    paddingVertical: 16,
+    alignItems: "center",
+  },
+  addBtnDisabled: {
+    backgroundColor: Colors.surface2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  addBtnText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    color: Colors.bg,
+    letterSpacing: 0.1,
+  },
+  addBtnTextDisabled: {
+    color: Colors.textMuted,
+  },
 });

@@ -6,6 +6,12 @@
       "android": {
         "gradleCommand": ":app:assembleDebug"
       }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
     }
   }
 }

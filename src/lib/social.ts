@@ -3,7 +3,6 @@
 // ============================================================
 
 import { supabase } from "./supabase";
-import { todayKey } from "./date";
 import {
   Profile,
   ProfileWithFollowState,
@@ -13,6 +12,8 @@ import {
 } from "../types";
 
 // ─── Profile CRUD ────────────────────────────────────────────
+
+const todayKey = () => new Date().toISOString().split("T")[0];
 
 /** Fetch the current user's own profile. Returns null if not yet created. */
 export async function getMyProfile(): Promise<Profile | null> {

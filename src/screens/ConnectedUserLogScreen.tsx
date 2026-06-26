@@ -29,7 +29,6 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
 import { Colors, Spacing, Typography, Radius, MacroColor } from "../theme";
 import { getEntriesForUser, followUser, unfollowUser } from "../lib/social";
-import { todayKey } from "../lib/date";
 import {
   RootStackParamList,
   MealEntry,

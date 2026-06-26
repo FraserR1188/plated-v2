@@ -1,287 +1,199 @@
-/**
- * UI Primitives for plated
- *
- * Shared, composable building blocks. Import from here so visual
- * consistency is enforced at the component level, not repeated in every screen.
- */
+// ============================================================
+// src/components/TabBar.tsx
+// ============================================================
+// Custom bottom tab bar — green pill active indicator,
+// dark surface background, safe-area aware.
+// Supports 3 or 4 tabs without any hardcoded tab count.
+// ============================================================
 
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import {
+  View,
+  Text,
   Pressable,
   StyleSheet,
-  Text,
-  TextStyle,
-  View,
-  ViewStyle,
+  Animated,
+  Platform,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Colors, Radius, Spacing, Typography } from "../theme";
 
-// ─── Card ────────────────────────────────────────────────────────────────────
-
-type CardProps = {
-  children: React.ReactNode;
-  style?: ViewStyle;
-  onPress?: () => void;
-  /** 'default' | 'inner' — inner cards sit inside a default card */
-  variant?: "default" | "inner";
+// Tab icon map — emoji/unicode placeholders.
+// Swap these for your SVG icon components if you have them.
+const TAB_ICONS: Record<string, { default: string; active: string }> = {
+  Today: { default: "⊕", active: "⊕" },
+  History: { default: "◫", active: "◫" },
+  Friends: { default: "◎", active: "◎" },
+  Settings: { default: "⊙", active: "⊙" },
 };
 
-export function Card({
-  children,
-  style,
-  onPress,
-  variant = "default",
-}: CardProps) {
-  const baseStyle = variant === "inner" ? styles.cardInner : styles.card;
+// ─── Single tab item ─────────────────────────────────────────
 
-  if (onPress) {
-    return (
-      <Pressable
-        style={({ pressed }) => [
-          baseStyle,
-          pressed && styles.cardPressed,
-          style,
-        ]}
-        onPress={onPress}
-      >
-        {children}
-      </Pressable>
-    );
-  }
-  return <View style={[baseStyle, style]}>{children}</View>;
-}
-
-// ─── SectionHeader ───────────────────────────────────────────────────────────
-
-type SectionHeaderProps = {
-  title: string;
-  action?: string;
-  onAction?: () => void;
-  style?: ViewStyle;
-};
-
-export function SectionHeader({
-  title,
-  action,
-  onAction,
-  style,
-}: SectionHeaderProps) {
-  return (
-    <View style={[styles.sectionRow, style]}>
-      <Text style={styles.sectionTitle}>{title}</Text>
-      {action && (
-        <Pressable onPress={onAction} hitSlop={12}>
-          <Text style={styles.sectionAction}>{action}</Text>
-        </Pressable>
-      )}
-    </View>
-  );
-}
-
-// ─── Badge ───────────────────────────────────────────────────────────────────
-
-type BadgeProps = {
+interface TabItemProps {
   label: string;
-  color?: string; // text + border colour — defaults to green
-  style?: ViewStyle;
-};
-
-export function Badge({ label, color = Colors.green, style }: BadgeProps) {
-  return (
-    <View style={[styles.badge, { borderColor: `${color}40` }, style]}>
-      <Text style={[styles.badgeText, { color }]}>{label}</Text>
-    </View>
-  );
+  focused: boolean;
+  onPress: () => void;
+  onLongPress: () => void;
 }
 
-// ─── Pill ────────────────────────────────────────────────────────────────────
+function TabItem({ label, focused, onPress, onLongPress }: TabItemProps) {
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const icons = TAB_ICONS[label] ?? { default: "·", active: "·" };
 
-type PillProps = {
-  label: string;
-  selected?: boolean;
-  onPress?: () => void;
-  style?: ViewStyle;
-};
+  // Subtle pop on focus
+  useEffect(() => {
+    if (focused) {
+      Animated.sequence([
+        Animated.timing(scaleAnim, {
+          toValue: 0.88,
+          duration: 80,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          useNativeDriver: true,
+          damping: 12,
+          stiffness: 200,
+        }),
+      ]).start();
+    }
+  }, [focused]);
 
-export function Pill({ label, selected = false, onPress, style }: PillProps) {
   return (
     <Pressable
       onPress={onPress}
-      style={[styles.pill, selected && styles.pillSelected, style]}
+      onLongPress={onLongPress}
+      style={styles.tabItem}
+      accessibilityRole="button"
+      accessibilityState={{ selected: focused }}
+      accessibilityLabel={label}
     >
-      <Text style={[styles.pillText, selected && styles.pillTextSelected]}>
-        {label}
-      </Text>
+      <Animated.View
+        style={[
+          styles.tabInner,
+          focused && styles.tabInnerActive,
+          { transform: [{ scale: scaleAnim }] },
+        ]}
+      >
+        <Text
+          style={[
+            styles.tabIcon,
+            { color: focused ? Colors.green : Colors.textMuted },
+          ]}
+        >
+          {focused ? icons.active : icons.default}
+        </Text>
+        <Text
+          style={[
+            styles.tabLabel,
+            { color: focused ? Colors.green : Colors.textMuted },
+          ]}
+        >
+          {label}
+        </Text>
+      </Animated.View>
     </Pressable>
   );
 }
 
-// ─── Divider ─────────────────────────────────────────────────────────────────
+// ─── Tab bar ─────────────────────────────────────────────────
 
-type DividerProps = {
-  style?: ViewStyle;
-  inset?: number; // horizontal inset in dp
-};
+export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
+  const insets = useSafeAreaInsets();
 
-export function Divider({ style, inset = 0 }: DividerProps) {
   return (
     <View
-      style={[styles.divider, inset > 0 && { marginHorizontal: inset }, style]}
-    />
-  );
-}
+      style={[
+        styles.container,
+        { paddingBottom: Math.max(insets.bottom, Spacing.sm) },
+      ]}
+    >
+      <View style={styles.inner}>
+        {state.routes.map((route, index) => {
+          const { options } = descriptors[route.key];
+          const label =
+            typeof options.tabBarLabel === "string"
+              ? options.tabBarLabel
+              : (options.title ?? route.name);
 
-// ─── EmptyState ──────────────────────────────────────────────────────────────
+          const focused = state.index === index;
 
-type EmptyStateProps = {
-  icon?: string; // emoji or short text
-  title: string;
-  subtitle?: string;
-  action?: string;
-  onAction?: () => void;
-  style?: ViewStyle;
-};
+          const onPress = () => {
+            const event = navigation.emit({
+              type: "tabPress",
+              target: route.key,
+              canPreventDefault: true,
+            });
+            if (!focused && !event.defaultPrevented) {
+              navigation.navigate(route.name);
+            }
+          };
 
-export function EmptyState({
-  icon,
-  title,
-  subtitle,
-  action,
-  onAction,
-  style,
-}: EmptyStateProps) {
-  return (
-    <View style={[styles.emptyState, style]}>
-      {icon ? <Text style={styles.emptyIcon}>{icon}</Text> : null}
-      <Text style={styles.emptyTitle}>{title}</Text>
-      {subtitle ? <Text style={styles.emptySubtitle}>{subtitle}</Text> : null}
-      {action ? (
-        <Pressable onPress={onAction} style={styles.emptyAction}>
-          <Text style={styles.emptyActionText}>{action}</Text>
-        </Pressable>
-      ) : null}
+          const onLongPress = () => {
+            navigation.emit({
+              type: "tabLongPress",
+              target: route.key,
+            });
+          };
+
+          return (
+            <TabItem
+              key={route.key}
+              label={label}
+              focused={focused}
+              onPress={onPress}
+              onLongPress={onLongPress}
+            />
+          );
+        })}
+      </View>
     </View>
   );
 }
 
-// ─── Styles ──────────────────────────────────────────────────────────────────
+// ─── Styles ──────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  // Card
-  card: {
+  container: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingTop: Spacing.xs,
   },
-  cardInner: {
-    backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.borderSub,
-    padding: Spacing.md,
-  },
-  cardPressed: {
-    opacity: 0.75,
-  },
-
-  // SectionHeader
-  sectionRow: {
+  inner: {
     flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: Spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: Typography.base,
-    fontWeight: Typography.semibold,
-    color: Colors.text,
-    letterSpacing: 0.1,
-  },
-  sectionAction: {
-    fontSize: Typography.sm,
-    fontWeight: Typography.medium,
-    color: Colors.green,
+    paddingHorizontal: Spacing.xs,
   },
 
-  // Badge
-  badge: {
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    alignSelf: "flex-start",
+  // Each tab takes equal space
+  tabItem: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: Spacing.xs,
   },
-  badgeText: {
+
+  // Pill wrapper — only visible when focused
+  tabInner: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    borderRadius: Radius.full,
+    gap: 2,
+  },
+  tabInnerActive: {
+    backgroundColor: `${Colors.green}15`,
+  },
+
+  tabIcon: {
+    fontSize: 20,
+    lineHeight: 24,
+  },
+  tabLabel: {
     fontSize: Typography.xs,
-    fontWeight: Typography.semibold,
-    letterSpacing: 0.2,
-  },
-
-  // Pill
-  pill: {
-    borderRadius: Radius.full,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs + 2,
-    backgroundColor: Colors.surface2,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  pillSelected: {
-    backgroundColor: Colors.greenSoft,
-    borderColor: `${Colors.green}50`,
-  },
-  pillText: {
-    fontSize: Typography.sm,
     fontWeight: Typography.medium,
-    color: Colors.textSub,
-  },
-  pillTextSelected: {
-    color: Colors.green,
-  },
-
-  // Divider
-  divider: {
-    height: 1,
-    backgroundColor: Colors.border,
-  },
-
-  // EmptyState
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: Spacing.xxl,
-    gap: Spacing.sm,
-  },
-  emptyIcon: {
-    fontSize: 40,
-    marginBottom: Spacing.xs,
-  },
-  emptyTitle: {
-    fontSize: Typography.md,
-    fontWeight: Typography.semibold,
-    color: Colors.text,
-    textAlign: "center",
-  },
-  emptySubtitle: {
-    fontSize: Typography.base,
-    color: Colors.textSub,
-    textAlign: "center",
-    maxWidth: 260,
-    lineHeight: Typography.base * 1.5,
-  },
-  emptyAction: {
-    marginTop: Spacing.sm,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.full,
-    borderWidth: 1,
-    borderColor: `${Colors.green}50`,
-  },
-  emptyActionText: {
-    fontSize: Typography.sm,
-    fontWeight: Typography.semibold,
-    color: Colors.green,
+    letterSpacing: 0.2,
   },
 });

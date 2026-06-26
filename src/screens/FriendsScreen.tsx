@@ -31,7 +31,6 @@ import {
   getFollowing,
   getTodayCaloriesForUser,
 } from "../lib/social";
-import { todayKey } from "../lib/date";
 import { RootStackParamList, ProfileWithFollowState, Profile } from "../types";
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;

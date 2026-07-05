@@ -131,3 +131,26 @@ export type BottomTabParamList = {
   Friends: undefined; // ← new tab
   Settings: undefined;
 };
+
+// ─── Meal constants ───────────────────────────────────────────
+
+export const MEAL_TYPES: MealType[] = [
+  "breakfast",
+  "lunch",
+  "dinner",
+  "snacks",
+];
+
+export const MEAL_LABELS: Record<MealType, string> = {
+  breakfast: "Breakfast",
+  lunch: "Lunch",
+  dinner: "Dinner",
+  snacks: "Snacks",
+};
+
+export const MEAL_ICONS: Record<MealType, string> = {
+  breakfast: "🌅",
+  lunch: "☀️",
+  dinner: "🌙",
+  snacks: "🍎",
+};

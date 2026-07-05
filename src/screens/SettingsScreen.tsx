@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -13,6 +13,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useStore } from "../store/useStore";
 import { exportCSV, last30Days } from "../lib/csv";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
+import {
+  getMyProfile,
+  upsertProfile,
+  isUsernameAvailable,
+} from "../lib/social";
 
 // Map each goal field to its macro colour for the input accent
 const GOAL_FIELDS: {
@@ -37,6 +42,9 @@ const WHOOP_STEPS = [
   "Use VLOOKUP to match recovery score, HRV, and strain against your daily nutrition.",
 ];
 
+// Username validation — mirrors DB constraint
+const USERNAME_REGEX = /^[a-z0-9_]{3,30}$/;
+
 export function SettingsScreen() {
   const {
     goals,
@@ -46,7 +54,7 @@ export function SettingsScreen() {
     deleteIngredient,
   } = useStore();
 
-  // One state entry per field, keyed by GOAL_FIELDS
+  // ── Goal state ────────────────────────────────────────────
   const [values, setValues] = useState<Record<string, string>>({
     calories: String(goals.calories),
     protein: String(goals.protein),
@@ -60,6 +68,76 @@ export function SettingsScreen() {
   const [exporting, setExporting] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  // ── Username state ────────────────────────────────────────
+  const [currentUsername, setCurrentUsername] = useState<string | null>(null);
+  const [usernameInput, setUsernameInput] = useState("");
+  const [displayNameInput, setDisplayNameInput] = useState("");
+  const [usernameEditing, setUsernameEditing] = useState(false);
+  const [usernameLoading, setUsernameLoading] = useState(true);
+  const [usernameSaving, setUsernameSaving] = useState(false);
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const [usernameSaved, setUsernameSaved] = useState(false);
+
+  // Load existing profile on mount
+  useEffect(() => {
+    getMyProfile()
+      .then((profile) => {
+        if (profile) {
+          setCurrentUsername(profile.username);
+          setUsernameInput(profile.username);
+          setDisplayNameInput(profile.display_name ?? "");
+        } else {
+          setUsernameEditing(true); // no profile yet — show form immediately
+        }
+      })
+      .catch(() => {
+        /* silently ignore — user can retry via edit button */
+      })
+      .finally(() => setUsernameLoading(false));
+  }, []);
+
+  const handleUsernameChange = (text: string) => {
+    setUsernameInput(text.toLowerCase().replace(/[^a-z0-9_]/g, ""));
+    setUsernameError(null);
+    setUsernameSaved(false);
+  };
+
+  const handleSaveUsername = async () => {
+    const trimmed = usernameInput.trim();
+
+    if (!USERNAME_REGEX.test(trimmed)) {
+      setUsernameError(
+        "3–30 characters, lowercase letters, numbers, and underscores only.",
+      );
+      return;
+    }
+
+    setUsernameSaving(true);
+    setUsernameError(null);
+
+    try {
+      // Only check availability if the username changed
+      if (trimmed !== currentUsername) {
+        const available = await isUsernameAvailable(trimmed);
+        if (!available) {
+          setUsernameError("That username is already taken.");
+          setUsernameSaving(false);
+          return;
+        }
+      }
+
+      await upsertProfile(trimmed, displayNameInput.trim() || undefined);
+      setCurrentUsername(trimmed);
+      setUsernameEditing(false);
+      setUsernameSaved(true);
+    } catch {
+      setUsernameError("Could not save username. Please try again.");
+    } finally {
+      setUsernameSaving(false);
+    }
+  };
+
+  // ── Goal handlers ─────────────────────────────────────────
   const handleChange = (key: string, val: string) => {
     setValues((prev) => ({ ...prev, [key]: val }));
     setSaved(false);
@@ -121,6 +199,117 @@ export function SettingsScreen() {
         {/* ── Header ─────────────────────────────────── */}
         <Text style={styles.heading}>Settings</Text>
 
+        {/* ── Username / Profile ─────────────────────── */}
+        <SectionLabel title="Your profile" />
+        <View style={styles.card}>
+          {usernameLoading ? (
+            <ActivityIndicator
+              color={Colors.green}
+              style={{ paddingVertical: Spacing.md }}
+            />
+          ) : usernameEditing ? (
+            /* Edit form */
+            <View style={styles.usernameForm}>
+              <View style={styles.usernameFieldWrap}>
+                <Text style={styles.usernameFieldLabel}>Username</Text>
+                <View style={styles.usernameInputRow}>
+                  <Text style={styles.usernameAt}>@</Text>
+                  <TextInput
+                    style={[
+                      styles.usernameInput,
+                      usernameError ? styles.usernameInputError : null,
+                    ]}
+                    value={usernameInput}
+                    onChangeText={handleUsernameChange}
+                    placeholder="your_username"
+                    placeholderTextColor={Colors.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    maxLength={30}
+                  />
+                </View>
+                <Text style={styles.usernameHint}>
+                  3–30 chars · lowercase letters, numbers, underscores
+                </Text>
+                {usernameError && (
+                  <Text style={styles.usernameErrorText}>{usernameError}</Text>
+                )}
+              </View>
+
+              <View
+                style={[styles.usernameFieldWrap, { marginTop: Spacing.sm }]}
+              >
+                <Text style={styles.usernameFieldLabel}>
+                  Display name (optional)
+                </Text>
+                <TextInput
+                  style={styles.usernameInput}
+                  value={displayNameInput}
+                  onChangeText={setDisplayNameInput}
+                  placeholder="Your Name"
+                  placeholderTextColor={Colors.textMuted}
+                  maxLength={40}
+                />
+              </View>
+
+              <View style={styles.usernameActions}>
+                {currentUsername && (
+                  <Pressable
+                    onPress={() => {
+                      setUsernameInput(currentUsername);
+                      setUsernameError(null);
+                      setUsernameEditing(false);
+                    }}
+                    style={styles.cancelBtn}
+                  >
+                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                  </Pressable>
+                )}
+                <Pressable
+                  onPress={handleSaveUsername}
+                  disabled={usernameSaving}
+                  style={[
+                    styles.saveUsernameBtn,
+                    {
+                      flex: currentUsername ? 1 : undefined,
+                      width: currentUsername ? undefined : "100%",
+                    },
+                  ]}
+                >
+                  {usernameSaving ? (
+                    <ActivityIndicator color={Colors.bg} />
+                  ) : (
+                    <Text style={styles.saveUsernameBtnText}>Save profile</Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            /* Display row */
+            <View style={styles.usernameDisplay}>
+              <View>
+                <Text style={styles.usernameDisplayName}>
+                  @{currentUsername}
+                </Text>
+                {displayNameInput ? (
+                  <Text style={styles.usernameDisplaySub}>
+                    {displayNameInput}
+                  </Text>
+                ) : null}
+                {usernameSaved && (
+                  <Text style={styles.usernameSavedText}>✓ Profile saved</Text>
+                )}
+              </View>
+              <Pressable
+                onPress={() => setUsernameEditing(true)}
+                style={styles.editBtn}
+              >
+                <Text style={styles.editBtnText}>Edit</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+
         {/* ── Daily goals ────────────────────────────── */}
         <SectionLabel title="Daily goals" />
         <View style={styles.card}>
@@ -132,15 +321,12 @@ export function SettingsScreen() {
                 i < GOAL_FIELDS.length - 1 && styles.goalBorder,
               ]}
             >
-              {/* Colour dot + label */}
               <View style={styles.goalLeft}>
                 <View
                   style={[styles.goalDot, { backgroundColor: field.color }]}
                 />
                 <Text style={styles.goalLabel}>{field.label}</Text>
               </View>
-
-              {/* Input + unit */}
               <View style={styles.goalRight}>
                 <TextInput
                   style={[
@@ -158,7 +344,6 @@ export function SettingsScreen() {
             </View>
           ))}
 
-          {/* Save button */}
           <Pressable
             style={({ pressed }) => [
               styles.saveBtn,
@@ -185,8 +370,6 @@ export function SettingsScreen() {
             Export the last 30 days as a CSV to cross-reference with your Whoop
             data in Google Sheets.
           </Text>
-
-          {/* Column preview */}
           <View style={styles.colsBox}>
             <Text style={styles.colsLabel}>Included columns</Text>
             <Text style={styles.colsText}>
@@ -194,7 +377,6 @@ export function SettingsScreen() {
               protein · carbs · fat · salt · fibre · sugar · source
             </Text>
           </View>
-
           {exporting ? (
             <View style={styles.exportLoading}>
               <ActivityIndicator color={Colors.green} size="small" />
@@ -240,7 +422,6 @@ export function SettingsScreen() {
           title="Saved ingredients"
           count={savedIngredients.length}
         />
-
         {savedIngredients.length === 0 ? (
           <View style={styles.emptyLibCard}>
             <Text style={styles.emptyLibText}>
@@ -353,7 +534,122 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
   },
 
-  // Goal rows
+  // ── Username ───────────────────────────────────────────────
+  usernameDisplay: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  usernameDisplayName: {
+    fontSize: Typography.base,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+  },
+  usernameDisplaySub: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  usernameSavedText: {
+    fontSize: Typography.xs,
+    color: Colors.green,
+    marginTop: 4,
+  },
+  editBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  editBtnText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.medium,
+    color: Colors.textSub,
+  },
+
+  usernameForm: {
+    gap: Spacing.xs,
+  },
+  usernameFieldWrap: {
+    gap: 4,
+  },
+  usernameFieldLabel: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
+  usernameInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  usernameAt: {
+    fontSize: Typography.base,
+    color: Colors.textMuted,
+    fontWeight: Typography.semibold,
+  },
+  usernameInput: {
+    flex: 1,
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 9,
+    fontSize: Typography.base,
+    color: Colors.text,
+  },
+  usernameInputError: {
+    borderColor: Colors.danger,
+  },
+  usernameHint: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: 3,
+  },
+  usernameErrorText: {
+    fontSize: Typography.xs,
+    color: Colors.danger,
+    marginTop: 3,
+  },
+  usernameActions: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  cancelBtn: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 11,
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: "center",
+  },
+  cancelBtnText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.medium,
+    color: Colors.textSub,
+  },
+  saveUsernameBtn: {
+    paddingVertical: 11,
+    backgroundColor: Colors.green,
+    borderRadius: Radius.full,
+    alignItems: "center",
+    paddingHorizontal: Spacing.lg,
+  },
+  saveUsernameBtnText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    color: Colors.bg,
+  },
+
+  // ── Goals ──────────────────────────────────────────────────
   goalRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -402,8 +698,6 @@ const styles = StyleSheet.create({
     fontWeight: Typography.medium,
     width: 32,
   },
-
-  // Save button
   saveBtn: {
     backgroundColor: Colors.green,
     borderRadius: Radius.full,
@@ -422,7 +716,7 @@ const styles = StyleSheet.create({
     color: Colors.bg,
   },
 
-  // Export
+  // ── Export ─────────────────────────────────────────────────
   exportInfo: {
     fontSize: Typography.sm,
     color: Colors.textSub,
@@ -478,7 +772,7 @@ const styles = StyleSheet.create({
     color: Colors.text,
   },
 
-  // Whoop steps
+  // ── Whoop ──────────────────────────────────────────────────
   whoopIntro: {
     fontSize: Typography.sm,
     color: Colors.textSub,
@@ -519,7 +813,7 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
-  // Ingredient library
+  // ── Ingredient library ─────────────────────────────────────
   emptyLibCard: {
     backgroundColor: Colors.surface,
     borderRadius: Radius.lg,
@@ -543,9 +837,7 @@ const styles = StyleSheet.create({
     marginHorizontal: -4,
     paddingHorizontal: 4,
   },
-  libBody: {
-    flex: 1,
-  },
+  libBody: { flex: 1 },
   libName: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,

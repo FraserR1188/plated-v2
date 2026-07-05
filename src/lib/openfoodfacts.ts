@@ -5,12 +5,12 @@ const BASE = "https://world.openfoodfacts.org";
 function parseProduct(p: any): FoodProduct | null {
   const n = p.nutriments ?? {};
 
-  // Try all calorie field variants
-  const cal =
-    n["energy-kcal_100g"] ??
-    n["energy-kcal"] ??
-    n["energy_100g"] ?? // sometimes stored in kJ — we'll convert below
-    0;
+  // Try kcal fields first; energy_100g is kJ and needs converting
+  let cal = n["energy-kcal_100g"] ?? n["energy-kcal"] ?? null;
+  if (cal == null && n["energy_100g"] != null) {
+    cal = n["energy_100g"] / 4.184; // kJ → kcal
+  }
+  cal = cal ?? 0;
 
   const name = (p.product_name ?? p.abbreviated_product_name ?? "").trim();
 

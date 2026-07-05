@@ -59,7 +59,12 @@ export function ProductScreen() {
       salt: product.salt_per100 * f,
       fibre: product.fibre_per100 * f,
       sugar: product.sugar_per100 * f,
-      source: product.barcode ? "barcode" : "search",
+      source:
+        product.source === "custom"
+          ? "custom"
+          : product.barcode
+            ? "barcode"
+            : "search",
       barcode: product.barcode,
       off_id: product.off_id,
     });

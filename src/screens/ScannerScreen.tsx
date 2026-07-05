@@ -12,7 +12,7 @@ import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { lookupBarcode } from "../lib/openfoodfacts";
+import { lookupFood } from "../lib/foodLookup";
 import { Colors, Spacing, Radius, Typography } from "../theme";
 import { RootStackParamList } from "../types";
 
@@ -24,6 +24,10 @@ const VF_HEIGHT = 160;
 const CORNER = 24;
 const CORNER_W = 3;
 
+// "not_found": both sources answered, product unknown → offer manual add.
+// "network":   lookup failed → only retry is safe (product may exist in OFF).
+type ErrorKind = "not_found" | "network" | null;
+
 export function ScannerScreen() {
   const navigation = useNavigation<Nav>();
   const { date, mealType } = useRoute<Route>().params;
@@ -32,7 +36,8 @@ export function ScannerScreen() {
   const [hasPermission, setPermission] = useState<boolean | null>(null);
   const [scanned, setScanned] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [errorKind, setErrorKind] = useState<ErrorKind>(null);
+  const [failedBarcode, setFailedBarcode] = useState<string | null>(null);
 
   // Measured position of the vfWrap — drives the mask hole
   const [vfLayout, setVfLayout] = useState<{
@@ -73,26 +78,36 @@ export function ScannerScreen() {
     if (scanned || loading) return;
     setScanned(true);
     setLoading(true);
-    setError("");
-    try {
-      const product = await lookupBarcode(data);
-      if (product) {
-        navigation.replace("Product", { product, date, mealType });
-      } else {
-        setError(
-          `No product found for barcode ${data}.\nTry searching by name instead.`,
-        );
-        setLoading(false);
-      }
-    } catch {
-      setError("Lookup failed — check your connection and try again.");
-      setLoading(false);
+    setErrorKind(null);
+
+    const result = await lookupFood(data);
+
+    if (result.status === "found") {
+      navigation.replace("Product", {
+        product: result.product,
+        date,
+        mealType,
+      });
+      return;
     }
+
+    setFailedBarcode(data);
+    setErrorKind(result.status === "not_found" ? "not_found" : "network");
+    setLoading(false);
   };
 
   const handleRetry = () => {
     setScanned(false);
-    setError("");
+    setErrorKind(null);
+    setFailedBarcode(null);
+  };
+
+  const handleAddManually = () => {
+    navigation.replace("CreateFood", {
+      barcode: failedBarcode ?? undefined,
+      date,
+      mealType,
+    });
   };
 
   // ── Permission loading ────────────────────────────────────────────────────
@@ -133,8 +148,6 @@ export function ScannerScreen() {
   }
 
   // ── Derived mask measurements ─────────────────────────────────────────────
-  // Once vfWrap has been measured, calculate where the VF_HEIGHT centred
-  // rectangle sits within it so the mask hole matches exactly.
   const maskTopHeight = vfLayout
     ? vfLayout.y + (vfLayout.height - VF_HEIGHT) / 2
     : null;
@@ -143,6 +156,11 @@ export function ScannerScreen() {
     inputRange: [0, 1],
     outputRange: [0, VF_HEIGHT - 2],
   });
+
+  const errorMessage =
+    errorKind === "not_found"
+      ? `This product isn't in the database yet.\nAdd it once and it'll scan instantly next time.`
+      : "Lookup failed — check your connection and try again.";
 
   return (
     <View style={styles.root}>
@@ -164,25 +182,18 @@ export function ScannerScreen() {
         }}
       />
 
-      {/* ── Vignette overlay ─────────────────────────────────────────────
-          Fully black until vfLayout is measured (single imperceptible frame),
-          then splits into top mask / hole row / bottom mask derived from the
-          actual measured position of the viewfinder on this device.          */}
+      {/* ── Vignette overlay ────────────────────────────────────────────── */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         {maskTopHeight === null ? (
-          // Pre-measurement: black out everything
           <View style={styles.maskFull} />
         ) : (
           <>
-            {/* Above the viewfinder */}
             <View style={[styles.maskTop, { height: maskTopHeight }]} />
-            {/* The row with the transparent hole */}
             <View style={styles.maskMiddleRow}>
               <View style={styles.maskSide} />
               <View style={styles.vfHole} />
               <View style={styles.maskSide} />
             </View>
-            {/* Below the viewfinder — flex fills the rest */}
             <View style={styles.maskBottom} />
           </>
         )}
@@ -206,7 +217,7 @@ export function ScannerScreen() {
           <View style={{ width: 40 }} />
         </View>
 
-        {/* Viewfinder — onLayout measures its position to drive the mask */}
+        {/* Viewfinder */}
         <View
           style={styles.vfWrap}
           onLayout={(e) => {
@@ -229,7 +240,7 @@ export function ScannerScreen() {
               />
             )}
 
-            {scanned && !error && <View style={styles.scannedFlash} />}
+            {scanned && !errorKind && <View style={styles.scannedFlash} />}
           </View>
         </View>
 
@@ -240,30 +251,63 @@ export function ScannerScreen() {
               <ActivityIndicator color={Colors.green} size="small" />
               <Text style={styles.statusText}>Looking up product…</Text>
             </View>
-          ) : error ? (
+          ) : errorKind ? (
             <View style={styles.errorCard}>
-              <Text style={styles.errorEmoji}>⚠️</Text>
-              <Text style={styles.errorText}>{error}</Text>
-              <View style={styles.errorActions}>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.retryBtn,
-                    pressed && { opacity: 0.85 },
-                  ]}
-                  onPress={handleRetry}
-                >
-                  <Text style={styles.retryText}>Scan again</Text>
-                </Pressable>
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.searchBtn,
-                    pressed && { opacity: 0.75 },
-                  ]}
-                  onPress={() => navigation.goBack()}
-                >
-                  <Text style={styles.searchText}>Search by name</Text>
-                </Pressable>
-              </View>
+              <Text style={styles.errorEmoji}>
+                {errorKind === "not_found" ? "🍽️" : "⚠️"}
+              </Text>
+              {errorKind === "not_found" && failedBarcode ? (
+                <Text style={styles.barcodeText}>{failedBarcode}</Text>
+              ) : null}
+              <Text style={styles.errorText}>{errorMessage}</Text>
+
+              {errorKind === "not_found" ? (
+                <>
+                  {/* Primary: the productive path */}
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.primaryBtn,
+                      pressed && { opacity: 0.85 },
+                    ]}
+                    onPress={handleAddManually}
+                  >
+                    <Text style={styles.primaryText}>Add it manually</Text>
+                  </Pressable>
+                  <View style={styles.errorActions}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.secondaryBtn,
+                        pressed && { opacity: 0.75 },
+                      ]}
+                      onPress={handleRetry}
+                    >
+                      <Text style={styles.secondaryText}>Scan again</Text>
+                    </Pressable>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.secondaryBtn,
+                        pressed && { opacity: 0.75 },
+                      ]}
+                      onPress={() => navigation.goBack()}
+                    >
+                      <Text style={styles.secondaryText}>Search by name</Text>
+                    </Pressable>
+                  </View>
+                </>
+              ) : (
+                <View style={styles.errorActions}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.primaryBtn,
+                      styles.retryOnlyBtn,
+                      pressed && { opacity: 0.85 },
+                    ]}
+                    onPress={handleRetry}
+                  >
+                    <Text style={styles.primaryText}>Try again</Text>
+                  </Pressable>
+                </View>
+              )}
             </View>
           ) : (
             <View style={styles.hintCard}>
@@ -351,11 +395,11 @@ const styles = StyleSheet.create({
 
   // ── Vignette mask ────────────────────────────────────────────────────────
   maskFull: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)" },
-  maskTop: { backgroundColor: "rgba(0,0,0,0.65)" }, // height set inline
+  maskTop: { backgroundColor: "rgba(0,0,0,0.65)" },
   maskMiddleRow: { flexDirection: "row", height: VF_HEIGHT },
   maskSide: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)" },
   vfHole: { width: VF_WIDTH },
-  maskBottom: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)" }, // fills remainder
+  maskBottom: { flex: 1, backgroundColor: "rgba(0,0,0,0.65)" },
 
   // ── UI layer ─────────────────────────────────────────────────────────────
   ui: { ...StyleSheet.absoluteFillObject, flexDirection: "column" },
@@ -366,7 +410,6 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: Spacing.md,
     paddingBottom: Spacing.md,
-    // paddingTop set inline via insets
   },
   closeBtn: {
     width: 40,
@@ -390,7 +433,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
 
-  // vfWrap: flex:1 fills space between topBar and bottom
   vfWrap: { flex: 1, alignItems: "center", justifyContent: "center" },
   vf: { position: "relative" },
   corner: {
@@ -472,6 +514,13 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   errorEmoji: { fontSize: 28 },
+  barcodeText: {
+    color: "rgba(255,255,255,0.45)",
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    letterSpacing: 1.5,
+    fontVariant: ["tabular-nums"],
+  },
   errorText: {
     color: "rgba(255,255,255,0.75)",
     fontSize: Typography.sm,
@@ -484,26 +533,32 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     marginTop: Spacing.xs,
   },
-  retryBtn: {
+
+  primaryBtn: {
     backgroundColor: Colors.green,
     borderRadius: Radius.full,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: 10,
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: 12,
+    alignSelf: "stretch",
+    alignItems: "center",
+    marginTop: Spacing.xs,
   },
-  retryText: {
+  retryOnlyBtn: { alignSelf: "auto", paddingHorizontal: Spacing.xl },
+  primaryText: {
     color: Colors.bg,
     fontWeight: Typography.bold,
     fontSize: Typography.sm,
   },
-  searchBtn: {
+  secondaryBtn: {
+    flex: 1,
     backgroundColor: "rgba(255,255,255,0.1)",
     borderRadius: Radius.full,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.15)",
-    paddingHorizontal: Spacing.lg,
     paddingVertical: 10,
+    alignItems: "center",
   },
-  searchText: {
+  secondaryText: {
     color: "rgba(255,255,255,0.75)",
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,

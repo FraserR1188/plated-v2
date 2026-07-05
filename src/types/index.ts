@@ -59,6 +59,28 @@ export interface DayTotals {
   sugar: number;
 }
 
+// ─── Custom foods ────────────────────────────────────────────
+
+export type ProductSource = "off" | "custom";
+
+export interface CustomFood {
+  id: string;
+  user_id: string;
+  name: string;
+  brand: string | null;
+  barcode: string | null;
+  cal_per100: number;
+  protein_per100: number;
+  carbs_per100: number;
+  fat_per100: number;
+  salt_per100: number;
+  fibre_per100: number;
+  sugar_per100: number;
+  serving_g: number | null;
+  serving_label: string | null; // e.g. "1 bowl (45g)"
+  created_at: string;
+}
+
 // ─── Social / Profiles ───────────────────────────────────────
 
 export interface Profile {

@@ -19,6 +19,8 @@ export interface FoodProduct {
   barcode?: string;
   off_id?: string;
   serving_g?: number;
+  source?: ProductSource; // undefined = OFF (legacy paths)
+  custom_food_id?: string; // set when source === "custom"
 }
 
 export interface MealEntry {
@@ -143,6 +145,13 @@ export type RootStackParamList = {
   CopyConfirm: {
     payload: CopyPayload;
     date: string; // target date on the viewer's log
+  };
+
+  CreateFood: {
+    date: string;
+    mealType: MealType;
+    barcode?: string; // pre-filled from a failed scan
+    initialName?: string; // pre-filled from a failed name search (phase 1b)
   };
 };
 

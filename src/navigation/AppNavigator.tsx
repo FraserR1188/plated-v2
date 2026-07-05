@@ -34,6 +34,7 @@ import { CopyConfirmScreen } from "../screens/CopyConfirmScreen";
 import { TabBar } from "../components/TabBar";
 import { NavTheme } from "../theme";
 import { RootStackParamList, BottomTabParamList } from "../types";
+import { CreateFoodScreen } from "../screens/CreateFoodScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<BottomTabParamList>();
@@ -163,6 +164,14 @@ export function AppNavigator() {
           options={{
             presentation: "modal",
             title: "Log ingredient",
+          }}
+        />
+        <Stack.Screen
+          name="CreateFood"
+          component={CreateFoodScreen}
+          options={{
+            presentation: "modal",
+            headerShown: false, // screen draws its own header
           }}
         />
 

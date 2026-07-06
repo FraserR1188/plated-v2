@@ -1,3 +1,5 @@
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+
 // ─── Colors ─────────────────────────────────────────────────────────────────
 
 export const Colors = {
@@ -43,6 +45,7 @@ export const MacroColor: Record<string, string> = {
   protein: Colors.blue,
   carbs: Colors.amber,
   fat: Colors.coral,
+  satFat: "#FF8C42", // burnt orange — adjacent to fat's coral
   salt: Colors.purple,
   fibre: Colors.teal,
   sugar: Colors.pink,
@@ -53,6 +56,7 @@ export const MacroColorSoft: Record<string, string> = {
   protein: `${Colors.blue}18`,
   carbs: `${Colors.amber}18`,
   fat: `${Colors.coral}18`,
+  satFat: `#FF8C4218`,
   salt: `${Colors.purple}18`,
   fibre: `${Colors.teal}18`,
   sugar: `${Colors.pink}18`,

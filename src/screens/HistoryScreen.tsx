@@ -26,6 +26,7 @@ export function HistoryScreen() {
       protein: de.reduce((s, e) => s + e.protein, 0),
       carbs: de.reduce((s, e) => s + e.carbs, 0),
       fat: de.reduce((s, e) => s + e.fat, 0),
+      satFat: de.reduce((s, e) => s + (e.sat_fat ?? 0), 0),
       salt: de.reduce((s, e) => s + e.salt, 0),
       fibre: de.reduce((s, e) => s + e.fibre, 0),
       sugar: de.reduce((s, e) => s + e.sugar, 0),
@@ -48,6 +49,9 @@ export function HistoryScreen() {
         fat: +(logged.reduce((s, d) => s + d.fat, 0) / logged.length).toFixed(
           1,
         ),
+        satFat: +(
+          logged.reduce((s, d) => s + d.satFat, 0) / logged.length
+        ).toFixed(1),
         salt: +(logged.reduce((s, d) => s + d.salt, 0) / logged.length).toFixed(
           2,
         ),
@@ -162,6 +166,11 @@ export function HistoryScreen() {
 
             {/* Secondary macro row */}
             <View style={styles.avgSecondaryRow}>
+              <SecondaryAvgStat
+                label="Sat fat"
+                value={`${avg.satFat}g`}
+                color={MacroColor.satFat}
+              />
               <SecondaryAvgStat
                 label="Salt"
                 value={`${avg.salt}g`}
@@ -452,6 +461,7 @@ const styles = StyleSheet.create({
   },
   avgSecondaryRow: {
     flexDirection: "row",
+    flexWrap: "wrap",
     borderTopWidth: 1,
     borderTopColor: Colors.border,
     paddingTop: Spacing.sm,
@@ -592,7 +602,8 @@ const avgStyles = StyleSheet.create({
     marginTop: 1,
   },
   secondary: {
-    flex: 1,
+    flexBasis: "47%",
+    flexGrow: 1,
     flexDirection: "row",
     alignItems: "center",
     gap: 5,

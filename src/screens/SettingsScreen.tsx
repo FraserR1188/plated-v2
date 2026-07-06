@@ -21,7 +21,15 @@ import {
 
 // Map each goal field to its macro colour for the input accent
 const GOAL_FIELDS: {
-  key: "calories" | "protein" | "carbs" | "fat" | "salt" | "fibre" | "sugar";
+  key:
+    | "calories"
+    | "protein"
+    | "carbs"
+    | "fat"
+    | "satFat"
+    | "salt"
+    | "fibre"
+    | "sugar";
   label: string;
   unit: string;
   color: string;
@@ -30,6 +38,7 @@ const GOAL_FIELDS: {
   { key: "protein", label: "Protein", unit: "g", color: MacroColor.protein },
   { key: "carbs", label: "Carbs", unit: "g", color: MacroColor.carbs },
   { key: "fat", label: "Fat", unit: "g", color: MacroColor.fat },
+  { key: "satFat", label: "Sat fat", unit: "g", color: MacroColor.satFat },
   { key: "salt", label: "Salt", unit: "g", color: MacroColor.salt },
   { key: "fibre", label: "Fibre", unit: "g", color: MacroColor.fibre },
   { key: "sugar", label: "Sugar", unit: "g", color: MacroColor.sugar },
@@ -60,6 +69,7 @@ export function SettingsScreen() {
     protein: String(goals.protein),
     carbs: String(goals.carbs),
     fat: String(goals.fat),
+    satFat: String(goals.satFat),
     salt: String(goals.salt),
     fibre: String(goals.fibre),
     sugar: String(goals.sugar),
@@ -150,6 +160,7 @@ export function SettingsScreen() {
       protein: parseInt(values.protein) || 150,
       carbs: parseInt(values.carbs) || 200,
       fat: parseInt(values.fat) || 65,
+      satFat: parseInt(values.satFat) || 20,
       salt: parseFloat(values.salt) || 6,
       fibre: parseInt(values.fibre) || 30,
       sugar: parseInt(values.sugar) || 30,
@@ -374,7 +385,7 @@ export function SettingsScreen() {
             <Text style={styles.colsLabel}>Included columns</Text>
             <Text style={styles.colsText}>
               date · time · meal · ingredient · brand · serving · calories ·
-              protein · carbs · fat · salt · fibre · sugar · source
+              protein · carbs · fat · sat fat · salt · fibre · sugar · source
             </Text>
           </View>
           {exporting ? (

@@ -154,6 +154,12 @@ export function TodayScreen() {
               goal={goals.fat}
             />
             <MacroBar
+              macro="satFat"
+              label="Sat fat"
+              consumed={Math.round(totals.satFat)}
+              goal={goals.satFat}
+            />
+            <MacroBar
               macro="fibre"
               consumed={Math.round(totals.fibre)}
               goal={goals.fibre}

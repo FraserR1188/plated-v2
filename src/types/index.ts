@@ -13,11 +13,13 @@ export interface FoodProduct {
   protein_per100: number;
   carbs_per100: number;
   fat_per100: number;
+  sat_fat_per100?: number;
   salt_per100?: number;
   fibre_per100?: number;
   sugar_per100?: number;
   barcode?: string;
   off_id?: string;
+  serving_label?: string;
   serving_g?: number;
   source?: ProductSource; // undefined = OFF (legacy paths)
   custom_food_id?: string; // set when source === "custom"
@@ -35,6 +37,7 @@ export interface MealEntry {
   protein: number;
   carbs: number;
   fat: number;
+  sat_fat?: number; // NULL on entries logged before the migration
   salt?: number;
   fibre?: number;
   sugar?: number;
@@ -46,6 +49,7 @@ export interface Goals {
   protein: number;
   carbs: number;
   fat: number;
+  satFat: number;
   salt: number;
   fibre: number;
   sugar: number;
@@ -56,6 +60,7 @@ export interface DayTotals {
   protein: number;
   carbs: number;
   fat: number;
+  satFat: number;
   salt: number;
   fibre: number;
   sugar: number;
@@ -75,6 +80,7 @@ export interface CustomFood {
   protein_per100: number;
   carbs_per100: number;
   fat_per100: number;
+  sat_fat_per100: number;
   salt_per100: number;
   fibre_per100: number;
   sugar_per100: number;

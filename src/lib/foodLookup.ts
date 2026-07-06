@@ -1,12 +1,6 @@
 // ============================================================
 // src/lib/foodLookup.ts — barcode/name resolution across sources
-//
-// Lookup order for a scanned barcode:
-//   1. The user's own custom_foods (works even if OFF is down)
-//   2. Open Food Facts
-//   3. not_found → ScannerScreen offers "Add it manually"
-//
-// Keeps openfoodfacts.ts as a pure OFF client.
+// Session A update: sat_fat_per100 flows through the mapper.
 // ============================================================
 
 import { supabase } from "./supabase";
@@ -24,11 +18,13 @@ export function customFoodToProduct(cf: CustomFood): FoodProduct {
     protein_per100: cf.protein_per100,
     carbs_per100: cf.carbs_per100,
     fat_per100: cf.fat_per100,
+    sat_fat_per100: cf.sat_fat_per100,
     salt_per100: cf.salt_per100,
     fibre_per100: cf.fibre_per100,
     sugar_per100: cf.sugar_per100,
     barcode: cf.barcode ?? undefined,
     serving_g: cf.serving_g ?? undefined,
+    serving_label: cf.serving_label ?? undefined,
     source: "custom",
     custom_food_id: cf.id,
   };

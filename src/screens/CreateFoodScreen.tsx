@@ -1,13 +1,6 @@
 // ============================================================
 // src/screens/CreateFoodScreen.tsx — add a food OFF doesn't know
-//
-// Reached from:
-//   • ScannerScreen "Add it manually" (barcode pre-filled)
-//   • AddIngredientScreen "Can't find it? Add your own" (phase 1b,
-//     initialName pre-filled)
-//
-// On save: inserts into custom_foods, then replaces itself with
-// ProductScreen so the user logs the food in the same flow.
+// Session A update: saturated fat as the 8th macro input.
 // ============================================================
 
 import React, { useMemo, useState } from "react";
@@ -42,6 +35,7 @@ type MacroKey =
   | "protein"
   | "carbs"
   | "fat"
+  | "satFat"
   | "salt"
   | "fibre"
   | "sugar";
@@ -56,6 +50,7 @@ const MACRO_FIELDS: {
   { key: "protein", label: "Protein", unit: "g", color: MacroColor.protein },
   { key: "carbs", label: "Carbs", unit: "g", color: MacroColor.carbs },
   { key: "fat", label: "Fat", unit: "g", color: MacroColor.fat },
+  { key: "satFat", label: "Sat fat", unit: "g", color: MacroColor.satFat },
   { key: "salt", label: "Salt", unit: "g", color: MacroColor.salt },
   { key: "fibre", label: "Fibre", unit: "g", color: MacroColor.fibre },
   { key: "sugar", label: "Sugar", unit: "g", color: MacroColor.sugar },
@@ -79,6 +74,7 @@ export function CreateFoodScreen() {
     protein: "",
     carbs: "",
     fat: "",
+    satFat: "",
     salt: "",
     fibre: "",
     sugar: "",
@@ -113,6 +109,7 @@ export function CreateFoodScreen() {
       protein_per100: num(macros.protein),
       carbs_per100: num(macros.carbs),
       fat_per100: num(macros.fat),
+      sat_fat_per100: num(macros.satFat),
       salt_per100: num(macros.salt),
       fibre_per100: num(macros.fibre),
       sugar_per100: num(macros.sugar),
@@ -214,7 +211,8 @@ export function CreateFoodScreen() {
           <View style={styles.card}>
             <Text style={styles.cardSectionLabel}>Nutrition per 100g</Text>
             <Text style={styles.nutritionHint}>
-              Copy these from the nutrition table on the packaging.
+              Copy these from the nutrition table on the packaging. Sat fat is
+              the "of which saturates" line.
             </Text>
 
             <View style={styles.macroGrid}>

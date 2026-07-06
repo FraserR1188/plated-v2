@@ -11,7 +11,7 @@ import {
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useSafeAreaInsets } from "react-native-safe-area-context"; // ← ADD
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "../store/useStore";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
 import { RootStackParamList, MEAL_LABELS } from "../types";
@@ -19,27 +19,45 @@ import { RootStackParamList, MEAL_LABELS } from "../types";
 type Nav = NativeStackNavigationProp<RootStackParamList, "Product">;
 type Route = RouteProp<RootStackParamList, "Product">;
 
-const PRESETS = [50, 75, 100, 150, 200];
+const DEFAULT_PRESETS = [50, 75, 100, 150, 200];
 
 export function ProductScreen() {
   const navigation = useNavigation<Nav>();
   const { product, date, mealType } = useRoute<Route>().params;
   const { addEntry, saveIngredient } = useStore();
-  const insets = useSafeAreaInsets(); // ← ADD
-  const [serving, setServing] = useState("100");
+  const insets = useSafeAreaInsets();
+
+  // ── Serving portion (Session A) ─────────────────────────────
+  // When the product carries a recommended serving, it becomes the
+  // default and the first preset chip. Falls back to old behaviour.
+  const servingPreset =
+    product.serving_g && product.serving_g > 0
+      ? Math.round(product.serving_g)
+      : null;
+
+  const presets = servingPreset
+    ? [servingPreset, 50, 100, 150, 200].filter(
+        (v, i, a) => a.indexOf(v) === i, // dedupe if serving == a preset
+      )
+    : DEFAULT_PRESETS;
+
+  const [serving, setServing] = useState(String(servingPreset ?? 100));
   const [saving, setSaving] = useState(false);
 
   const g = parseFloat(serving) || 0;
   const f = g / 100;
+
+  const satFat100 = product.sat_fat_per100 ?? 0;
 
   const preview = {
     calories: Math.round(product.cal_per100 * f),
     protein: +(product.protein_per100 * f).toFixed(1),
     carbs: +(product.carbs_per100 * f).toFixed(1),
     fat: +(product.fat_per100 * f).toFixed(1),
-    salt: +(product.salt_per100 * f).toFixed(2),
-    fibre: +(product.fibre_per100 * f).toFixed(1),
-    sugar: +(product.sugar_per100 * f).toFixed(1),
+    satFat: +(satFat100 * f).toFixed(1),
+    salt: +((product.salt_per100 ?? 0) * f).toFixed(2),
+    fibre: +((product.fibre_per100 ?? 0) * f).toFixed(1),
+    sugar: +((product.sugar_per100 ?? 0) * f).toFixed(1),
   };
 
   const handleAdd = async () => {
@@ -56,9 +74,10 @@ export function ProductScreen() {
       protein: product.protein_per100 * f,
       carbs: product.carbs_per100 * f,
       fat: product.fat_per100 * f,
-      salt: product.salt_per100 * f,
-      fibre: product.fibre_per100 * f,
-      sugar: product.sugar_per100 * f,
+      sat_fat: satFat100 * f,
+      salt: (product.salt_per100 ?? 0) * f,
+      fibre: (product.fibre_per100 ?? 0) * f,
+      sugar: (product.sugar_per100 ?? 0) * f,
       source:
         product.source === "custom"
           ? "custom"
@@ -109,6 +128,13 @@ export function ProductScreen() {
       value: `${product.fat_per100}`,
       unit: "g",
       color: MacroColor.fat,
+    },
+    {
+      key: "satFat",
+      label: "Sat fat",
+      value: `${satFat100}`,
+      unit: "g",
+      color: MacroColor.satFat,
     },
     {
       key: "salt",
@@ -164,6 +190,12 @@ export function ProductScreen() {
       color: MacroColor.fat,
     },
     {
+      label: "Sat fat",
+      value: String(preview.satFat),
+      unit: "g",
+      color: MacroColor.satFat,
+    },
+    {
       label: "Salt",
       value: String(preview.salt),
       unit: "g",
@@ -190,7 +222,6 @@ export function ProductScreen() {
         contentContainerStyle={styles.scroll}
       >
         {/* ── Header ──────────────────────────────────── */}
-        {/* ↓ paddingTop uses insets.top so header clears the status bar */}
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable
             onPress={() => navigation.goBack()}
@@ -237,6 +268,17 @@ export function ProductScreen() {
         {/* ── Serving size card ───────────────────────── */}
         <View style={styles.card}>
           <Text style={styles.cardSectionLabel}>Serving size</Text>
+
+          {/* Suggested serving caption — only when the product has one */}
+          {servingPreset ? (
+            <Text style={styles.servingSuggestion}>
+              Suggested serving:{" "}
+              <Text style={styles.servingSuggestionValue}>
+                {product.serving_label ?? `${servingPreset}g`}
+              </Text>
+            </Text>
+          ) : null}
+
           <View style={styles.servingRow}>
             <TextInput
               style={styles.servingInput}
@@ -248,8 +290,9 @@ export function ProductScreen() {
             <Text style={styles.servingUnit}>g</Text>
           </View>
           <View style={styles.presets}>
-            {PRESETS.map((v) => {
+            {presets.map((v) => {
               const active = serving === String(v);
+              const isServing = servingPreset === v;
               return (
                 <Pressable
                   key={v}
@@ -266,7 +309,7 @@ export function ProductScreen() {
                       active && styles.presetTextActive,
                     ]}
                   >
-                    {v}g
+                    {isServing ? `★ ${v}g` : `${v}g`}
                   </Text>
                 </Pressable>
               );
@@ -425,7 +468,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
 
-  // Macro grid
+  // Macro grid — 8 cells now wrap into a 2×4 layout
   macroGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -473,6 +516,17 @@ const styles = StyleSheet.create({
   },
 
   // Serving
+  servingSuggestion: {
+    fontSize: Typography.sm,
+    color: Colors.textSub,
+    marginBottom: Spacing.sm,
+    marginTop: -4,
+    fontWeight: Typography.medium,
+  },
+  servingSuggestionValue: {
+    color: Colors.green,
+    fontWeight: Typography.semibold,
+  },
   servingRow: {
     flexDirection: "row",
     alignItems: "center",

@@ -23,13 +23,14 @@ const DEFAULT_PRESETS = [50, 75, 100, 150, 200];
 
 export function ProductScreen() {
   const navigation = useNavigation<Nav>();
-  const { product, date, mealType } = useRoute<Route>().params;
-  const { addEntry, saveIngredient } = useStore();
+  const { product, date, mealType, editEntryId, initialServingG } =
+    useRoute<Route>().params;
+  const { addEntry, updateEntry, saveIngredient } = useStore();
   const insets = useSafeAreaInsets();
 
-  // ── Serving portion (Session A) ─────────────────────────────
-  // When the product carries a recommended serving, it becomes the
-  // default and the first preset chip. Falls back to old behaviour.
+  const isEditing = !!editEntryId;
+
+  // ── Serving portion ─────────────────────────────────────────
   const servingPreset =
     product.serving_g && product.serving_g > 0
       ? Math.round(product.serving_g)
@@ -41,7 +42,10 @@ export function ProductScreen() {
       )
     : DEFAULT_PRESETS;
 
-  const [serving, setServing] = useState(String(servingPreset ?? 100));
+  // When editing, start from the grams the user actually logged.
+  const [serving, setServing] = useState(
+    String(initialServingG ?? servingPreset ?? 100),
+  );
   const [saving, setSaving] = useState(false);
 
   const g = parseFloat(serving) || 0;
@@ -60,15 +64,11 @@ export function ProductScreen() {
     sugar: +((product.sugar_per100 ?? 0) * f).toFixed(1),
   };
 
-  const handleAdd = async () => {
+  const handleSubmit = async () => {
     if (!g) return;
     setSaving(true);
-    await saveIngredient(product);
-    await addEntry({
-      date,
-      meal_type: mealType,
-      name: product.name,
-      brand: product.brand,
+
+    const macros = {
       serving_g: g,
       calories: product.cal_per100 * f,
       protein: product.protein_per100 * f,
@@ -78,21 +78,36 @@ export function ProductScreen() {
       salt: (product.salt_per100 ?? 0) * f,
       fibre: (product.fibre_per100 ?? 0) * f,
       sugar: (product.sugar_per100 ?? 0) * f,
-      source:
-        product.source === "custom"
-          ? "custom"
-          : product.barcode
-            ? "barcode"
-            : "search",
-      barcode: product.barcode,
-      off_id: product.off_id,
-    });
+    };
+
+    if (isEditing) {
+      // Edit: only the serving-derived values change; identity fields stay.
+      await updateEntry(editEntryId!, macros);
+    } else {
+      await saveIngredient(product);
+      await addEntry({
+        date,
+        meal_type: mealType,
+        name: product.name,
+        brand: product.brand,
+        ...macros,
+        source:
+          product.source === "custom"
+            ? "custom"
+            : product.barcode
+              ? "barcode"
+              : "search",
+        barcode: product.barcode,
+        off_id: product.off_id,
+      });
+    }
+
     setSaving(false);
     navigation.popToTop();
   };
 
   const mealLabel = MEAL_LABELS[mealType];
-  const canAdd = g > 0;
+  const canSubmit = g > 0;
 
   const macroRows: {
     key: string;
@@ -234,7 +249,9 @@ export function ProductScreen() {
             <Text style={styles.backArrow}>‹</Text>
           </Pressable>
           <View style={styles.headerCentre}>
-            <Text style={styles.headerTitle}>Add to meal</Text>
+            <Text style={styles.headerTitle}>
+              {isEditing ? "Edit entry" : "Add to meal"}
+            </Text>
             <View style={styles.mealPill}>
               <Text style={styles.mealPillText}>{mealLabel}</Text>
             </View>
@@ -269,7 +286,6 @@ export function ProductScreen() {
         <View style={styles.card}>
           <Text style={styles.cardSectionLabel}>Serving size</Text>
 
-          {/* Suggested serving caption — only when the product has one */}
           {servingPreset ? (
             <Text style={styles.servingSuggestion}>
               Suggested serving:{" "}
@@ -346,24 +362,27 @@ export function ProductScreen() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* ── Sticky add button ───────────────────────── */}
+      {/* ── Sticky submit button ───────────────────────── */}
       <View style={styles.fab}>
         <Pressable
           style={({ pressed }) => [
             styles.addBtn,
-            !canAdd && styles.addBtnDisabled,
-            pressed && canAdd && { opacity: 0.88 },
+            !canSubmit && styles.addBtnDisabled,
+            pressed && canSubmit && { opacity: 0.88 },
           ]}
-          onPress={handleAdd}
-          disabled={!canAdd || saving}
+          onPress={handleSubmit}
+          disabled={!canSubmit || saving}
         >
           {saving ? (
             <ActivityIndicator color={Colors.bg} />
           ) : (
             <Text
-              style={[styles.addBtnText, !canAdd && styles.addBtnTextDisabled]}
+              style={[
+                styles.addBtnText,
+                !canSubmit && styles.addBtnTextDisabled,
+              ]}
             >
-              Add to {mealLabel}
+              {isEditing ? "Update entry" : `Add to ${mealLabel}`}
             </Text>
           )}
         </Pressable>
@@ -468,7 +487,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
 
-  // Macro grid — 8 cells now wrap into a 2×4 layout
+  // Macro grid — 8 cells wrap into 2×4
   macroGrid: {
     flexDirection: "row",
     flexWrap: "wrap",

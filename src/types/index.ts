@@ -137,6 +137,8 @@ export type RootStackParamList = {
     product: FoodProduct;
     date: string;
     mealType: MealType;
+    editEntryId?: string; // present → edit an existing entry
+    initialServingG?: number; // the grams originally logged
   };
 
   // ── Social screens (pushed onto the root stack, not tabs) ──

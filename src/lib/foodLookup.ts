@@ -1,12 +1,13 @@
 // ============================================================
 // src/lib/foodLookup.ts — barcode/name resolution across sources
-// Session A update: sat_fat_per100 flows through the mapper.
+// Edit-entry update: mealEntryToProduct reconstructs a FoodProduct
+// from a logged entry so ProductScreen can be reused for editing.
 // ============================================================
 
 import { supabase } from "./supabase";
 import { lookupBarcode } from "./openfoodfacts";
 import { useStore } from "../store/useStore";
-import { CustomFood, FoodProduct } from "../types";
+import { CustomFood, FoodProduct, MealEntry } from "../types";
 
 // ─── Mapping ─────────────────────────────────────────────────
 
@@ -27,6 +28,29 @@ export function customFoodToProduct(cf: CustomFood): FoodProduct {
     serving_label: cf.serving_label ?? undefined,
     source: "custom",
     custom_food_id: cf.id,
+  };
+}
+
+// Rebuild per-100g values from a logged entry (which stores
+// per-serving values + serving_g). Lets ProductScreen edit an
+// existing entry with zero extra data fetching.
+export function mealEntryToProduct(e: MealEntry): FoodProduct {
+  const g = e.serving_g > 0 ? e.serving_g : 100;
+  const per100 = (v: number | undefined | null) => ((v ?? 0) / g) * 100;
+
+  return {
+    name: e.name,
+    brand: e.brand ?? "",
+    cal_per100: Math.round(per100(e.calories)),
+    protein_per100: +per100(e.protein).toFixed(1),
+    carbs_per100: +per100(e.carbs).toFixed(1),
+    fat_per100: +per100(e.fat).toFixed(1),
+    sat_fat_per100: +per100(e.sat_fat).toFixed(1),
+    salt_per100: +per100(e.salt).toFixed(2),
+    fibre_per100: +per100(e.fibre).toFixed(1),
+    sugar_per100: +per100(e.sugar).toFixed(1),
+    barcode: e.barcode ?? undefined,
+    off_id: e.off_id ?? undefined,
   };
 }
 

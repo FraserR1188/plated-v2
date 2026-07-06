@@ -143,6 +143,8 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({ entries: s.entries.filter((e) => e.id !== id) }));
   },
 
+  updateEntry: (id: string, patch: Partial<MealEntry>) => Promise<void>;
+
   saveGoals: async (goals) => {
     const { userId } = get();
     if (!userId) return;

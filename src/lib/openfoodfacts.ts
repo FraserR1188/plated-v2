@@ -30,10 +30,20 @@ function parseProduct(p: any): FoodProduct | null {
   if (Number.isFinite(sq) && sq > 0 && squ === "g") {
     serving_g = Math.round(sq * 10) / 10;
   }
+
   const serving_label =
     typeof p.serving_size === "string" && p.serving_size.trim()
       ? p.serving_size.trim()
       : undefined;
+
+  // Fallback: extract grams from the label text, e.g. "1 tbsp (15 g)"
+  if (serving_g == null && serving_label) {
+    const m = serving_label.match(/([\d.]+)\s*g\b/i);
+    const parsed = m ? parseFloat(m[1]) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0 && parsed < 1000) {
+      serving_g = Math.round(parsed * 10) / 10;
+    }
+  }
 
   return {
     name,

@@ -3,7 +3,6 @@ import {
   View,
   Text,
   ScrollView,
-  TouchableOpacity,
   StyleSheet,
   Alert,
   RefreshControl,
@@ -15,6 +14,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { CalorieRing } from "../components/CalorieRing";
 import { MacroBar } from "../components/MacroBar";
 import { useStore, todayKey } from "../store/useStore";
+import { mealEntryToProduct } from "../lib/foodLookup";
 import { Colors, Spacing, Radius, Typography } from "../theme";
 import {
   RootStackParamList,
@@ -60,6 +60,17 @@ export function TodayScreen() {
         onPress: () => deleteEntry(entry.id),
       },
     ]);
+  };
+
+  // Tap a logged item → edit its serving size on ProductScreen
+  const handleEdit = (entry: MealEntry) => {
+    navigation.navigate("Product", {
+      product: mealEntryToProduct(entry),
+      date: entry.date,
+      mealType: entry.meal_type,
+      editEntryId: entry.id,
+      initialServingG: entry.serving_g,
+    });
   };
 
   const hour = new Date().getHours();
@@ -187,6 +198,7 @@ export function TodayScreen() {
             onAdd={() =>
               navigation.navigate("AddIngredient", { date: today, mealType })
             }
+            onEdit={handleEdit}
             onDelete={handleDelete}
           />
         ))}
@@ -259,11 +271,13 @@ function MealSection({
   mealType,
   entries,
   onAdd,
+  onEdit,
   onDelete,
 }: {
   mealType: MealType;
   entries: MealEntry[];
   onAdd: () => void;
+  onEdit: (e: MealEntry) => void;
   onDelete: (e: MealEntry) => void;
 }) {
   const calories = entries.reduce((s, e) => s + e.calories, 0);
@@ -298,10 +312,11 @@ function MealSection({
         </View>
       </View>
 
-      {/* Ingredient rows */}
+      {/* Ingredient rows — tap to edit serving, long-press to remove */}
       {entries.map((entry, i) => (
         <Pressable
           key={entry.id}
+          onPress={() => onEdit(entry)}
           onLongPress={() => onDelete(entry)}
           style={({ pressed }) => [
             mealStyles.row,

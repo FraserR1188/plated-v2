@@ -14,16 +14,22 @@ export async function exportCSV(entries: MealEntry[]): Promise<void> {
     (a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime(),
   );
 
+  // eaten_time is the real eating time (for Whoop performance correlation);
+  // logged_time is when the row was created. Both included so the export
+  // can be joined against workout timestamps.
   const header =
-    "date,time,meal_type,ingredient,brand,serving_g,calories,protein_g,carbs_g,fat_g,sat_fat_g,salt_g,fibre_g,sugar_g,source";
+    "date,eaten_time,logged_time,meal_type,ingredient,brand,serving_g,calories,protein_g,carbs_g,fat_g,sat_fat_g,salt_g,fibre_g,sugar_g,source";
 
   const rows = sorted.map((e) => {
-    const dt = new Date(e.logged_at);
-    const date = dt.toISOString().slice(0, 10);
-    const time = dt.toTimeString().slice(0, 5);
+    const logged = new Date(e.logged_at);
+    const eaten = e.eaten_at ? new Date(e.eaten_at) : logged;
+    const date = eaten.toISOString().slice(0, 10);
+    const eatenTime = eaten.toTimeString().slice(0, 5);
+    const loggedTime = logged.toTimeString().slice(0, 5);
     return [
       cell(date),
-      cell(time),
+      cell(eatenTime),
+      cell(loggedTime),
       cell(e.meal_type),
       cell(e.name),
       cell(e.brand ?? ""),
@@ -32,7 +38,7 @@ export async function exportCSV(entries: MealEntry[]): Promise<void> {
       cell(e.protein.toFixed(1)),
       cell(e.carbs.toFixed(1)),
       cell(e.fat.toFixed(1)),
-      cell((e.sat_fat ?? 0).toFixed(1)), // pre-migration rows are NULL
+      cell((e.sat_fat ?? 0).toFixed(1)),
       cell(e.salt.toFixed(2)),
       cell(e.fibre.toFixed(1)),
       cell(e.sugar.toFixed(1)),

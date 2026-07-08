@@ -45,6 +45,7 @@ export function AddIngredientScreen() {
   const [prot, setProt] = useState("");
   const [carbs, setCarbs] = useState("");
   const [fat, setFat] = useState("");
+  const [satFat, setSatFat] = useState("");
   const [salt, setSalt] = useState("");
   const [fibre, setFibre] = useState("");
   const [sugar, setSugar] = useState("");
@@ -82,6 +83,7 @@ export function AddIngredientScreen() {
       protein_per100: saved.protein_per100,
       carbs_per100: saved.carbs_per100,
       fat_per100: saved.fat_per100,
+      sat_fat_per100: saved.sat_fat_per100 ?? 0, // ← ADD
       salt_per100: saved.salt_per100,
       fibre_per100: saved.fibre_per100,
       sugar_per100: saved.sugar_per100,
@@ -104,10 +106,12 @@ export function AddIngredientScreen() {
       protein: parseFloat(prot) || 0,
       carbs: parseFloat(carbs) || 0,
       fat: parseFloat(fat) || 0,
+      sat_fat: parseFloat(satFat) || 0, // ← ADD (see 2c for the field)
       salt: parseFloat(salt) || 0,
       fibre: parseFloat(fibre) || 0,
       sugar: parseFloat(sugar) || 0,
       source: "manual",
+      eaten_at: new Date().toISOString(), // ← ADD
     });
     setSaving(false);
     navigation.goBack();
@@ -327,6 +331,18 @@ export function AddIngredientScreen() {
                     half
                   />
                   <FormField
+                    label="Sat fat"
+                    value={satFat}
+                    onChange={setSatFat}
+                    placeholder="0"
+                    unit="g"
+                    numeric
+                    accent={MacroColor.satFat}
+                    half
+                  />
+                </View>
+                <View style={styles.twoCol}>
+                  <FormField
                     label="Salt"
                     value={salt}
                     onChange={setSalt}
@@ -336,8 +352,6 @@ export function AddIngredientScreen() {
                     accent={MacroColor.salt}
                     half
                   />
-                </View>
-                <View style={styles.twoCol}>
                   <FormField
                     label="Fibre"
                     value={fibre}
@@ -348,6 +362,8 @@ export function AddIngredientScreen() {
                     accent={MacroColor.fibre}
                     half
                   />
+                </View>
+                <View style={styles.twoCol}>
                   <FormField
                     label="Sugar"
                     value={sugar}
@@ -358,6 +374,7 @@ export function AddIngredientScreen() {
                     accent={MacroColor.sugar}
                     half
                   />
+                  <View style={{ flex: 1 }} />
                 </View>
 
                 <Pressable

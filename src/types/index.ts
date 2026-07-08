@@ -42,6 +42,7 @@ export interface MealEntry {
   fibre?: number;
   sugar?: number;
   created_at?: string;
+  eaten_at?: string; // real eating time; falls back to logged_at on old rows
 }
 
 export interface Goals {
@@ -137,8 +138,9 @@ export type RootStackParamList = {
     product: FoodProduct;
     date: string;
     mealType: MealType;
-    editEntryId?: string; // present → edit an existing entry
-    initialServingG?: number; // the grams originally logged
+    editEntryId?: string;
+    initialServingG?: number;
+    initialEatenAt?: string; // ← NEW: entry's eaten_at when editing
   };
 
   // ── Social screens (pushed onto the root stack, not tabs) ──

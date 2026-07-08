@@ -19,7 +19,8 @@
         {
           "cameraPermission": "plated. needs camera access to scan food barcodes."
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "eas": {

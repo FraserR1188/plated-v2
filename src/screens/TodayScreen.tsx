@@ -15,6 +15,7 @@ import { CalorieRing } from "../components/CalorieRing";
 import { MacroBar } from "../components/MacroBar";
 import { useStore, todayKey } from "../store/useStore";
 import { mealEntryToProduct } from "../lib/foodLookup";
+import { formatTime } from "../lib/time";
 import { Colors, Spacing, Radius, Typography } from "../theme";
 import {
   RootStackParamList,
@@ -62,7 +63,7 @@ export function TodayScreen() {
     ]);
   };
 
-  // Tap a logged item → edit its serving size on ProductScreen
+  // Tap a logged item → edit its serving size / time on ProductScreen
   const handleEdit = (entry: MealEntry) => {
     navigation.navigate("Product", {
       product: mealEntryToProduct(entry),
@@ -70,6 +71,7 @@ export function TodayScreen() {
       mealType: entry.meal_type,
       editEntryId: entry.id,
       initialServingG: entry.serving_g,
+      initialEatenAt: entry.eaten_at ?? entry.logged_at,
     });
   };
 
@@ -312,43 +314,49 @@ function MealSection({
         </View>
       </View>
 
-      {/* Ingredient rows — tap to edit serving, long-press to remove */}
-      {entries.map((entry, i) => (
-        <Pressable
-          key={entry.id}
-          onPress={() => onEdit(entry)}
-          onLongPress={() => onDelete(entry)}
-          style={({ pressed }) => [
-            mealStyles.row,
-            i < entries.length - 1 && mealStyles.rowBorder,
-            pressed && { backgroundColor: Colors.surface2 },
-          ]}
-        >
-          <View style={mealStyles.rowBody}>
-            <Text style={mealStyles.rowName} numberOfLines={1}>
-              {entry.name}
-              {entry.brand ? (
-                <Text style={mealStyles.rowBrand}> · {entry.brand}</Text>
-              ) : null}
-            </Text>
-            <Text style={mealStyles.rowMacros}>
-              {Math.round(entry.serving_g)}g{"  "}
-              <Text style={{ color: Colors.blue }}>
-                P {entry.protein.toFixed(1)}
+      {/* Ingredient rows — tap to edit, long-press to remove */}
+      {entries.map((entry, i) => {
+        const time = formatTime(entry.eaten_at ?? entry.logged_at);
+        return (
+          <Pressable
+            key={entry.id}
+            onPress={() => onEdit(entry)}
+            onLongPress={() => onDelete(entry)}
+            style={({ pressed }) => [
+              mealStyles.row,
+              i < entries.length - 1 && mealStyles.rowBorder,
+              pressed && { backgroundColor: Colors.surface2 },
+            ]}
+          >
+            <View style={mealStyles.rowBody}>
+              <Text style={mealStyles.rowName} numberOfLines={1}>
+                {entry.name}
+                {entry.brand ? (
+                  <Text style={mealStyles.rowBrand}> · {entry.brand}</Text>
+                ) : null}
               </Text>
-              {"  "}
-              <Text style={{ color: Colors.amber }}>
-                C {entry.carbs.toFixed(1)}
+              <Text style={mealStyles.rowMacros}>
+                {time ? (
+                  <Text style={mealStyles.rowTime}>{time} · </Text>
+                ) : null}
+                {Math.round(entry.serving_g)}g{"  "}
+                <Text style={{ color: Colors.blue }}>
+                  P {entry.protein.toFixed(1)}
+                </Text>
+                {"  "}
+                <Text style={{ color: Colors.amber }}>
+                  C {entry.carbs.toFixed(1)}
+                </Text>
+                {"  "}
+                <Text style={{ color: Colors.coral }}>
+                  F {entry.fat.toFixed(1)}
+                </Text>
               </Text>
-              {"  "}
-              <Text style={{ color: Colors.coral }}>
-                F {entry.fat.toFixed(1)}
-              </Text>
-            </Text>
-          </View>
-          <Text style={mealStyles.rowCals}>{Math.round(entry.calories)}</Text>
-        </Pressable>
-      ))}
+            </View>
+            <Text style={mealStyles.rowCals}>{Math.round(entry.calories)}</Text>
+          </Pressable>
+        );
+      })}
 
       {/* Empty state */}
       {entries.length === 0 && (
@@ -562,6 +570,11 @@ const mealStyles = StyleSheet.create({
     color: Colors.textMuted,
     marginTop: 3,
     fontWeight: Typography.medium,
+  },
+  rowTime: {
+    color: Colors.textSub,
+    fontWeight: Typography.semibold,
+    fontVariant: ["tabular-nums"],
   },
   rowCals: {
     fontSize: Typography.sm,

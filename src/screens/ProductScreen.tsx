@@ -13,7 +13,9 @@ import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import { useStore } from "../store/useStore";
+import { formatTime, resolveEatenAt } from "../lib/time";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
 import { RootStackParamList, MEAL_LABELS } from "../types";
 
@@ -24,8 +26,14 @@ const DEFAULT_PRESETS = [50, 75, 100, 150, 200];
 
 export function ProductScreen() {
   const navigation = useNavigation<Nav>();
-  const { product, date, mealType, editEntryId, initialServingG } =
-    useRoute<Route>().params;
+  const {
+    product,
+    date,
+    mealType,
+    editEntryId,
+    initialServingG,
+    initialEatenAt,
+  } = useRoute<Route>().params;
   const { addEntry, updateEntry, deleteEntry, saveIngredient } = useStore();
   const insets = useSafeAreaInsets();
 
@@ -43,10 +51,17 @@ export function ProductScreen() {
       )
     : DEFAULT_PRESETS;
 
-  // When editing, start from the grams the user actually logged.
   const [serving, setServing] = useState(
     String(initialServingG ?? servingPreset ?? 100),
   );
+
+  // ── Eaten-at time ───────────────────────────────────────────
+  // Editing → the entry's original time; new → now.
+  const [eatenAt, setEatenAt] = useState<Date>(
+    initialEatenAt ? new Date(initialEatenAt) : new Date(),
+  );
+  const [showPicker, setShowPicker] = useState(false);
+
   const [saving, setSaving] = useState(false);
 
   const g = parseFloat(serving) || 0;
@@ -65,6 +80,24 @@ export function ProductScreen() {
     sugar: +((product.sugar_per100 ?? 0) * f).toFixed(1),
   };
 
+  const onTimeChange = (event: any, picked?: Date) => {
+    // Android fires with type 'dismissed' on cancel.
+    setShowPicker(false);
+    if (event?.type === "dismissed" || !picked) return;
+
+    if (isEditing) {
+      // Keep the entry's original calendar day; only swap the time.
+      const base = new Date(eatenAt);
+      base.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
+      setEatenAt(base);
+    } else {
+      // New entry: resolve against today with midnight roll-back.
+      setEatenAt(
+        new Date(resolveEatenAt(picked.getHours(), picked.getMinutes())),
+      );
+    }
+  };
+
   const handleSubmit = async () => {
     if (!g) return;
     setSaving(true);
@@ -79,10 +112,10 @@ export function ProductScreen() {
       salt: (product.salt_per100 ?? 0) * f,
       fibre: (product.fibre_per100 ?? 0) * f,
       sugar: (product.sugar_per100 ?? 0) * f,
+      eaten_at: eatenAt.toISOString(),
     };
 
     if (isEditing) {
-      // Edit: only the serving-derived values change; identity fields stay.
       await updateEntry(editEntryId!, macros);
     } else {
       await saveIngredient(product);
@@ -353,6 +386,37 @@ export function ProductScreen() {
               );
             })}
           </View>
+        </View>
+
+        {/* ── Timing card ─────────────────────────────── */}
+        <View style={styles.card}>
+          <Text style={styles.cardSectionLabel}>When did you eat this?</Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.timePill,
+              pressed && { opacity: 0.8 },
+            ]}
+            onPress={() => setShowPicker(true)}
+          >
+            <Text style={styles.timeClock}>🕐</Text>
+            <Text style={styles.timePillText}>
+              Plated at{" "}
+              <Text style={styles.timePillValue}>
+                {formatTime(eatenAt.toISOString())}
+              </Text>
+            </Text>
+            <Text style={styles.timeEdit}>Change</Text>
+          </Pressable>
+
+          {showPicker && (
+            <DateTimePicker
+              value={eatenAt}
+              mode="time"
+              is24Hour
+              display="default"
+              onChange={onTimeChange}
+            />
+          )}
         </View>
 
         {/* ── Live preview card ───────────────────────── */}
@@ -631,6 +695,40 @@ const styles = StyleSheet.create({
   },
   presetTextActive: {
     color: Colors.green,
+  },
+
+  // Timing
+  timePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+  },
+  timeClock: {
+    fontSize: 16,
+  },
+  timePillText: {
+    flex: 1,
+    fontSize: Typography.base,
+    color: Colors.textSub,
+    fontWeight: Typography.medium,
+  },
+  timePillValue: {
+    color: Colors.text,
+    fontWeight: Typography.bold,
+    fontVariant: ["tabular-nums"],
+  },
+  timeEdit: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.bold,
+    color: Colors.green,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
 
   // Preview

@@ -36,6 +36,7 @@ interface AppState {
     entry: Omit<MealEntry, "id" | "user_id" | "logged_at">,
   ) => Promise<void>;
   deleteEntry: (id: string) => Promise<void>;
+  updateEntry: (id: string, patch: Partial<MealEntry>) => Promise<void>;
   saveGoals: (goals: Goals) => Promise<void>;
 
   // Save an ingredient to the library (or increment use_count if it exists)
@@ -143,7 +144,21 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({ entries: s.entries.filter((e) => e.id !== id) }));
   },
 
-  updateEntry: (id: string, patch: Partial<MealEntry>) => Promise<void>;
+  updateEntry: async (id, patch) => {
+    const { data, error } = await supabase
+      .from("meal_entries")
+      .update(patch)
+      .eq("id", id)
+      .select()
+      .single();
+    if (!error && data) {
+      set((s) => ({
+        entries: s.entries.map((e) => (e.id === id ? (data as MealEntry) : e)),
+      }));
+    } else if (error) {
+      console.warn("updateEntry:", error.message);
+    }
+  },
 
   saveGoals: async (goals) => {
     const { userId } = get();

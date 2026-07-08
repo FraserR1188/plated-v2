@@ -163,7 +163,7 @@ export function AppNavigator() {
           component={ProductScreen}
           options={{
             presentation: "modal",
-            title: "Log ingredient",
+            headerShown: false,
           }}
         />
         <Stack.Screen

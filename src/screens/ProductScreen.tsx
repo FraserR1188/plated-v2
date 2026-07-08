@@ -7,6 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Pressable,
+  Alert,
 } from "react-native";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -25,7 +26,7 @@ export function ProductScreen() {
   const navigation = useNavigation<Nav>();
   const { product, date, mealType, editEntryId, initialServingG } =
     useRoute<Route>().params;
-  const { addEntry, updateEntry, saveIngredient } = useStore();
+  const { addEntry, updateEntry, deleteEntry, saveIngredient } = useStore();
   const insets = useSafeAreaInsets();
 
   const isEditing = !!editEntryId;
@@ -104,6 +105,27 @@ export function ProductScreen() {
 
     setSaving(false);
     navigation.popToTop();
+  };
+
+  const handleDelete = () => {
+    if (!editEntryId) return;
+    Alert.alert(
+      "Delete entry",
+      `Remove "${product.name}" from ${MEAL_LABELS[mealType]}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            setSaving(true);
+            await deleteEntry(editEntryId);
+            setSaving(false);
+            navigation.popToTop();
+          },
+        },
+      ],
+    );
   };
 
   const mealLabel = MEAL_LABELS[mealType];
@@ -359,7 +381,7 @@ export function ProductScreen() {
           </View>
         </View>
 
-        <View style={{ height: 100 }} />
+        <View style={{ height: isEditing ? 160 : 100 }} />
       </ScrollView>
 
       {/* ── Sticky submit button ───────────────────────── */}
@@ -386,6 +408,19 @@ export function ProductScreen() {
             </Text>
           )}
         </Pressable>
+
+        {isEditing && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.deleteBtn,
+              pressed && { opacity: 0.7 },
+            ]}
+            onPress={handleDelete}
+            disabled={saving}
+          >
+            <Text style={styles.deleteBtnText}>Delete entry</Text>
+          </Pressable>
+        )}
       </View>
     </SafeAreaView>
   );
@@ -694,5 +729,16 @@ const styles = StyleSheet.create({
   },
   addBtnTextDisabled: {
     color: Colors.textMuted,
+  },
+  deleteBtn: {
+    borderRadius: Radius.full,
+    paddingVertical: 12,
+    alignItems: "center",
+    marginTop: Spacing.sm,
+  },
+  deleteBtnText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+    color: Colors.danger,
   },
 });

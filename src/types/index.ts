@@ -1,5 +1,5 @@
 // ============================================================
-// src/types.ts — plated types including social feature
+// src/types/index.ts — plated types including social feature
 // ============================================================
 
 export type MealType = "breakfast" | "lunch" | "dinner" | "snacks";
@@ -23,6 +23,8 @@ export interface FoodProduct {
   serving_g?: number;
   source?: ProductSource; // undefined = OFF (legacy paths)
   custom_food_id?: string; // set when source === "custom"
+  image_url?: string; // OFF front-of-pack image (~200px); undefined when absent
+  image_thumb_url?: string; // small thumbnail (~100px) for list rows
 }
 
 export interface MealEntry {

@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Pressable,
   Alert,
+  Image,
 } from "react-native";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -23,6 +24,29 @@ type Nav = NativeStackNavigationProp<RootStackParamList, "Product">;
 type Route = RouteProp<RootStackParamList, "Product">;
 
 const DEFAULT_PRESETS = [50, 75, 100, 150, 200];
+
+// Product identity thumbnail. Shows the OFF (or, later, custom-food) image
+// when present; falls back to a themed placeholder tile when there's no image
+// OR when the image URL fails to load (OFF images occasionally 404).
+function ProductThumb({ uri }: { uri?: string }) {
+  const [errored, setErrored] = useState(false);
+  const showImage = !!uri && !errored;
+
+  return (
+    <View style={styles.thumb}>
+      {showImage ? (
+        <Image
+          source={{ uri }}
+          style={styles.thumbImage}
+          resizeMode="cover"
+          onError={() => setErrored(true)}
+        />
+      ) : (
+        <Text style={styles.thumbPlaceholder}>🍽️</Text>
+      )}
+    </View>
+  );
+}
 
 export function ProductScreen() {
   const navigation = useNavigation<Nav>();
@@ -315,10 +339,15 @@ export function ProductScreen() {
 
         {/* ── Product identity card ───────────────────── */}
         <View style={styles.productCard}>
-          <Text style={styles.productName}>{product.name}</Text>
-          {product.brand ? (
-            <Text style={styles.productBrand}>{product.brand}</Text>
-          ) : null}
+          <View style={styles.identityRow}>
+            <ProductThumb uri={product.image_url} />
+            <View style={styles.identityText}>
+              <Text style={styles.productName}>{product.name}</Text>
+              {product.brand ? (
+                <Text style={styles.productBrand}>{product.brand}</Text>
+              ) : null}
+            </View>
+          </View>
           <View style={styles.cardDivider} />
           <Text style={styles.refLabel}>Per 100g</Text>
           <View style={styles.macroGrid}>
@@ -584,6 +613,33 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.6,
     marginBottom: Spacing.sm,
+  },
+  identityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+  },
+  identityText: {
+    flex: 1,
+  },
+  thumb: {
+    width: 60,
+    height: 60,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surface2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  thumbImage: {
+    width: "100%",
+    height: "100%",
+  },
+  thumbPlaceholder: {
+    fontSize: 26,
+    opacity: 0.3,
   },
 
   // Macro grid — 8 cells wrap into 2×4

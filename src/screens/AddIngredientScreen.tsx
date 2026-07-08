@@ -9,11 +9,12 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  Image,
 } from "react-native";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useSafeAreaInsets } from "react-native-safe-area-context"; // ← ADD
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { searchFood } from "../lib/openfoodfacts";
 import { useStore } from "../store/useStore";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
@@ -32,7 +33,7 @@ export function AddIngredientScreen() {
   const navigation = useNavigation<Nav>();
   const { date, mealType } = useRoute<Route>().params;
   const { savedIngredients, addEntry } = useStore();
-  const insets = useSafeAreaInsets(); // ← ADD
+  const insets = useSafeAreaInsets();
 
   const [tab, setTab] = useState<Tab>("search");
   const [query, setQuery] = useState("");
@@ -83,7 +84,7 @@ export function AddIngredientScreen() {
       protein_per100: saved.protein_per100,
       carbs_per100: saved.carbs_per100,
       fat_per100: saved.fat_per100,
-      sat_fat_per100: saved.sat_fat_per100 ?? 0, // ← ADD
+      sat_fat_per100: saved.sat_fat_per100 ?? 0,
       salt_per100: saved.salt_per100,
       fibre_per100: saved.fibre_per100,
       sugar_per100: saved.sugar_per100,
@@ -106,12 +107,12 @@ export function AddIngredientScreen() {
       protein: parseFloat(prot) || 0,
       carbs: parseFloat(carbs) || 0,
       fat: parseFloat(fat) || 0,
-      sat_fat: parseFloat(satFat) || 0, // ← ADD (see 2c for the field)
+      sat_fat: parseFloat(satFat) || 0,
       salt: parseFloat(salt) || 0,
       fibre: parseFloat(fibre) || 0,
       sugar: parseFloat(sugar) || 0,
       source: "manual",
-      eaten_at: new Date().toISOString(), // ← ADD
+      eaten_at: new Date().toISOString(),
     });
     setSaving(false);
     navigation.goBack();
@@ -224,6 +225,7 @@ export function AddIngredientScreen() {
                       ]}
                       onPress={() => handleSelectProduct(p)}
                     >
+                      <RowThumb uri={p.image_thumb_url} />
                       <View style={styles.resultBody}>
                         <Text style={styles.resultName} numberOfLines={1}>
                           {p.name}
@@ -468,6 +470,31 @@ export function AddIngredientScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
+  );
+}
+
+// ─── RowThumb ────────────────────────────────────────────────────────────────
+
+// Small search-result thumbnail. Uses the ~100px OFF thumb to keep the list
+// light. Falls back to a themed placeholder tile when there's no image, or if
+// the image URL fails to load (OFF images occasionally 404).
+function RowThumb({ uri }: { uri?: string }) {
+  const [errored, setErrored] = useState(false);
+  const showImage = !!uri && !errored;
+
+  return (
+    <View style={styles.rowThumb}>
+      {showImage ? (
+        <Image
+          source={{ uri }}
+          style={styles.rowThumbImage}
+          resizeMode="cover"
+          onError={() => setErrored(true)}
+        />
+      ) : (
+        <Text style={styles.rowThumbPlaceholder}>🍽️</Text>
+      )}
+    </View>
   );
 }
 
@@ -788,6 +815,28 @@ const styles = StyleSheet.create({
   chevron: {
     fontSize: Typography.lg,
     color: Colors.textDim,
+  },
+
+  // Row thumbnail (search results)
+  rowThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.surface2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    marginRight: Spacing.sm,
+  },
+  rowThumbImage: {
+    width: "100%",
+    height: "100%",
+  },
+  rowThumbPlaceholder: {
+    fontSize: 18,
+    opacity: 0.3,
   },
 
   // No results

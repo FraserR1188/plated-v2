@@ -2,6 +2,58 @@ import { FoodProduct } from "../types";
 
 const BASE = "https://world.openfoodfacts.org";
 
+// Shared field set for both the search and barcode-lookup requests.
+// The search endpoint is field-restricted, so image fields MUST be listed
+// here or they won't come back. The barcode (v0) endpoint returns the full
+// product by default; passing fields is still safe — if honoured it trims
+// the payload, if ignored we get the full product as before.
+const FIELDS = [
+  "product_name",
+  "abbreviated_product_name",
+  "brands",
+  "nutriments",
+  "code",
+  "_id",
+  "id",
+  "serving_quantity",
+  "serving_quantity_unit",
+  "serving_size",
+  // ── images (front-of-pack, several resolutions) ──
+  "image_front_url",
+  "image_front_small_url",
+  "image_front_thumb_url",
+  "image_url",
+  "image_small_url",
+  "image_thumb_url",
+].join(",");
+
+// Pick the best available front-of-pack image. OFF exposes several
+// resolutions and both "front"-specific and generic variants; prefer the
+// front-of-pack images, fall back to generic, and return undefined when a
+// product has no image at all (many don't) so the UI can show a placeholder.
+//   image_url        → ~200px, for the ProductScreen identity card
+//   image_thumb_url  → ~100px, for search-result rows
+function pickImages(p: any): {
+  image_url?: string;
+  image_thumb_url?: string;
+} {
+  const image_url =
+    p.image_front_small_url ??
+    p.image_small_url ??
+    p.image_front_url ??
+    p.image_url ??
+    undefined;
+
+  const image_thumb_url =
+    p.image_front_thumb_url ??
+    p.image_thumb_url ??
+    p.image_front_small_url ??
+    p.image_small_url ??
+    undefined;
+
+  return { image_url, image_thumb_url };
+}
+
 function parseProduct(p: any): FoodProduct | null {
   const n = p.nutriments ?? {};
 
@@ -45,6 +97,8 @@ function parseProduct(p: any): FoodProduct | null {
     }
   }
 
+  const { image_url, image_thumb_url } = pickImages(p);
+
   return {
     name,
     brand: (p.brands ?? "").split(",")[0].trim(),
@@ -62,6 +116,8 @@ function parseProduct(p: any): FoodProduct | null {
     off_id: p._id ?? p.id,
     serving_g,
     serving_label,
+    image_url,
+    image_thumb_url,
   };
 }
 
@@ -72,9 +128,7 @@ export async function searchFood(query: string): Promise<FoodProduct[]> {
     action: "process",
     json: "1",
     page_size: "20",
-    fields:
-      "product_name,abbreviated_product_name,brands,nutriments,code,_id," +
-      "serving_quantity,serving_quantity_unit,serving_size",
+    fields: FIELDS,
     sort_by: "unique_scans_n",
     countries_tags: "en:united-kingdom", // ← UK products first
     lc: "en", // ← English language names
@@ -92,7 +146,8 @@ export async function searchFood(query: string): Promise<FoodProduct[]> {
 export async function lookupBarcode(
   barcode: string,
 ): Promise<FoodProduct | null> {
-  const res = await fetch(`${BASE}/api/v0/product/${barcode}.json`);
+  const params = new URLSearchParams({ fields: FIELDS });
+  const res = await fetch(`${BASE}/api/v0/product/${barcode}.json?${params}`);
   const data = await res.json();
   if (data.status !== 1 || !data.product) return null;
   return parseProduct({ ...data.product, code: barcode });

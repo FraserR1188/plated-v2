@@ -13,3 +13,6 @@ ios/
 .DS_Store
 Thumbs.db
 npm-debug.log*
+
+*.jks
+*.keystore

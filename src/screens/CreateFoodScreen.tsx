@@ -2,6 +2,16 @@
 // src/screens/CreateFoodScreen.tsx — add a food OFF doesn't know
 // Session A: saturated fat as the 8th macro input.
 // Session B (Half 2): front-of-pack photo capture.
+// Session B (UX): keyboard-aware scrolling.
+//
+// KEYBOARD HANDLING — why it's hand-rolled:
+// KeyboardAvoidingView does nothing on Android (behavior is undefined
+// there). Android uses adjustResize, which SHRINKS the window but does
+// not SCROLL anything — so the field you just tapped can sit behind the
+// keyboard. Fix: remember each card's y offset via onLayout, and on
+// focus scroll that card to the top of the visible area. Dynamic bottom
+// padding (= keyboard height) gives the ScrollView room to actually get
+// there; without it the lower cards have nowhere to scroll to.
 //
 // SESSION C READINESS: photo state is keyed by PhotoKind and rendered
 // via the reusable <PhotoSlot> component. Adding the nutrition-label
@@ -9,7 +19,7 @@
 // its base64 — no restructuring of this screen.
 // ============================================================
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -23,6 +33,7 @@ import {
   Image,
   Alert,
   ActionSheetIOS,
+  Keyboard,
 } from "react-native";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -55,8 +66,8 @@ type PendingPhoto = {
 // Keyed by kind so Session C's "label" photo slots in alongside "front".
 type PhotoState = Partial<Record<PhotoKind, PendingPhoto>>;
 
-// Quality/size: 0.7 JPEG at max 1200px is plenty for a product thumbnail
-// and keeps us comfortably under the bucket's 10MB ceiling.
+// Quality/size: 0.7 JPEG at a square crop is plenty for a product
+// thumbnail and keeps us well under the bucket's 10MB ceiling.
 const IMAGE_OPTIONS: ImagePicker.ImagePickerOptions = {
   mediaTypes: ["images"],
   allowsEditing: true,
@@ -98,6 +109,9 @@ const num = (s: string): number => {
   return Number.isFinite(v) && v >= 0 ? v : 0;
 };
 
+// Which cards we scroll-to-focus. Keyed so the y offsets survive re-renders.
+type CardKey = "identity" | "nutrition" | "serving";
+
 export function CreateFoodScreen() {
   const navigation = useNavigation<Nav>();
   const { date, mealType, barcode, initialName } = useRoute<Route>().params;
@@ -123,6 +137,54 @@ export function CreateFoodScreen() {
 
   // Session C: this same object will also hold photos.label
   const [photos, setPhotos] = useState<PhotoState>({});
+
+  // ── Keyboard-aware scrolling ──────────────────────────────
+
+  const scrollRef = useRef<ScrollView>(null);
+  const cardY = useRef<Partial<Record<CardKey, number>>>({});
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    // Android only fires the "did" events; iOS gives us the "will" ones,
+    // which animate in step with the keyboard.
+    const showEvent =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setKeyboardHeight(e.endCoordinates?.height ?? 0);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  // Remember where each card starts, so we can scroll it into view later.
+  const onCardLayout = (key: CardKey) => (e: any) => {
+    cardY.current[key] = e.nativeEvent.layout.y;
+  };
+
+  // Bring a card to the top of the visible area when one of its inputs is
+  // focused. The keyboard then covers only empty space beneath it.
+  const scrollToCard = (key: CardKey) => {
+    const y = cardY.current[key];
+    if (y == null) return;
+    // Small delay: on Android the resize lands a frame or two after focus,
+    // so scrolling immediately would compute against the old viewport.
+    setTimeout(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(y - 12, 0), animated: true });
+    }, 80);
+  };
+
+  const keyboardOpen = keyboardHeight > 0;
+
+  // ── Handlers ──────────────────────────────────────────────
 
   const setMacro = (key: MacroKey, value: string) =>
     setMacros((m) => ({ ...m, [key]: value }));
@@ -182,6 +244,7 @@ export function CreateFoodScreen() {
 
   // Camera / gallery / remove chooser.
   const handlePhotoPress = (kind: PhotoKind) => {
+    Keyboard.dismiss(); // don't fight the picker for screen space
     const hasPhoto = !!photos[kind];
 
     const options = hasPhoto
@@ -209,7 +272,6 @@ export function CreateFoodScreen() {
       return;
     }
 
-    // Android: Alert with up to three buttons.
     Alert.alert("Product photo", undefined, [
       { text: "Take photo", onPress: () => handlePickFromCamera(kind) },
       {
@@ -233,6 +295,7 @@ export function CreateFoodScreen() {
 
   const handleSave = async () => {
     if (!canSave) return;
+    Keyboard.dismiss();
     setSaving(true);
     setError("");
 
@@ -263,8 +326,7 @@ export function CreateFoodScreen() {
 
     // 2) Upload the photo, then write its path back to the row.
     //    Deliberately NON-FATAL: the food is already saved, so a failed
-    //    upload shouldn't block the user from logging their meal. They
-    //    keep the food; they just don't get the picture.
+    //    upload shouldn't block the user from logging their meal.
     let saved = food;
     const front = photos.front;
 
@@ -282,7 +344,6 @@ export function CreateFoodScreen() {
 
     setSaving(false);
 
-    // Straight into the normal logging flow with the new food.
     navigation.replace("Product", {
       product: customFoodToProduct(saved),
       date,
@@ -297,9 +358,16 @@ export function CreateFoodScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         <ScrollView
+          ref={scrollRef}
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.scroll}
+          contentContainerStyle={[
+            styles.scroll,
+            // Room to actually scroll the lower cards clear of the keyboard.
+            // Without this the ScrollView simply runs out of content.
+            { paddingBottom: keyboardOpen ? keyboardHeight + 24 : 100 },
+          ]}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
         >
           {/* ── Header ──────────────────────────────────── */}
           <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
@@ -329,13 +397,12 @@ export function CreateFoodScreen() {
           ) : null}
 
           {/* ── Identity card ───────────────────────────── */}
-          <View style={styles.card}>
+          <View style={styles.card} onLayout={onCardLayout("identity")}>
             <Text style={styles.cardSectionLabel}>Product</Text>
 
-            {/* Photo tile + name/brand side by side.
-                Session C: render a second <PhotoSlot kind="label" /> in
-                this row (or below it) — the state and handlers already
-                take a `kind`, so nothing else changes. */}
+            {/* Photo tile + hint side by side.
+                Session C: render a second <PhotoSlot kind="label" /> here —
+                state and handlers already take a `kind`. */}
             <View style={styles.photoRow}>
               <PhotoSlot
                 photo={photos.front}
@@ -355,6 +422,7 @@ export function CreateFoodScreen() {
               style={styles.textField}
               value={name}
               onChangeText={setName}
+              onFocus={() => scrollToCard("identity")}
               placeholder="e.g. Crunchy Oat Cereal"
               placeholderTextColor={Colors.textMuted}
               autoCapitalize="words"
@@ -366,6 +434,7 @@ export function CreateFoodScreen() {
               style={styles.textField}
               value={brand}
               onChangeText={setBrand}
+              onFocus={() => scrollToCard("identity")}
               placeholder="Optional"
               placeholderTextColor={Colors.textMuted}
               autoCapitalize="words"
@@ -377,14 +446,16 @@ export function CreateFoodScreen() {
               style={[styles.textField, styles.barcodeField]}
               value={code}
               onChangeText={setCode}
+              onFocus={() => scrollToCard("identity")}
               placeholder="Optional"
               placeholderTextColor={Colors.textMuted}
               keyboardType="number-pad"
+              returnKeyType="done"
             />
           </View>
 
           {/* ── Nutrition card ──────────────────────────── */}
-          <View style={styles.card}>
+          <View style={styles.card} onLayout={onCardLayout("nutrition")}>
             <Text style={styles.cardSectionLabel}>Nutrition per 100g</Text>
             <Text style={styles.nutritionHint}>
               Copy these from the nutrition table on the packaging. Sat fat is
@@ -405,9 +476,11 @@ export function CreateFoodScreen() {
                       style={[styles.macroInput, { color: m.color }]}
                       value={macros[m.key]}
                       onChangeText={(v) => setMacro(m.key, v)}
+                      onFocus={() => scrollToCard("nutrition")}
                       placeholder="0"
                       placeholderTextColor={`${m.color}55`}
                       keyboardType="decimal-pad"
+                      returnKeyType="done"
                       selectTextOnFocus
                       maxLength={6}
                     />
@@ -423,7 +496,7 @@ export function CreateFoodScreen() {
           </View>
 
           {/* ── Serving size card (optional) ─────────────── */}
-          <View style={styles.card}>
+          <View style={styles.card} onLayout={onCardLayout("serving")}>
             <Text style={styles.cardSectionLabel}>
               Typical serving (optional)
             </Text>
@@ -432,9 +505,11 @@ export function CreateFoodScreen() {
                 style={[styles.textField, styles.servingInput]}
                 value={servingG}
                 onChangeText={setServingG}
+                onFocus={() => scrollToCard("serving")}
                 placeholder="45"
                 placeholderTextColor={Colors.textMuted}
                 keyboardType="decimal-pad"
+                returnKeyType="done"
                 maxLength={6}
               />
               <Text style={styles.servingUnit}>g</Text>
@@ -442,31 +517,29 @@ export function CreateFoodScreen() {
                 style={[styles.textField, styles.servingLabelInput]}
                 value={servingLabel}
                 onChangeText={setServingLabel}
+                onFocus={() => scrollToCard("serving")}
                 placeholder='e.g. "1 bowl"'
                 placeholderTextColor={Colors.textMuted}
+                returnKeyType="done"
               />
             </View>
           </View>
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-          <View style={{ height: 100 }} />
-        </ScrollView>
-
-        {/* ── Sticky save button ───────────────────────── */}
-        <View style={styles.fab}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.saveBtn,
-              !canSave && styles.saveBtnDisabled,
-              pressed && canSave && { opacity: 0.88 },
-            ]}
-            onPress={handleSave}
-            disabled={!canSave}
-          >
-            {saving ? (
-              <ActivityIndicator color={Colors.bg} />
-            ) : (
+          {/* When the keyboard is up the sticky FAB is hidden, so surface a
+              save affordance inline — otherwise there's no way to submit
+              without dismissing the keyboard first. */}
+          {keyboardOpen && (
+            <Pressable
+              style={({ pressed }) => [
+                styles.inlineSaveBtn,
+                !canSave && styles.saveBtnDisabled,
+                pressed && canSave && { opacity: 0.88 },
+              ]}
+              onPress={handleSave}
+              disabled={!canSave}
+            >
               <Text
                 style={[
                   styles.saveBtnText,
@@ -475,9 +548,39 @@ export function CreateFoodScreen() {
               >
                 Save & add to {mealLabel}
               </Text>
-            )}
-          </Pressable>
-        </View>
+            </Pressable>
+          )}
+        </ScrollView>
+
+        {/* ── Sticky save button ───────────────────────── */}
+        {/* Hidden while typing: pinned to the bottom it would be squeezed
+            against the keyboard, stealing space from the fields. */}
+        {!keyboardOpen && (
+          <View style={styles.fab}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.saveBtn,
+                !canSave && styles.saveBtnDisabled,
+                pressed && canSave && { opacity: 0.88 },
+              ]}
+              onPress={handleSave}
+              disabled={!canSave}
+            >
+              {saving ? (
+                <ActivityIndicator color={Colors.bg} />
+              ) : (
+                <Text
+                  style={[
+                    styles.saveBtnText,
+                    !canSave && styles.saveBtnTextDisabled,
+                  ]}
+                >
+                  Save & add to {mealLabel}
+                </Text>
+              )}
+            </Pressable>
+          </View>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -485,8 +588,7 @@ export function CreateFoodScreen() {
 
 // ─── PhotoSlot ───────────────────────────────────────────────
 // Reusable capture tile. Kind-agnostic by design: Session C's
-// nutrition-label photo uses this same component with a different
-// `kind` passed to the handler.
+// nutrition-label photo uses this same component.
 
 function PhotoSlot({
   photo,
@@ -626,19 +728,13 @@ const styles = StyleSheet.create({
     borderStyle: "solid",
     borderColor: `${Colors.green}45`,
   },
-  photoSlotIcon: {
-    fontSize: 24,
-    opacity: 0.5,
-  },
+  photoSlotIcon: { fontSize: 24, opacity: 0.5 },
   photoSlotLabel: {
     fontSize: Typography.xs,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
   },
-  photoImage: {
-    width: "100%",
-    height: "100%",
-  },
+  photoImage: { width: "100%", height: "100%" },
   photoEditBadge: {
     position: "absolute",
     bottom: 0,
@@ -653,10 +749,7 @@ const styles = StyleSheet.create({
     fontWeight: Typography.semibold,
     color: Colors.text,
   },
-  photoHintBox: {
-    flex: 1,
-    gap: 3,
-  },
+  photoHintBox: { flex: 1, gap: 3 },
   photoHintTitle: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
@@ -737,11 +830,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: Spacing.sm,
   },
-  servingInput: {
-    width: 80,
-    textAlign: "center",
-    marginBottom: 0,
-  },
+  servingInput: { width: 80, textAlign: "center", marginBottom: 0 },
   servingUnit: {
     fontSize: Typography.base,
     fontWeight: Typography.semibold,
@@ -774,6 +863,14 @@ const styles = StyleSheet.create({
     borderRadius: Radius.full,
     paddingVertical: 16,
     alignItems: "center",
+  },
+  // Same button, but flowing in the scroll content rather than pinned.
+  inlineSaveBtn: {
+    backgroundColor: Colors.green,
+    borderRadius: Radius.full,
+    paddingVertical: 16,
+    alignItems: "center",
+    marginBottom: Spacing.md,
   },
   saveBtnDisabled: {
     backgroundColor: Colors.surface2,

@@ -1,3 +1,13 @@
+// ============================================================
+// src/screens/AddIngredientScreen.tsx
+// Session B: OFF product thumbnails on search rows.
+// Session B (cleanup): the inline manual-add form is GONE. It wrote
+// one-shot rows straight to meal_entries — foods you couldn't re-use,
+// re-scan, set a serving size for, or photograph. Every hand-created
+// food now goes through CreateFoodScreen and becomes a real
+// custom_foods row. One path, one behaviour.
+// ============================================================
+
 import React, { useState, useRef } from "react";
 import {
   View,
@@ -32,25 +42,13 @@ type Tab = "search" | "library";
 export function AddIngredientScreen() {
   const navigation = useNavigation<Nav>();
   const { date, mealType } = useRoute<Route>().params;
-  const { savedIngredients, addEntry } = useStore();
+  const { savedIngredients } = useStore();
   const insets = useSafeAreaInsets();
 
   const [tab, setTab] = useState<Tab>("search");
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodProduct[]>([]);
   const [searching, setSearching] = useState(false);
-
-  // Manual entry fields
-  const [name, setName] = useState("");
-  const [cals, setCals] = useState("");
-  const [prot, setProt] = useState("");
-  const [carbs, setCarbs] = useState("");
-  const [fat, setFat] = useState("");
-  const [satFat, setSatFat] = useState("");
-  const [salt, setSalt] = useState("");
-  const [fibre, setFibre] = useState("");
-  const [sugar, setSugar] = useState("");
-  const [saving, setSaving] = useState(false);
 
   const timer = useRef<ReturnType<typeof setTimeout>>();
 
@@ -94,32 +92,24 @@ export function AddIngredientScreen() {
     navigation.navigate("Product", { product, date, mealType });
   };
 
-  const handleManualAdd = async () => {
-    if (!name.trim() || !cals) return;
-    setSaving(true);
-    await addEntry({
+  // Hand-created foods now go through CreateFoodScreen, which gives them a
+  // custom_foods row: re-usable, scannable, serving sizes, and a photo.
+  //
+  // NOTE: `navigate`, not `replace` (Scanner uses replace because backing out
+  // to a dead scanner would be wrong). From here, backing out of CreateFood
+  // should return you to your search results with the query still typed.
+  const handleCreateFood = () =>
+    navigation.navigate("CreateFood", {
       date,
-      meal_type: mealType,
-      name: name.trim(),
-      brand: "",
-      serving_g: 100,
-      calories: parseFloat(cals) || 0,
-      protein: parseFloat(prot) || 0,
-      carbs: parseFloat(carbs) || 0,
-      fat: parseFloat(fat) || 0,
-      sat_fat: parseFloat(satFat) || 0,
-      salt: parseFloat(salt) || 0,
-      fibre: parseFloat(fibre) || 0,
-      sugar: parseFloat(sugar) || 0,
-      source: "manual",
-      eaten_at: new Date().toISOString(),
+      mealType,
+      // Pre-fill the name from whatever they searched for — the "phase 1b"
+      // path CreateFoodScreen's initialName param was always waiting for.
+      initialName: query.trim() ? query.trim() : undefined,
     });
-    setSaving(false);
-    navigation.goBack();
-  };
 
   const mealLabel = MEAL_LABELS[mealType];
-  const canAdd = name.trim().length > 0 && cals.length > 0;
+  const showNoResults =
+    !searching && query.trim().length >= 2 && results.length === 0;
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
@@ -128,7 +118,6 @@ export function AddIngredientScreen() {
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
         {/* ── Header ──────────────────────────────────── */}
-        {/* ↓ paddingTop now uses insets.top so header clears the status bar */}
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable
             onPress={() => navigation.goBack()}
@@ -266,142 +255,58 @@ export function AddIngredientScreen() {
                 </View>
               )}
 
-              {!searching && query.length >= 2 && results.length === 0 && (
-                <View style={styles.noResults}>
-                  <Text style={styles.noResultsText}>
-                    No results for "{query}"
+              {/* ── Not found → create it ─────────────────── */}
+              {/* Mirrors the Scanner's not_found treatment: name the thing
+                  that's missing, then offer the productive path. */}
+              {showNoResults && (
+                <View style={styles.notFoundCard}>
+                  <Text style={styles.notFoundEmoji}>🍽️</Text>
+                  <Text style={styles.notFoundTitle}>
+                    No results for "{query.trim()}"
                   </Text>
-                  <Text style={styles.noResultsSub}>
-                    Try a different spelling or add it manually below
+                  <Text style={styles.notFoundText}>
+                    It isn't in the food database yet. Add it once and it's
+                    yours to re-use, scan and log any time.
                   </Text>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.primaryBtn,
+                      pressed && { opacity: 0.88 },
+                    ]}
+                    onPress={handleCreateFood}
+                  >
+                    <Text style={styles.primaryBtnText} numberOfLines={1}>
+                      Create "{query.trim()}"
+                    </Text>
+                  </Pressable>
                 </View>
               )}
 
-              <View style={styles.dividerRow}>
-                <View style={styles.divLine} />
-                <Text style={styles.divLabel}>or add manually</Text>
-                <View style={styles.divLine} />
-              </View>
-
-              <View style={styles.form}>
-                <FormField
-                  label="Ingredient name"
-                  value={name}
-                  onChange={setName}
-                  placeholder="e.g. Chicken breast"
-                />
-                <FormField
-                  label="Calories"
-                  value={cals}
-                  onChange={setCals}
-                  placeholder="0"
-                  unit="kcal"
-                  numeric
-                  accent={Colors.green}
-                />
-                <View style={styles.twoCol}>
-                  <FormField
-                    label="Protein"
-                    value={prot}
-                    onChange={setProt}
-                    placeholder="0"
-                    unit="g"
-                    numeric
-                    accent={MacroColor.protein}
-                    half
-                  />
-                  <FormField
-                    label="Carbs"
-                    value={carbs}
-                    onChange={setCarbs}
-                    placeholder="0"
-                    unit="g"
-                    numeric
-                    accent={MacroColor.carbs}
-                    half
-                  />
-                </View>
-                <View style={styles.twoCol}>
-                  <FormField
-                    label="Fat"
-                    value={fat}
-                    onChange={setFat}
-                    placeholder="0"
-                    unit="g"
-                    numeric
-                    accent={MacroColor.fat}
-                    half
-                  />
-                  <FormField
-                    label="Sat fat"
-                    value={satFat}
-                    onChange={setSatFat}
-                    placeholder="0"
-                    unit="g"
-                    numeric
-                    accent={MacroColor.satFat}
-                    half
-                  />
-                </View>
-                <View style={styles.twoCol}>
-                  <FormField
-                    label="Salt"
-                    value={salt}
-                    onChange={setSalt}
-                    placeholder="0"
-                    unit="g"
-                    numeric
-                    accent={MacroColor.salt}
-                    half
-                  />
-                  <FormField
-                    label="Fibre"
-                    value={fibre}
-                    onChange={setFibre}
-                    placeholder="0"
-                    unit="g"
-                    numeric
-                    accent={MacroColor.fibre}
-                    half
-                  />
-                </View>
-                <View style={styles.twoCol}>
-                  <FormField
-                    label="Sugar"
-                    value={sugar}
-                    onChange={setSugar}
-                    placeholder="0"
-                    unit="g"
-                    numeric
-                    accent={MacroColor.sugar}
-                    half
-                  />
-                  <View style={{ flex: 1 }} />
-                </View>
-
+              {/* ── Always-available create affordance ────── */}
+              {/* Without this, creating a food from scratch would mean typing
+                  a nonsense query just to summon the empty state. */}
+              {!showNoResults && (
                 <Pressable
                   style={({ pressed }) => [
-                    styles.addBtn,
-                    !canAdd && styles.addBtnDisabled,
-                    pressed && canAdd && { opacity: 0.85 },
+                    styles.createRow,
+                    pressed && { backgroundColor: Colors.surface2 },
                   ]}
-                  onPress={handleManualAdd}
-                  disabled={!canAdd || saving}
+                  onPress={handleCreateFood}
                 >
-                  {saving ? (
-                    <ActivityIndicator color={Colors.bg} />
-                  ) : (
-                    <Text
-                      style={[
-                        styles.addBtnText,
-                        !canAdd && styles.addBtnTextDisabled,
-                      ]}
-                    >
-                      Add to {mealLabel}
+                  <View style={styles.createIconTile}>
+                    <Text style={styles.createIcon}>＋</Text>
+                  </View>
+                  <View style={styles.createBody}>
+                    <Text style={styles.createTitle}>
+                      Can't find it? Create a food
                     </Text>
-                  )}
+                    <Text style={styles.createSub}>
+                      Add the nutrition from the label — with a photo
+                    </Text>
+                  </View>
+                  <Text style={styles.chevron}>›</Text>
                 </Pressable>
-              </View>
+              )}
             </>
           )}
 
@@ -544,90 +449,6 @@ const pillStyles = StyleSheet.create({
   },
 });
 
-// ─── FormField ───────────────────────────────────────────────────────────────
-
-function FormField({
-  label,
-  value,
-  onChange,
-  placeholder,
-  unit,
-  numeric,
-  accent,
-  half,
-}: {
-  label: string;
-  value: string;
-  onChange: (t: string) => void;
-  placeholder: string;
-  unit?: string;
-  numeric?: boolean;
-  accent?: string;
-  half?: boolean;
-}) {
-  return (
-    <View style={[fieldStyles.wrap, half && fieldStyles.half]}>
-      <Text style={fieldStyles.label}>{label}</Text>
-      <View
-        style={[fieldStyles.inputRow, accent && { borderColor: `${accent}30` }]}
-      >
-        <TextInput
-          style={fieldStyles.input}
-          value={value}
-          onChangeText={onChange}
-          placeholder={placeholder}
-          placeholderTextColor={Colors.textMuted}
-          keyboardType={numeric ? "decimal-pad" : "default"}
-        />
-        {unit && (
-          <Text style={[fieldStyles.unit, accent && { color: accent }]}>
-            {unit}
-          </Text>
-        )}
-      </View>
-    </View>
-  );
-}
-
-const fieldStyles = StyleSheet.create({
-  wrap: {
-    marginBottom: Spacing.sm,
-  },
-  half: {
-    flex: 1,
-  },
-  label: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.semibold,
-    color: Colors.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    marginBottom: 5,
-  },
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 8,
-  },
-  input: {
-    flex: 1,
-    fontSize: Typography.base,
-    fontWeight: Typography.semibold,
-    color: Colors.text,
-  },
-  unit: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.semibold,
-    color: Colors.textMuted,
-    marginLeft: 4,
-  },
-});
-
 // ─── Main styles ─────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
@@ -639,12 +460,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
   },
 
-  // Header — paddingTop is applied inline via insets, so only horizontal/bottom here
+  // Header — paddingTop is applied inline via insets
   header: {
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: Spacing.md,
-    paddingBottom: Spacing.sm, // ← was paddingVertical; top is now dynamic
+    paddingBottom: Spacing.sm,
     gap: Spacing.sm,
   },
   backBtn: {
@@ -839,73 +660,95 @@ const styles = StyleSheet.create({
     opacity: 0.3,
   },
 
-  // No results
-  noResults: {
-    alignItems: "center",
-    paddingVertical: Spacing.lg,
-    gap: 4,
-  },
-  noResultsText: {
-    fontSize: Typography.sm,
-    fontWeight: Typography.semibold,
-    color: Colors.textSub,
-  },
-  noResultsSub: {
-    fontSize: Typography.xs,
-    color: Colors.textMuted,
-    textAlign: "center",
-  },
-
-  // Divider
-  dividerRow: {
-    flexDirection: "row",
+  // Not-found → create card
+  notFoundCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.lg,
     alignItems: "center",
     gap: Spacing.sm,
-    marginVertical: Spacing.md,
+    marginBottom: Spacing.md,
   },
-  divLine: {
+  notFoundEmoji: {
+    fontSize: 28,
+    opacity: 0.5,
+  },
+  notFoundTitle: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    color: Colors.text,
+    textAlign: "center",
+  },
+  notFoundText: {
+    fontSize: Typography.sm,
+    color: Colors.textSub,
+    textAlign: "center",
+    lineHeight: 20,
+    maxWidth: 280,
+  },
+  primaryBtn: {
+    backgroundColor: Colors.green,
+    borderRadius: Radius.full,
+    paddingVertical: 13,
+    paddingHorizontal: Spacing.xl,
+    alignSelf: "stretch",
+    alignItems: "center",
+    marginTop: Spacing.xs,
+  },
+  primaryBtnText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    color: Colors.bg,
+    letterSpacing: 0.1,
+  },
+
+  // Persistent create affordance
+  createRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: "dashed",
+    padding: Spacing.md,
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  createIconTile: {
+    width: 44,
+    height: 44,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.greenSoft,
+    borderWidth: 1,
+    borderColor: `${Colors.green}35`,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  createIcon: {
+    fontSize: 20,
+    color: Colors.green,
+    fontWeight: Typography.bold,
+    marginTop: -2,
+  },
+  createBody: {
     flex: 1,
-    height: 1,
-    backgroundColor: Colors.border,
+    gap: 2,
   },
-  divLabel: {
+  createTitle: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+  },
+  createSub: {
     fontSize: Typography.xs,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
   },
 
-  // Form
-  form: {
-    gap: 0,
-  },
-  twoCol: {
-    flexDirection: "row",
-    gap: Spacing.sm,
-  },
-
-  // Add button
-  addBtn: {
-    backgroundColor: Colors.green,
-    borderRadius: Radius.full,
-    paddingVertical: 14,
-    alignItems: "center",
-    marginTop: Spacing.sm,
-  },
-  addBtnDisabled: {
-    backgroundColor: Colors.surface2,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  addBtnText: {
-    fontSize: Typography.base,
-    fontWeight: Typography.bold,
-    color: Colors.bg,
-  },
-  addBtnTextDisabled: {
-    color: Colors.textMuted,
-  },
-
-  // Empty state
+  // Empty state (library)
   emptyState: {
     alignItems: "center",
     paddingVertical: Spacing.xxl,

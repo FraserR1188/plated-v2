@@ -140,6 +140,7 @@ export interface CustomFood {
   serving_label: string | null; // e.g. "1 bowl (45g)"
   created_at: string;
   image_url: string | null; // Session B: storage object PATH, not a URL
+  label_image_url: string | null;
 }
 
 // ─── Social / Profiles ───────────────────────────────────────

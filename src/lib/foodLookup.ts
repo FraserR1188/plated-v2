@@ -115,16 +115,12 @@ export async function findCustomFoodByBarcode(
   return (data as CustomFood) ?? null;
 }
 
-// image_url is optional here: the row is inserted FIRST (to get an id),
-// then the photo is uploaded to {user_id}/{id}/front.jpg, then the path
-// is written back via setCustomFoodImage(). Without the explicit
-// `image_url?`, Omit<CustomFood, ...> would make it REQUIRED and break
-// every existing createCustomFood() call site.
 export type CreateCustomFoodInput = Omit<
   CustomFood,
-  "id" | "user_id" | "created_at" | "image_url"
+  "id" | "user_id" | "created_at" | "image_url" | "label_image_url"
 > & {
   image_url?: string | null;
+  label_image_url?: string | null;
 };
 
 export async function createCustomFood(
@@ -154,6 +150,7 @@ export async function createCustomFood(
       serving_g: input.serving_g,
       serving_label: input.serving_label,
       image_url: input.image_url ?? null,
+      label_image_url: input.label_image_url ?? null,
     })
     .select()
     .single();
@@ -171,29 +168,44 @@ export async function createCustomFood(
 }
 
 /**
- * Persist the storage object path on a custom food, after the photo
- * has been uploaded. Separate from createCustomFood because the path
- * contains the row's id — which doesn't exist until the row does.
+ * Persist storage object paths on a custom food, after the photos have been
+ * uploaded. Separate from createCustomFood because the paths contain the row's
+ * id — which doesn't exist until the row does.
+ *
+ * Takes both kinds so a food with a front photo AND a label photo costs one
+ * round-trip, not two.
  *
  * Returns the updated row so callers can navigate on with fresh data.
  */
-export async function setCustomFoodImage(
+export async function setCustomFoodImages(
   customFoodId: string,
-  imagePath: string,
+  paths: { front?: string | null; label?: string | null },
 ): Promise<{ food: CustomFood | null; error: string | null }> {
   const userId = useStore.getState().userId;
   if (!userId) return { food: null, error: "Not signed in." };
 
+  // Explicit snake_case, and only the columns we actually have. Building the
+  // patch object by hand (rather than spreading) keeps this in line with the
+  // rest of the file — spreads have silently no-opped new columns before.
+  const patch: { image_url?: string; label_image_url?: string } = {};
+  if (paths.front) patch.image_url = paths.front;
+  if (paths.label) patch.label_image_url = paths.label;
+
+  // Nothing to write. Not an error — the user just didn't add a photo.
+  if (Object.keys(patch).length === 0) {
+    return { food: null, error: null };
+  }
+
   const { data, error } = await supabase
     .from("custom_foods")
-    .update({ image_url: imagePath }) // explicit snake_case, single column
+    .update(patch)
     .eq("id", customFoodId)
     .eq("user_id", userId) // belt-and-braces alongside RLS
     .select()
     .single();
 
   if (error) {
-    console.warn("setCustomFoodImage:", error.message);
+    console.warn("setCustomFoodImages:", error.message);
     return { food: null, error: "Couldn't save the photo." };
   }
   return { food: data as CustomFood, error: null };

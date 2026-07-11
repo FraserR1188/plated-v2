@@ -98,6 +98,10 @@ export async function uploadCustomFoodImage(
     const bytes = base64ToUint8Array(base64);
 
     const { error } = await supabase.storage.from(BUCKET).upload(path, bytes, {
+      // TRUE BY CONSTRUCTION, not by luck: every caller runs the bytes through
+      // prepareImage() (src/lib/imagePrep.ts), which re-encodes to JPEG. Before
+      // Session C this was an assumption, and a wrong one — the picker hands
+      // back PNG from the library and HEIC on iOS.
       contentType: "image/jpeg",
       upsert: true,
     });

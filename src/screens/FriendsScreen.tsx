@@ -5,6 +5,8 @@
 // calorie summary) and a search bar to find new users.
 // ============================================================
 
+const todayKey = () => new Date().toISOString().split("T")[0];
+
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   View,

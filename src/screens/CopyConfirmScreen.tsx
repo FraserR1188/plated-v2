@@ -146,7 +146,7 @@ export function CopyConfirmScreen() {
             >
               <View style={styles.entryMeta}>
                 <Text style={styles.entryName} numberOfLines={1}>
-                  {entry.ingredient_name}
+                  {entry.name}
                 </Text>
                 <Text style={styles.entrySub}>
                   {entry.serving_g}g · {entry.meal_type}

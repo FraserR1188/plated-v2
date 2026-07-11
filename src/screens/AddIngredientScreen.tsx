@@ -50,7 +50,7 @@ export function AddIngredientScreen() {
   const [results, setResults] = useState<FoodProduct[]>([]);
   const [searching, setSearching] = useState(false);
 
-  const timer = useRef<ReturnType<typeof setTimeout>>();
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const handleSearch = (text: string) => {
     setQuery(text);
@@ -86,8 +86,8 @@ export function AddIngredientScreen() {
       salt_per100: saved.salt_per100,
       fibre_per100: saved.fibre_per100,
       sugar_per100: saved.sugar_per100,
-      barcode: saved.barcode,
-      off_id: saved.off_id,
+      barcode: saved.barcode ?? undefined,
+      off_id: saved.off_id ?? undefined,
     };
     navigation.navigate("Product", { product, date, mealType });
   };

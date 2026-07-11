@@ -1,5 +1,11 @@
 // ============================================================
-// src/types/index.ts — plated types including social feature
+// src/types/index.ts — plated types
+//
+// VERIFIED against information_schema on 2026-07-11. Do not "tidy"
+// these field names: they mirror the real Postgres columns exactly.
+// The previous version had drifted (ingredient_name/created_at, which
+// don't exist) and TypeScript was reporting errors on CORRECT code as
+// a result. Schema is the source of truth; this file follows it.
 // ============================================================
 
 export type MealType = "breakfast" | "lunch" | "dinner" | "snacks";
@@ -23,29 +29,71 @@ export interface FoodProduct {
   serving_g?: number;
   source?: ProductSource; // undefined = OFF (legacy paths)
   custom_food_id?: string; // set when source === "custom"
-  image_url?: string; // OFF front-of-pack image (~200px); undefined when absent
-  image_thumb_url?: string; // small thumbnail (~100px) for list rows
+  unique_scans_n?: number; // OFF popularity — used as a ranking tiebreaker
+
+  // ── Images (Session B) ──
+  // image_url: a directly renderable URL (Open Food Facts).
+  // image_path: a storage object path in the PRIVATE custom-food-images
+  //   bucket — must be signed via getSignedImageUrl() before display.
+  // Two fields, not one, so consumers never have to guess which they hold.
+  image_url?: string;
+  image_thumb_url?: string;
   image_path?: string;
 }
 
+// Mirrors public.meal_entries.
+//
+// NULLABILITY WARNING: salt, fibre, sugar and sat_fat are nullable in the
+// DB — rows logged before those migrations have NULL. ALWAYS coalesce when
+// summing (`e.salt ?? 0`), or a single old row turns the whole total into
+// NaN. This has already bitten useStore/HistoryScreen/csv.
 export interface MealEntry {
   id: string;
   user_id: string;
   date: string; // 'YYYY-MM-DD'
-  meal_type: MealType;
-  ingredient_name: string;
-  brand?: string;
-  serving_g: number;
+  logged_at: string; // when the row was created (NOT NULL)
+  name: string; // NOT the old `ingredient_name`
   calories: number;
   protein: number;
   carbs: number;
   fat: number;
-  sat_fat?: number; // NULL on entries logged before the migration
-  salt?: number;
-  fibre?: number;
-  sugar?: number;
-  created_at?: string;
-  eaten_at?: string; // real eating time; falls back to logged_at on old rows
+  source: string; // 'search' | 'barcode' | 'manual' | 'custom' (NOT NULL)
+
+  barcode?: string | null;
+  off_id?: string | null;
+  serving_g: number; // nullable in DB, but every write path sets it
+  meal_type: MealType; // nullable in DB, but every write path sets it
+  brand?: string | null;
+
+  // Nullable — see the warning above.
+  salt?: number | null;
+  fibre?: number | null;
+  sugar?: number | null;
+  sat_fat?: number | null;
+
+  eaten_at?: string | null; // real eating time; falls back to logged_at
+}
+
+// Mirrors public.saved_ingredients ("My Library").
+// Previously imported by AddIngredientScreen and useStore but NEVER DEFINED —
+// it only worked because Babel strips type-only imports before bundling.
+export interface SavedIngredient {
+  id: string;
+  user_id: string;
+  name: string;
+  brand: string | null;
+  cal_per100: number;
+  protein_per100: number;
+  carbs_per100: number;
+  fat_per100: number;
+  sat_fat_per100: number; // NOT NULL in DB
+  salt_per100: number;
+  fibre_per100: number;
+  sugar_per100: number;
+  barcode: string | null;
+  off_id: string | null;
+  use_count: number;
+  created_at: string;
 }
 
 export interface Goals {
@@ -91,7 +139,7 @@ export interface CustomFood {
   serving_g: number | null;
   serving_label: string | null; // e.g. "1 bowl (45g)"
   created_at: string;
-  image_url: string | null; // ← ADD: storage object PATH (private bucket), not a URL
+  image_url: string | null; // Session B: storage object PATH, not a URL
 }
 
 // ─── Social / Profiles ───────────────────────────────────────
@@ -104,19 +152,17 @@ export interface Profile {
   created_at: string;
 }
 
-// Profile enriched with follow state — used in FriendsScreen
 export interface ProfileWithFollowState extends Profile {
-  is_following: boolean; // viewer follows this user
-  follows_you: boolean; // this user follows the viewer (for "follows you" badge)
+  is_following: boolean;
+  follows_you: boolean;
   follower_count: number;
   following_count: number;
 }
 
-// Summary row shown on the Friends list
 export interface FriendSummary {
   profile: Profile;
-  today_calories: number; // sum of their entries for today
-  calorie_goal: number; // their calorie goal (if shared; 0 if not available)
+  today_calories: number;
+  calorie_goal: number;
   is_following: boolean;
 }
 
@@ -126,14 +172,13 @@ export type CopyScope = "ingredient" | "meal_section" | "full_day";
 
 export interface CopyPayload {
   scope: CopyScope;
-  entries: MealEntry[]; // the entries to copy
-  sourceName: string; // e.g. "Alex's Breakfast" or "Alex's full day"
-  targetMeal: MealType | null; // null when scope is full_day (preserve original meals)
+  entries: MealEntry[];
+  sourceName: string; // e.g. "Alex's Breakfast"
+  targetMeal: MealType | null; // null when full_day (preserve original meals)
 }
 
 // ─── Navigation ──────────────────────────────────────────────
 
-// Stack navigator — full screen stack that wraps the tabs
 export type RootStackParamList = {
   MainTabs: undefined;
   AddIngredient: { date: string; mealType: MealType };
@@ -144,36 +189,31 @@ export type RootStackParamList = {
     mealType: MealType;
     editEntryId?: string;
     initialServingG?: number;
-    initialEatenAt?: string; // ← NEW: entry's eaten_at when editing
+    initialEatenAt?: string;
   };
 
-  // ── Social screens (pushed onto the root stack, not tabs) ──
-
-  // Full log view for a connected user — pushed from FriendsScreen
   ConnectedUserLog: {
     profile: Profile;
-    date: string; // defaults to today, date-picker available on screen
+    date: string;
   };
 
-  // Confirm + execute a copy action
   CopyConfirm: {
     payload: CopyPayload;
-    date: string; // target date on the viewer's log
+    date: string;
   };
 
   CreateFood: {
     date: string;
     mealType: MealType;
-    barcode?: string; // pre-filled from a failed scan
-    initialName?: string; // pre-filled from a failed name search (phase 1b)
+    barcode?: string;
+    initialName?: string;
   };
 };
 
-// Bottom tab navigator
 export type BottomTabParamList = {
   Today: undefined;
   History: undefined;
-  Friends: undefined; // ← new tab
+  Friends: undefined;
   Settings: undefined;
 };
 

@@ -225,7 +225,7 @@ export async function getFollowing(): Promise<ProfileWithFollowState[]> {
       if (!profile) return null;
       return {
         ...profile,
-        is_following: true,
+        is_following: true as boolean,
         follows_you: theirFollowSet.has(profile.user_id),
         follower_count: countMap.get(profile.user_id)?.follower_count ?? 0,
         following_count: countMap.get(profile.user_id)?.following_count ?? 0,
@@ -279,7 +279,7 @@ export async function copyEntriesToMyLog(payload: CopyPayload): Promise<void> {
     user_id: user.id,
     date: today,
     meal_type: payload.targetMeal ?? entry.meal_type,
-    ingredient_name: entry.ingredient_name,
+    name: entry.name,
     brand: entry.brand ?? null,
     serving_g: entry.serving_g,
     calories: entry.calories,

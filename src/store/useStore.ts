@@ -60,9 +60,9 @@ function sumMacros(entries: MealEntry[]): DayTotals {
     carbs: entries.reduce((s, e) => s + e.carbs, 0),
     fat: entries.reduce((s, e) => s + e.fat, 0),
     satFat: entries.reduce((s, e) => s + (e.sat_fat ?? 0), 0),
-    salt: entries.reduce((s, e) => s + e.salt, 0),
-    fibre: entries.reduce((s, e) => s + e.fibre, 0),
-    sugar: entries.reduce((s, e) => s + e.sugar, 0),
+    salt: entries.reduce((s, e) => s + (e.salt ?? 0), 0),
+    fibre: entries.reduce((s, e) => s + (e.fibre ?? 0), 0),
+    sugar: entries.reduce((s, e) => s + (e.sugar ?? 0), 0),
   };
 }
 

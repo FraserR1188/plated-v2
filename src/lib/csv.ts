@@ -39,9 +39,9 @@ export async function exportCSV(entries: MealEntry[]): Promise<void> {
       cell(e.carbs.toFixed(1)),
       cell(e.fat.toFixed(1)),
       cell((e.sat_fat ?? 0).toFixed(1)),
-      cell(e.salt.toFixed(2)),
-      cell(e.fibre.toFixed(1)),
-      cell(e.sugar.toFixed(1)),
+      cell((e.salt ?? 0).toFixed(2)),
+      cell((e.fibre ?? 0).toFixed(1)),
+      cell((e.sugar ?? 0).toFixed(1)),
       cell(e.source),
     ].join(",");
   });

@@ -147,7 +147,7 @@ export function AppNavigator() {
           component={AddIngredientScreen}
           options={{
             presentation: "modal",
-            title: "Add ingredient",
+            headerShown: false,
           }}
         />
         <Stack.Screen

@@ -27,9 +27,9 @@ export function HistoryScreen() {
       carbs: de.reduce((s, e) => s + e.carbs, 0),
       fat: de.reduce((s, e) => s + e.fat, 0),
       satFat: de.reduce((s, e) => s + (e.sat_fat ?? 0), 0),
-      salt: de.reduce((s, e) => s + e.salt, 0),
-      fibre: de.reduce((s, e) => s + e.fibre, 0),
-      sugar: de.reduce((s, e) => s + e.sugar, 0),
+      salt: de.reduce((s, e) => s + (e.salt ?? 0), 0),
+      fibre: de.reduce((s, e) => s + (e.fibre ?? 0), 0),
+      sugar: de.reduce((s, e) => s + (e.sugar ?? 0), 0),
       count: de.length,
     };
   });

@@ -6,6 +6,8 @@
 // or the entire day into their own log.
 // ============================================================
 
+const todayKey = () => new Date().toISOString().split("T")[0];
+
 import React, {
   useState,
   useCallback,
@@ -66,7 +68,7 @@ function entryToProduct(entry: MealEntry): FoodProduct {
   // Reconstruct per-100g values from the stored totals + serving_g
   const factor = entry.serving_g > 0 ? 100 / entry.serving_g : 1;
   return {
-    name: entry.ingredient_name,
+    name: entry.name,
     brand: entry.brand ?? "",
     cal_per100: Math.round(entry.calories * factor),
     protein_per100: parseFloat((entry.protein * factor).toFixed(1)),
@@ -148,7 +150,7 @@ function IngredientRow({
     <View style={styles.ingredientRow}>
       <View style={styles.ingredientMeta}>
         <Text style={styles.ingredientName} numberOfLines={1}>
-          {entry.ingredient_name}
+          {entry.name}
         </Text>
         <Text style={styles.ingredientSub}>
           {entry.serving_g}g · {Math.round(entry.calories)} kcal

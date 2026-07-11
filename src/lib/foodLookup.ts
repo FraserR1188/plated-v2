@@ -1,7 +1,11 @@
 // ============================================================
 // src/lib/foodLookup.ts — barcode/name resolution across sources
-// Edit-entry update: mealEntryToProduct reconstructs a FoodProduct
-// from a logged entry so ProductScreen can be reused for editing.
+// Session B (Half 2): custom food images threaded through.
+//   • CreateCustomFoodInput makes image_url optional (it's set
+//     AFTER insert, once we have an id to build the path from)
+//   • createCustomFood uses EXPLICIT snake_case mapping, not a
+//     spread — spreads have silently no-opped new columns before
+//   • setCustomFoodImage persists the storage path post-upload
 // ============================================================
 
 import { supabase } from "./supabase";
@@ -28,6 +32,10 @@ export function customFoodToProduct(cf: CustomFood): FoodProduct {
     serving_label: cf.serving_label ?? undefined,
     source: "custom",
     custom_food_id: cf.id,
+    // NOTE: image_path, not image_url. The bucket is private, so this is
+    // a storage OBJECT PATH that must be signed before it can be rendered.
+    // image_url stays reserved for directly-renderable URLs (i.e. OFF).
+    image_path: cf.image_url ?? undefined,
   };
 }
 
@@ -107,10 +115,17 @@ export async function findCustomFoodByBarcode(
   return (data as CustomFood) ?? null;
 }
 
+// image_url is optional here: the row is inserted FIRST (to get an id),
+// then the photo is uploaded to {user_id}/{id}/front.jpg, then the path
+// is written back via setCustomFoodImage(). Without the explicit
+// `image_url?`, Omit<CustomFood, ...> would make it REQUIRED and break
+// every existing createCustomFood() call site.
 export type CreateCustomFoodInput = Omit<
   CustomFood,
-  "id" | "user_id" | "created_at"
->;
+  "id" | "user_id" | "created_at" | "image_url"
+> & {
+  image_url?: string | null;
+};
 
 export async function createCustomFood(
   input: CreateCustomFoodInput,
@@ -118,9 +133,28 @@ export async function createCustomFood(
   const userId = useStore.getState().userId;
   if (!userId) return { food: null, error: "Not signed in." };
 
+  // EXPLICIT snake_case mapping — do NOT spread objects into Supabase
+  // inserts. Spreads have silently no-opped new columns on this project
+  // before; listing every column makes that class of bug impossible.
   const { data, error } = await supabase
     .from("custom_foods")
-    .insert({ user_id: userId, ...input })
+    .insert({
+      user_id: userId,
+      name: input.name,
+      brand: input.brand,
+      barcode: input.barcode,
+      cal_per100: input.cal_per100,
+      protein_per100: input.protein_per100,
+      carbs_per100: input.carbs_per100,
+      fat_per100: input.fat_per100,
+      sat_fat_per100: input.sat_fat_per100,
+      salt_per100: input.salt_per100,
+      fibre_per100: input.fibre_per100,
+      sugar_per100: input.sugar_per100,
+      serving_g: input.serving_g,
+      serving_label: input.serving_label,
+      image_url: input.image_url ?? null,
+    })
     .select()
     .single();
 
@@ -132,6 +166,35 @@ export async function createCustomFood(
         ? "You've already created a food with this barcode."
         : "Couldn't save — check your connection and try again.";
     return { food: null, error: msg };
+  }
+  return { food: data as CustomFood, error: null };
+}
+
+/**
+ * Persist the storage object path on a custom food, after the photo
+ * has been uploaded. Separate from createCustomFood because the path
+ * contains the row's id — which doesn't exist until the row does.
+ *
+ * Returns the updated row so callers can navigate on with fresh data.
+ */
+export async function setCustomFoodImage(
+  customFoodId: string,
+  imagePath: string,
+): Promise<{ food: CustomFood | null; error: string | null }> {
+  const userId = useStore.getState().userId;
+  if (!userId) return { food: null, error: "Not signed in." };
+
+  const { data, error } = await supabase
+    .from("custom_foods")
+    .update({ image_url: imagePath }) // explicit snake_case, single column
+    .eq("id", customFoodId)
+    .eq("user_id", userId) // belt-and-braces alongside RLS
+    .select()
+    .single();
+
+  if (error) {
+    console.warn("setCustomFoodImage:", error.message);
+    return { food: null, error: "Couldn't save the photo." };
   }
   return { food: data as CustomFood, error: null };
 }

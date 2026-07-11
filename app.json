@@ -5,19 +5,24 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
+    "scheme": "plated",
     "android": {
-      "package": "com.yourname.plated",
-      "permissions": [
-        "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
-      ]
+      "package": "com.fraseranalytics.plated",
+      "permissions": ["android.permission.CAMERA"]
     },
     "plugins": [
       "expo-dev-client",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "plated needs access to your photos so you can add a picture to a food you've created.",
+          "cameraPermission": "plated needs camera access so you can photograph a food you've created."
+        }
+      ],
+      [
         "expo-camera",
         {
-          "cameraPermission": "plated. needs camera access to scan food barcodes."
+          "cameraPermission": "plated needs camera access to scan food barcodes."
         }
       ],
       "@react-native-community/datetimepicker"

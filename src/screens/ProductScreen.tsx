@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react"; // ← add useEffect
 import {
   View,
   Text,
@@ -19,24 +19,45 @@ import { useStore } from "../store/useStore";
 import { formatTime, resolveEatenAt } from "../lib/time";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
 import { RootStackParamList, MEAL_LABELS } from "../types";
+import { getSignedImageUrl } from "../lib/customFoodImages";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Product">;
 type Route = RouteProp<RootStackParamList, "Product">;
 
 const DEFAULT_PRESETS = [50, 75, 100, 150, 200];
 
-// Product identity thumbnail. Shows the OFF (or, later, custom-food) image
-// when present; falls back to a themed placeholder tile when there's no image
-// OR when the image URL fails to load (OFF images occasionally 404).
-function ProductThumb({ uri }: { uri?: string }) {
+// Product identity thumbnail.
+//   • OFF products arrive with image_url — a directly renderable URL.
+//   • Custom foods arrive with image_path — a path into the PRIVATE bucket,
+//     which has to be signed before it can be displayed.
+// Falls back to a themed placeholder when there's no image, the signing
+// fails, or the image itself fails to load.
+function ProductThumb({ uri, path }: { uri?: string; path?: string }) {
   const [errored, setErrored] = useState(false);
-  const showImage = !!uri && !errored;
+  const [signedUrl, setSignedUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!path) {
+      setSignedUrl(null);
+      return;
+    }
+    getSignedImageUrl(path).then((url) => {
+      if (!cancelled) setSignedUrl(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
+
+  const source = uri ?? signedUrl ?? undefined;
+  const showImage = !!source && !errored;
 
   return (
     <View style={styles.thumb}>
       {showImage ? (
         <Image
-          source={{ uri }}
+          source={{ uri: source }}
           style={styles.thumbImage}
           resizeMode="cover"
           onError={() => setErrored(true)}
@@ -340,7 +361,7 @@ export function ProductScreen() {
         {/* ── Product identity card ───────────────────── */}
         <View style={styles.productCard}>
           <View style={styles.identityRow}>
-            <ProductThumb uri={product.image_url} />
+            <ProductThumb uri={product.image_url} path={product.image_path} />
             <View style={styles.identityText}>
               <Text style={styles.productName}>{product.name}</Text>
               {product.brand ? (

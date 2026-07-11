@@ -25,6 +25,7 @@ export interface FoodProduct {
   custom_food_id?: string; // set when source === "custom"
   image_url?: string; // OFF front-of-pack image (~200px); undefined when absent
   image_thumb_url?: string; // small thumbnail (~100px) for list rows
+  image_path?: string;
 }
 
 export interface MealEntry {
@@ -90,6 +91,7 @@ export interface CustomFood {
   serving_g: number | null;
   serving_label: string | null; // e.g. "1 bowl (45g)"
   created_at: string;
+  image_url: string | null; // ← ADD: storage object PATH (private bucket), not a URL
 }
 
 // ─── Social / Profiles ───────────────────────────────────────

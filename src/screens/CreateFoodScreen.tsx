@@ -1,6 +1,12 @@
 // ============================================================
 // src/screens/CreateFoodScreen.tsx — add a food OFF doesn't know
-// Session A update: saturated fat as the 8th macro input.
+// Session A: saturated fat as the 8th macro input.
+// Session B (Half 2): front-of-pack photo capture.
+//
+// SESSION C READINESS: photo state is keyed by PhotoKind and rendered
+// via the reusable <PhotoSlot> component. Adding the nutrition-label
+// photo later = render a second <PhotoSlot kind="label" /> and handle
+// its base64 — no restructuring of this screen.
 // ============================================================
 
 import React, { useMemo, useState } from "react";
@@ -14,6 +20,9 @@ import {
   Pressable,
   KeyboardAvoidingView,
   Platform,
+  Image,
+  Alert,
+  ActionSheetIOS,
 } from "react-native";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -21,12 +30,40 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
-import { createCustomFood, customFoodToProduct } from "../lib/foodLookup";
+import * as ImagePicker from "expo-image-picker";
+import {
+  createCustomFood,
+  customFoodToProduct,
+  setCustomFoodImage,
+} from "../lib/foodLookup";
+import { uploadCustomFoodImage, type PhotoKind } from "../lib/customFoodImages";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
 import { RootStackParamList, MEAL_LABELS } from "../types";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "CreateFood">;
 type Route = RouteProp<RootStackParamList, "CreateFood">;
+
+// ─── Photo state ─────────────────────────────────────────────
+
+// A captured-but-not-yet-uploaded photo. Upload happens on save, once
+// the custom_foods row exists and we have a real id for the path.
+type PendingPhoto = {
+  uri: string; // local file URI, for the preview
+  base64: string; // what we actually upload
+};
+
+// Keyed by kind so Session C's "label" photo slots in alongside "front".
+type PhotoState = Partial<Record<PhotoKind, PendingPhoto>>;
+
+// Quality/size: 0.7 JPEG at max 1200px is plenty for a product thumbnail
+// and keeps us comfortably under the bucket's 10MB ceiling.
+const IMAGE_OPTIONS: ImagePicker.ImagePickerOptions = {
+  mediaTypes: ["images"],
+  allowsEditing: true,
+  aspect: [1, 1],
+  quality: 0.7,
+  base64: true,
+};
 
 // ─── Macro input definitions ─────────────────────────────────
 
@@ -84,8 +121,14 @@ export function CreateFoodScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  // Session C: this same object will also hold photos.label
+  const [photos, setPhotos] = useState<PhotoState>({});
+
   const setMacro = (key: MacroKey, value: string) =>
     setMacros((m) => ({ ...m, [key]: value }));
+
+  const setPhoto = (kind: PhotoKind, photo: PendingPhoto | undefined) =>
+    setPhotos((p) => ({ ...p, [kind]: photo }));
 
   // Name + calories are the minimum for a useful entry.
   const canSave = useMemo(
@@ -95,12 +138,107 @@ export function CreateFoodScreen() {
 
   const mealLabel = MEAL_LABELS[mealType];
 
+  // ── Photo capture ─────────────────────────────────────────
+
+  const handlePickFromCamera = async (kind: PhotoKind) => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert(
+        "Camera access needed",
+        "Enable camera access in Settings to photograph your food.",
+      );
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync(IMAGE_OPTIONS);
+    applyPickerResult(kind, result);
+  };
+
+  const handlePickFromLibrary = async (kind: PhotoKind) => {
+    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert(
+        "Photos access needed",
+        "Enable photo access in Settings to choose an existing photo.",
+      );
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync(IMAGE_OPTIONS);
+    applyPickerResult(kind, result);
+  };
+
+  const applyPickerResult = (
+    kind: PhotoKind,
+    result: ImagePicker.ImagePickerResult,
+  ) => {
+    if (result.canceled) return;
+    const asset = result.assets?.[0];
+    if (!asset?.base64 || !asset.uri) {
+      setError("Couldn't read that image — try another.");
+      return;
+    }
+    setError("");
+    setPhoto(kind, { uri: asset.uri, base64: asset.base64 });
+  };
+
+  // Camera / gallery / remove chooser.
+  const handlePhotoPress = (kind: PhotoKind) => {
+    const hasPhoto = !!photos[kind];
+
+    const options = hasPhoto
+      ? ["Take photo", "Choose from library", "Remove photo", "Cancel"]
+      : ["Take photo", "Choose from library", "Cancel"];
+    const cancelIndex = options.length - 1;
+    const destructiveIndex = hasPhoto ? 2 : undefined;
+
+    const handleChoice = (index: number) => {
+      if (index === 0) handlePickFromCamera(kind);
+      else if (index === 1) handlePickFromLibrary(kind);
+      else if (hasPhoto && index === 2) setPhoto(kind, undefined);
+    };
+
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        {
+          options,
+          cancelButtonIndex: cancelIndex,
+          destructiveButtonIndex: destructiveIndex,
+          userInterfaceStyle: "dark",
+        },
+        handleChoice,
+      );
+      return;
+    }
+
+    // Android: Alert with up to three buttons.
+    Alert.alert("Product photo", undefined, [
+      { text: "Take photo", onPress: () => handlePickFromCamera(kind) },
+      {
+        text: "Choose from library",
+        onPress: () => handlePickFromLibrary(kind),
+      },
+      ...(hasPhoto
+        ? [
+            {
+              text: "Remove photo",
+              style: "destructive" as const,
+              onPress: () => setPhoto(kind, undefined),
+            },
+          ]
+        : []),
+      { text: "Cancel", style: "cancel" as const },
+    ]);
+  };
+
+  // ── Save ──────────────────────────────────────────────────
+
   const handleSave = async () => {
     if (!canSave) return;
     setSaving(true);
     setError("");
 
     const sg = num(servingG);
+
+    // 1) Insert the row first — we need its id to build the storage path.
     const { food, error: err } = await createCustomFood({
       name: name.trim(),
       brand: brand.trim() ? brand.trim() : null,
@@ -117,16 +255,36 @@ export function CreateFoodScreen() {
       serving_label: servingLabel.trim() ? servingLabel.trim() : null,
     });
 
-    setSaving(false);
-
     if (!food) {
+      setSaving(false);
       setError(err ?? "Couldn't save — please try again.");
       return;
     }
 
+    // 2) Upload the photo, then write its path back to the row.
+    //    Deliberately NON-FATAL: the food is already saved, so a failed
+    //    upload shouldn't block the user from logging their meal. They
+    //    keep the food; they just don't get the picture.
+    let saved = food;
+    const front = photos.front;
+
+    if (front) {
+      const { path } = await uploadCustomFoodImage(
+        food.id,
+        front.base64,
+        "front",
+      );
+      if (path) {
+        const { food: updated } = await setCustomFoodImage(food.id, path);
+        if (updated) saved = updated;
+      }
+    }
+
+    setSaving(false);
+
     // Straight into the normal logging flow with the new food.
     navigation.replace("Product", {
-      product: customFoodToProduct(food),
+      product: customFoodToProduct(saved),
       date,
       mealType,
     });
@@ -173,6 +331,24 @@ export function CreateFoodScreen() {
           {/* ── Identity card ───────────────────────────── */}
           <View style={styles.card}>
             <Text style={styles.cardSectionLabel}>Product</Text>
+
+            {/* Photo tile + name/brand side by side.
+                Session C: render a second <PhotoSlot kind="label" /> in
+                this row (or below it) — the state and handlers already
+                take a `kind`, so nothing else changes. */}
+            <View style={styles.photoRow}>
+              <PhotoSlot
+                photo={photos.front}
+                onPress={() => handlePhotoPress("front")}
+                disabled={saving}
+              />
+              <View style={styles.photoHintBox}>
+                <Text style={styles.photoHintTitle}>Front of pack</Text>
+                <Text style={styles.photoHintText}>
+                  Optional. Tap to take a photo or choose one from your library.
+                </Text>
+              </View>
+            </View>
 
             <Text style={styles.fieldLabel}>Name *</Text>
             <TextInput
@@ -307,6 +483,51 @@ export function CreateFoodScreen() {
   );
 }
 
+// ─── PhotoSlot ───────────────────────────────────────────────
+// Reusable capture tile. Kind-agnostic by design: Session C's
+// nutrition-label photo uses this same component with a different
+// `kind` passed to the handler.
+
+function PhotoSlot({
+  photo,
+  onPress,
+  disabled,
+}: {
+  photo?: PendingPhoto;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.photoSlot,
+        photo && styles.photoSlotFilled,
+        pressed && { opacity: 0.75 },
+      ]}
+    >
+      {photo ? (
+        <>
+          <Image
+            source={{ uri: photo.uri }}
+            style={styles.photoImage}
+            resizeMode="cover"
+          />
+          <View style={styles.photoEditBadge}>
+            <Text style={styles.photoEditBadgeText}>Edit</Text>
+          </View>
+        </>
+      ) : (
+        <>
+          <Text style={styles.photoSlotIcon}>📷</Text>
+          <Text style={styles.photoSlotLabel}>Add photo</Text>
+        </>
+      )}
+    </Pressable>
+  );
+}
+
 // ─── Styles ──────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
@@ -379,6 +600,72 @@ const styles = StyleSheet.create({
     textTransform: "uppercase",
     letterSpacing: 0.6,
     marginBottom: Spacing.sm,
+  },
+
+  // ── Photo tile ──
+  photoRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+    marginBottom: Spacing.sm,
+  },
+  photoSlot: {
+    width: 88,
+    height: 88,
+    borderRadius: Radius.md,
+    backgroundColor: Colors.surface2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+    gap: 4,
+  },
+  photoSlotFilled: {
+    borderStyle: "solid",
+    borderColor: `${Colors.green}45`,
+  },
+  photoSlotIcon: {
+    fontSize: 24,
+    opacity: 0.5,
+  },
+  photoSlotLabel: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+  },
+  photoImage: {
+    width: "100%",
+    height: "100%",
+  },
+  photoEditBadge: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingVertical: 3,
+    alignItems: "center",
+  },
+  photoEditBadgeText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+  },
+  photoHintBox: {
+    flex: 1,
+    gap: 3,
+  },
+  photoHintTitle: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+  },
+  photoHintText: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    lineHeight: 17,
   },
 
   fieldLabel: {

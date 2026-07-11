@@ -59,6 +59,16 @@ export function mealEntryToProduct(e: MealEntry): FoodProduct {
     sugar_per100: +per100(e.sugar).toFixed(1),
     barcode: e.barcode ?? undefined,
     off_id: e.off_id ?? undefined,
+
+    // ── ADD ──
+    // Provenance and imagery, snapshotted on the entry at log time. Without
+    // these, editing a logged entry produced a FoodProduct with no picture and
+    // no idea where it came from — so ProductThumb fell back to the placeholder
+    // and the thumbnail "disappeared" on edit.
+    image_url: e.image_url ?? undefined,
+    image_path: e.image_path ?? undefined,
+    custom_food_id: e.custom_food_id ?? undefined,
+    source: e.source === "custom" ? "custom" : "off",
   };
 }
 

@@ -249,22 +249,44 @@ export async function getEntriesForUser(
     .select("*")
     .eq("user_id", userId)
     .eq("date", date)
-    .order("created_at", { ascending: true });
+    // NOT created_at — that column does not exist on meal_entries (see the note
+    // at the top of src/types/index.ts). eaten_at is nullable on old rows, so
+    // nullsFirst: false pushes them to the end rather than the front.
+    .order("eaten_at", { ascending: true, nullsFirst: false });
 
   if (error) throw error;
   return data ?? [];
 }
 
-// ─── Copying entries ─────────────────────────────────────────
-
 /**
  * Copy a set of MealEntry rows into the current user's log.
  *
- * - For ingredient / meal_section copies: targetMeal overrides the meal_type.
- * - For full_day copies: each entry keeps its original meal_type.
+ * - ingredient / meal_section copies: targetMeal overrides meal_type.
+ * - full_day copies: each entry keeps its original meal_type.
  *
- * Serving sizes and all macro values are copied verbatim — the user
- * can adjust via ProductScreen for single ingredient copies.
+ * Serving sizes and all macros are copied verbatim; the user can adjust a single
+ * copied ingredient afterwards via ProductScreen.
+ *
+ * IMAGES — the rule falls out of the storage model, not out of taste:
+ *
+ *   image_url  (Open Food Facts — a public, directly renderable URL)
+ *              → COPIED. Works immediately, nothing to sign.
+ *
+ *   image_path (custom food — an object path in the PRIVATE bucket, under the
+ *              ORIGINAL OWNER's folder: {their_id}/{food_id}/front.jpg)
+ *              → NOT copied. Storage RLS is keyed on that folder, so
+ *              getSignedImageUrl() would refuse to sign it — we'd render a
+ *              broken placeholder AND embed their user id in your row for
+ *              nothing.
+ *
+ *   custom_food_id
+ *              → NOT copied. It's a foreign key into THEIR custom_foods, which
+ *              your RLS won't let you read.
+ *
+ * Net effect: copying a friend's branded food keeps the picture. Copying their
+ * homemade food doesn't. The alternatives (duplicate the bytes into your own
+ * folder; or loosen the bucket RLS so followers can sign your photos) are both
+ * real work, and the second weakens a privacy claim we've already published.
  */
 export async function copyEntriesToMyLog(payload: CopyPayload): Promise<void> {
   const {
@@ -273,26 +295,48 @@ export async function copyEntriesToMyLog(payload: CopyPayload): Promise<void> {
   if (!user) throw new Error("Not authenticated");
 
   const today = todayKey();
+  const now = new Date().toISOString();
 
   const rows = payload.entries.map((entry) => ({
-    // Strip source IDs — Supabase generates new ones
+    // New row, new owner, new day. Source ids are deliberately not carried over.
     user_id: user.id,
     date: today,
     meal_type: payload.targetMeal ?? entry.meal_type,
+    logged_at: now,
+
+    // You are eating this NOW, not when they ate it. eaten_at is what the WHOOP
+    // correlation will key on, so it must be the time it went in YOUR mouth.
+    eaten_at: now,
+
     name: entry.name,
     brand: entry.brand ?? null,
+
     serving_g: entry.serving_g,
     calories: entry.calories,
     protein: entry.protein,
     carbs: entry.carbs,
     fat: entry.fat,
+    sat_fat: entry.sat_fat ?? 0, // ← WAS MISSING. Silently zeroed every copy.
     salt: entry.salt ?? 0,
     fibre: entry.fibre ?? 0,
     sugar: entry.sugar ?? 0,
+
+    // Provenance. Also missing before — copied entries knew nothing about
+    // where they came from.
+    source: "copied",
+    barcode: entry.barcode ?? null,
+    off_id: entry.off_id ?? null,
+
+    // See the comment above for why image_path and custom_food_id are absent
+    // rather than forgotten.
+    image_url: entry.image_url ?? null,
   }));
 
   const { error } = await supabase.from("meal_entries").insert(rows);
-  if (error) throw error;
+  if (error) {
+    console.warn("copyEntriesToMyLog:", error.message);
+    throw error;
+  }
 }
 
 // ─── Utility: today's calorie total for a user ───────────────

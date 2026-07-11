@@ -3,6 +3,7 @@
 // Session A: saturated fat as the 8th macro input.
 // Session B (Half 2): front-of-pack photo capture.
 // Session B (UX): keyboard-aware scrolling.
+// Session C: nutrition-label photo -> AI extraction -> prefilled grid.
 //
 // KEYBOARD HANDLING — why it's hand-rolled:
 // KeyboardAvoidingView does nothing on Android (behavior is undefined
@@ -13,10 +14,28 @@
 // padding (= keyboard height) gives the ScrollView room to actually get
 // there; without it the lower cards have nowhere to scroll to.
 //
-// SESSION C READINESS: photo state is keyed by PhotoKind and rendered
-// via the reusable <PhotoSlot> component. Adding the nutrition-label
-// photo later = render a second <PhotoSlot kind="label" /> and handle
-// its base64 — no restructuring of this screen.
+// SESSION C — THREE THINGS TO KNOW:
+//
+// 1. PICKER OPTIONS ARE NOW PER-KIND. Session B used one module-level
+//    IMAGE_OPTIONS with allowsEditing + a 1:1 aspect. That's right for a
+//    product thumbnail and WRONG for a nutrition label: UK nutrition
+//    tables are tall and narrow, and a square crop reliably eats the
+//    bottom rows — which is where salt and fibre live. Labels are
+//    captured uncropped.
+//
+//    And `aspect` is ANDROID-ONLY. On iOS, allowsEditing: true forces a
+//    square crop regardless. So "just use a 3:4 aspect for labels" would
+//    have worked on the Pixel and silently mangled every label on iOS.
+//
+// 2. EVERY PHOTO GOES THROUGH prepareImage(). It resizes to 1568px on the
+//    long edge and re-encodes as JPEG. That's what makes the hardcoded
+//    "image/jpeg" contentType in customFoodImages.ts actually TRUE, and
+//    it's what keeps us under Anthropic's 5MB ceiling.
+//
+// 3. EXTRACTION IS DECOUPLED FROM UPLOAD. The Edge Function is stateless:
+//    base64 in, macros out. It never touches the database. So we can
+//    extract at capture time, long before the custom_foods row exists.
+//    The photos still upload on save, through Session B's path, unchanged.
 // ============================================================
 
 import React, { useMemo, useState, useRef, useEffect } from "react";
@@ -45,9 +64,20 @@ import * as ImagePicker from "expo-image-picker";
 import {
   createCustomFood,
   customFoodToProduct,
-  setCustomFoodImage,
+  setCustomFoodImages,
 } from "../lib/foodLookup";
 import { uploadCustomFoodImage, type PhotoKind } from "../lib/customFoodImages";
+import { prepareImage } from "../lib/imagePrep";
+import {
+  extractNutritionLabel,
+  macroSetToFields,
+  type ExtractSuccess,
+  type MacroKey,
+} from "../lib/labelExtraction";
+import {
+  LabelConfirmSheet,
+  type LabelConfirmApply,
+} from "../components/LabelConfirmSheet";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
 import { RootStackParamList, MEAL_LABELS } from "../types";
 
@@ -60,33 +90,54 @@ type Route = RouteProp<RootStackParamList, "CreateFood">;
 // the custom_foods row exists and we have a real id for the path.
 type PendingPhoto = {
   uri: string; // local file URI, for the preview
-  base64: string; // what we actually upload
+  base64: string; // JPEG bytes — uploaded, and sent for extraction
 };
 
-// Keyed by kind so Session C's "label" photo slots in alongside "front".
 type PhotoState = Partial<Record<PhotoKind, PendingPhoto>>;
 
-// Quality/size: 0.7 JPEG at a square crop is plenty for a product
-// thumbnail and keeps us well under the bucket's 10MB ceiling.
-const IMAGE_OPTIONS: ImagePicker.ImagePickerOptions = {
-  mediaTypes: ["images"],
-  allowsEditing: true,
-  aspect: [1, 1],
-  quality: 0.7,
-  base64: true,
+/**
+ * Picker options, per kind. NOT a shared constant — see note 1 at the top.
+ *
+ * front: square crop is ideal for a thumbnail, and the user framing it
+ *        themselves beats any centre-crop we could do.
+ * label: NO crop UI at all. The model wants the whole table, and every
+ *        pixel the user crops away is lossy preprocessing done by hand.
+ *        (This also sidesteps the iOS forced-square-crop trap entirely.)
+ *
+ * `quality` here is the picker's own encode; prepareImage() re-encodes
+ * afterwards anyway, so this is just about not shipping a needlessly
+ * enormous intermediate through the bridge.
+ */
+function pickerOptionsFor(kind: PhotoKind): ImagePicker.ImagePickerOptions {
+  if (kind === "label") {
+    return {
+      mediaTypes: ["images"],
+      allowsEditing: false,
+      quality: 1, // prepareImage does the compressing; don't double-encode
+      base64: false, // we re-encode anyway — don't pay to marshal bytes twice
+      exif: false,
+    };
+  }
+  return {
+    mediaTypes: ["images"],
+    allowsEditing: true,
+    aspect: [1, 1],
+    quality: 1,
+    base64: false,
+    exif: false,
+  };
+}
+
+const PHOTO_SHEET_TITLE: Record<PhotoKind, string> = {
+  front: "Front of pack",
+  label: "Nutrition label",
 };
 
 // ─── Macro input definitions ─────────────────────────────────
 
-type MacroKey =
-  | "cal"
-  | "protein"
-  | "carbs"
-  | "fat"
-  | "satFat"
-  | "salt"
-  | "fibre"
-  | "sugar";
+// MacroKey is imported from labelExtraction rather than redeclared here.
+// The Edge Function's response is keyed by these exact strings, so a
+// single definition means the two can't silently drift apart.
 
 const MACRO_FIELDS: {
   key: MacroKey;
@@ -104,6 +155,17 @@ const MACRO_FIELDS: {
   { key: "sugar", label: "Sugar", unit: "g", color: MacroColor.sugar },
 ];
 
+const EMPTY_MACROS: Record<MacroKey, string> = {
+  cal: "",
+  protein: "",
+  carbs: "",
+  fat: "",
+  satFat: "",
+  salt: "",
+  fibre: "",
+  sugar: "",
+};
+
 const num = (s: string): number => {
   const v = parseFloat(s.replace(",", "."));
   return Number.isFinite(v) && v >= 0 ? v : 0;
@@ -120,23 +182,27 @@ export function CreateFoodScreen() {
   const [name, setName] = useState(initialName ?? "");
   const [brand, setBrand] = useState("");
   const [code, setCode] = useState(barcode ?? "");
-  const [macros, setMacros] = useState<Record<MacroKey, string>>({
-    cal: "",
-    protein: "",
-    carbs: "",
-    fat: "",
-    satFat: "",
-    salt: "",
-    fibre: "",
-    sugar: "",
-  });
+  const [macros, setMacros] = useState<Record<MacroKey, string>>(EMPTY_MACROS);
   const [servingG, setServingG] = useState("");
   const [servingLabel, setServingLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // Session C: this same object will also hold photos.label
   const [photos, setPhotos] = useState<PhotoState>({});
+
+  // ── Label extraction state ────────────────────────────────
+
+  const [sheetVisible, setSheetVisible] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [extractResult, setExtractResult] = useState<ExtractSuccess | null>(
+    null,
+  );
+  const [extractError, setExtractError] = useState<string | null>(null);
+
+  // Guards a late response from a photo the user has already replaced or
+  // discarded — otherwise a slow call can repopulate a sheet they closed,
+  // or overwrite values from a newer scan.
+  const extractionSeq = useRef(0);
 
   // ── Keyboard-aware scrolling ──────────────────────────────
 
@@ -186,15 +252,23 @@ export function CreateFoodScreen() {
 
   // ── Handlers ──────────────────────────────────────────────
 
-  const setMacro = (key: MacroKey, value: string) =>
+  const setMacro = (key: MacroKey, value: string) => {
     setMacros((m) => ({ ...m, [key]: value }));
+    // Clear a stale save error the moment the user starts fixing things.
+    if (error) setError("");
+  };
 
   const setPhoto = (kind: PhotoKind, photo: PendingPhoto | undefined) =>
     setPhotos((p) => ({ ...p, [kind]: photo }));
 
-  // Name + calories are the minimum for a useful entry.
+  // Name + a REAL calorie figure are the minimum for a useful entry.
+  //
+  // Session B checked only `macros.cal.trim().length > 0`, but num("abc")
+  // returns 0 — so typing junk in the calorie box enabled Save and
+  // persisted a 0 kcal food. That gets likelier now the grid arrives
+  // pre-filled and users are editing populated cells rather than empty ones.
   const canSave = useMemo(
-    () => name.trim().length > 0 && macros.cal.trim().length > 0 && !saving,
+    () => name.trim().length > 0 && num(macros.cal) > 0 && !saving,
     [name, macros.cal, saving],
   );
 
@@ -211,8 +285,8 @@ export function CreateFoodScreen() {
       );
       return;
     }
-    const result = await ImagePicker.launchCameraAsync(IMAGE_OPTIONS);
-    applyPickerResult(kind, result);
+    const result = await ImagePicker.launchCameraAsync(pickerOptionsFor(kind));
+    await applyPickerResult(kind, result);
   };
 
   const handlePickFromLibrary = async (kind: PhotoKind) => {
@@ -224,22 +298,43 @@ export function CreateFoodScreen() {
       );
       return;
     }
-    const result = await ImagePicker.launchImageLibraryAsync(IMAGE_OPTIONS);
-    applyPickerResult(kind, result);
+    const result = await ImagePicker.launchImageLibraryAsync(
+      pickerOptionsFor(kind),
+    );
+    await applyPickerResult(kind, result);
   };
 
-  const applyPickerResult = (
+  const applyPickerResult = async (
     kind: PhotoKind,
     result: ImagePicker.ImagePickerResult,
   ) => {
     if (result.canceled) return;
     const asset = result.assets?.[0];
-    if (!asset?.base64 || !asset.uri) {
+    if (!asset?.uri || !asset.width || !asset.height) {
       setError("Couldn't read that image — try another.");
       return;
     }
     setError("");
-    setPhoto(kind, { uri: asset.uri, base64: asset.base64 });
+
+    // Resize + re-encode as JPEG. This is what makes the "image/jpeg"
+    // contentType we upload with, and the media_type we send Anthropic,
+    // actually true — the picker hands back PNG from the library and
+    // HEIC on iOS, and Anthropic rejects HEIC outright.
+    const prepared = await prepareImage(
+      { uri: asset.uri, width: asset.width, height: asset.height },
+      kind,
+    );
+    if (!prepared) {
+      setError("Couldn't process that image — try another.");
+      return;
+    }
+
+    setPhoto(kind, prepared);
+
+    // A label photo has exactly one purpose. Don't make them tap again.
+    if (kind === "label") {
+      void runExtraction(prepared.base64);
+    }
   };
 
   // Camera / gallery / remove chooser.
@@ -254,8 +349,8 @@ export function CreateFoodScreen() {
     const destructiveIndex = hasPhoto ? 2 : undefined;
 
     const handleChoice = (index: number) => {
-      if (index === 0) handlePickFromCamera(kind);
-      else if (index === 1) handlePickFromLibrary(kind);
+      if (index === 0) void handlePickFromCamera(kind);
+      else if (index === 1) void handlePickFromLibrary(kind);
       else if (hasPhoto && index === 2) setPhoto(kind, undefined);
     };
 
@@ -272,11 +367,11 @@ export function CreateFoodScreen() {
       return;
     }
 
-    Alert.alert("Product photo", undefined, [
-      { text: "Take photo", onPress: () => handlePickFromCamera(kind) },
+    Alert.alert(PHOTO_SHEET_TITLE[kind], undefined, [
+      { text: "Take photo", onPress: () => void handlePickFromCamera(kind) },
       {
         text: "Choose from library",
-        onPress: () => handlePickFromLibrary(kind),
+        onPress: () => void handlePickFromLibrary(kind),
       },
       ...(hasPhoto
         ? [
@@ -291,6 +386,70 @@ export function CreateFoodScreen() {
     ]);
   };
 
+  // ── Label extraction ──────────────────────────────────────
+
+  const runExtraction = async (base64: string) => {
+    const seq = ++extractionSeq.current;
+
+    setSheetVisible(true);
+    setExtracting(true);
+    setExtractResult(null);
+    setExtractError(null);
+
+    const res = await extractNutritionLabel(base64);
+
+    // A newer scan started, or the user closed the sheet. Drop this one.
+    if (seq !== extractionSeq.current) return;
+
+    setExtracting(false);
+    if (res.ok) {
+      setExtractResult(res);
+    } else {
+      setExtractError(res.message);
+    }
+  };
+
+  const handleRescan = () => {
+    const label = photos.label;
+    if (label) void runExtraction(label.base64);
+  };
+
+  const dismissSheet = () => {
+    // Invalidate any call still in flight so it can't reopen this.
+    extractionSeq.current++;
+    setSheetVisible(false);
+    setExtracting(false);
+    setExtractResult(null);
+    setExtractError(null);
+  };
+
+  // Retake: close the sheet, go straight back to the camera.
+  const handleRetakeLabel = () => {
+    dismissSheet();
+    void handlePickFromCamera("label");
+  };
+
+  const handleApplyExtraction = (payload: LabelConfirmApply) => {
+    setMacros(macroSetToFields(payload.per100g));
+
+    if (payload.servingG != null && payload.servingG > 0) {
+      setServingG(String(payload.servingG));
+    }
+    if (payload.servingLabel) {
+      setServingLabel(payload.servingLabel);
+    }
+    // Only fill the name if the user hasn't already typed one — never
+    // overwrite something a human deliberately entered.
+    if (payload.productName && !name.trim()) {
+      setName(payload.productName);
+    }
+
+    setSheetVisible(false);
+    setExtractResult(null);
+    setExtractError(null);
+    setError("");
+  };
+
   // ── Save ──────────────────────────────────────────────────
 
   const handleSave = async () => {
@@ -301,7 +460,7 @@ export function CreateFoodScreen() {
 
     const sg = num(servingG);
 
-    // 1) Insert the row first — we need its id to build the storage path.
+    // 1) Insert the row first — we need its id to build the storage paths.
     const { food, error: err } = await createCustomFood({
       name: name.trim(),
       brand: brand.trim() ? brand.trim() : null,
@@ -324,22 +483,34 @@ export function CreateFoodScreen() {
       return;
     }
 
-    // 2) Upload the photo, then write its path back to the row.
+    // 2) Upload whichever photos we have, then write both paths back in a
+    //    SINGLE update.
     //    Deliberately NON-FATAL: the food is already saved, so a failed
-    //    upload shouldn't block the user from logging their meal.
+    //    upload must not block the user from logging their meal.
     let saved = food;
-    const front = photos.front;
 
-    if (front) {
-      const { path } = await uploadCustomFoodImage(
-        food.id,
-        front.base64,
-        "front",
-      );
-      if (path) {
-        const { food: updated } = await setCustomFoodImage(food.id, path);
-        if (updated) saved = updated;
-      }
+    const uploads = await Promise.all(
+      (["front", "label"] as PhotoKind[]).map(async (kind) => {
+        const photo = photos[kind];
+        if (!photo) return { kind, path: null as string | null };
+        const { path } = await uploadCustomFoodImage(
+          food.id,
+          photo.base64,
+          kind,
+        );
+        return { kind, path };
+      }),
+    );
+
+    const frontPath = uploads.find((u) => u.kind === "front")?.path ?? null;
+    const labelPath = uploads.find((u) => u.kind === "label")?.path ?? null;
+
+    if (frontPath || labelPath) {
+      const { food: updated } = await setCustomFoodImages(food.id, {
+        front: frontPath,
+        label: labelPath,
+      });
+      if (updated) saved = updated;
     }
 
     setSaving(false);
@@ -400,9 +571,6 @@ export function CreateFoodScreen() {
           <View style={styles.card} onLayout={onCardLayout("identity")}>
             <Text style={styles.cardSectionLabel}>Product</Text>
 
-            {/* Photo tile + hint side by side.
-                Session C: render a second <PhotoSlot kind="label" /> here —
-                state and handlers already take a `kind`. */}
             <View style={styles.photoRow}>
               <PhotoSlot
                 photo={photos.front}
@@ -457,9 +625,42 @@ export function CreateFoodScreen() {
           {/* ── Nutrition card ──────────────────────────── */}
           <View style={styles.card} onLayout={onCardLayout("nutrition")}>
             <Text style={styles.cardSectionLabel}>Nutrition per 100g</Text>
+
+            {/* Scan-the-label affordance. Sits ABOVE the grid because it's
+                the fast path — typing 8 numbers is the fallback, not the
+                default. */}
+            <View style={styles.scanRow}>
+              <PhotoSlot
+                photo={photos.label}
+                onPress={() => handlePhotoPress("label")}
+                disabled={saving || extracting}
+                emptyIcon="🔬"
+                emptyLabel="Scan label"
+              />
+              <View style={styles.photoHintBox}>
+                <Text style={styles.photoHintTitle}>Scan the label</Text>
+                <Text style={styles.photoHintText}>
+                  Photograph the nutrition table and I'll fill these in. Get the
+                  whole table in frame.
+                </Text>
+                {photos.label && !extracting && (
+                  <Pressable
+                    onPress={handleRescan}
+                    style={({ pressed }) => [
+                      styles.rescanBtn,
+                      pressed && { opacity: 0.7 },
+                    ]}
+                    hitSlop={8}
+                  >
+                    <Text style={styles.rescanBtnText}>Read it again</Text>
+                  </Pressable>
+                )}
+              </View>
+            </View>
+
             <Text style={styles.nutritionHint}>
-              Copy these from the nutrition table on the packaging. Sat fat is
-              the "of which saturates" line.
+              Or copy them from the packaging by hand. Sat fat is the "of which
+              saturates" line.
             </Text>
 
             <View style={styles.macroGrid}>
@@ -582,22 +783,37 @@ export function CreateFoodScreen() {
           </View>
         )}
       </KeyboardAvoidingView>
+
+      {/* ── "Is this what you've plated?" ──────────────── */}
+      <LabelConfirmSheet
+        visible={sheetVisible}
+        loading={extracting}
+        error={extractError}
+        result={extractResult}
+        onApply={handleApplyExtraction}
+        onDismiss={dismissSheet}
+        onRetry={handleRetakeLabel}
+      />
     </SafeAreaView>
   );
 }
 
 // ─── PhotoSlot ───────────────────────────────────────────────
-// Reusable capture tile. Kind-agnostic by design: Session C's
-// nutrition-label photo uses this same component.
+// Reusable capture tile. Kind-agnostic: the empty state is customisable
+// so the label slot can say "Scan label" rather than "Add photo".
 
 function PhotoSlot({
   photo,
   onPress,
   disabled,
+  emptyIcon = "📷",
+  emptyLabel = "Add photo",
 }: {
   photo?: PendingPhoto;
   onPress: () => void;
   disabled?: boolean;
+  emptyIcon?: string;
+  emptyLabel?: string;
 }) {
   return (
     <Pressable
@@ -607,6 +823,7 @@ function PhotoSlot({
         styles.photoSlot,
         photo && styles.photoSlotFilled,
         pressed && { opacity: 0.75 },
+        disabled && { opacity: 0.5 },
       ]}
     >
       {photo ? (
@@ -622,8 +839,8 @@ function PhotoSlot({
         </>
       ) : (
         <>
-          <Text style={styles.photoSlotIcon}>📷</Text>
-          <Text style={styles.photoSlotLabel}>Add photo</Text>
+          <Text style={styles.photoSlotIcon}>{emptyIcon}</Text>
+          <Text style={styles.photoSlotLabel}>{emptyLabel}</Text>
         </>
       )}
     </Pressable>
@@ -704,12 +921,21 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
 
-  // ── Photo tile ──
+  // ── Photo tiles ──
   photoRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.md,
     marginBottom: Spacing.sm,
+  },
+  scanRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+    marginBottom: Spacing.md,
+    paddingBottom: Spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
   photoSlot: {
     width: 88,
@@ -733,6 +959,7 @@ const styles = StyleSheet.create({
     fontSize: Typography.xs,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
+    textAlign: "center",
   },
   photoImage: { width: "100%", height: "100%" },
   photoEditBadge: {
@@ -759,6 +986,16 @@ const styles = StyleSheet.create({
     fontSize: Typography.xs,
     color: Colors.textMuted,
     lineHeight: 17,
+  },
+  rescanBtn: {
+    alignSelf: "flex-start",
+    marginTop: 4,
+    paddingVertical: 3,
+  },
+  rescanBtnText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.green,
   },
 
   fieldLabel: {
@@ -789,7 +1026,6 @@ const styles = StyleSheet.create({
     fontSize: Typography.xs,
     color: Colors.textMuted,
     marginBottom: Spacing.sm,
-    marginTop: -4,
   },
   macroGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   macroInputCell: {

@@ -178,6 +178,14 @@ export function ProductScreen() {
               : "search",
         barcode: product.barcode,
         off_id: product.off_id,
+
+        // ── ADD ──
+        // Snapshot the image onto the entry. Whichever field the product
+        // carries, carry it through: OFF gives a renderable URL, custom foods
+        // give a private storage path.
+        image_url: product.image_url ?? null,
+        image_path: product.image_path ?? null,
+        custom_food_id: product.custom_food_id ?? null,
       });
     }
 

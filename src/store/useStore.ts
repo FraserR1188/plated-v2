@@ -125,18 +125,50 @@ export const useStore = create<AppState>((set, get) => ({
   addEntry: async (entry) => {
     const { userId } = get();
     if (!userId) return;
-    const newEntry = {
-      ...entry,
-      user_id: userId,
-      logged_at: new Date().toISOString(),
-    };
+
+    // EXPLICIT snake_case mapping — do NOT spread. The old version worked only
+    // because MealEntry happens to be schema-shaped; listing every column makes
+    // that a guarantee rather than a coincidence, and makes a forgotten column a
+    // compile error at the call site instead of a silent null in the database.
     const { data, error } = await supabase
       .from("meal_entries")
-      .insert(newEntry)
+      .insert({
+        user_id: userId,
+        logged_at: new Date().toISOString(),
+
+        date: entry.date,
+        meal_type: entry.meal_type,
+        name: entry.name,
+        brand: entry.brand ?? null,
+        source: entry.source,
+
+        serving_g: entry.serving_g,
+        calories: entry.calories,
+        protein: entry.protein,
+        carbs: entry.carbs,
+        fat: entry.fat,
+        sat_fat: entry.sat_fat ?? null,
+        salt: entry.salt ?? null,
+        fibre: entry.fibre ?? null,
+        sugar: entry.sugar ?? null,
+
+        barcode: entry.barcode ?? null,
+        off_id: entry.off_id ?? null,
+        eaten_at: entry.eaten_at ?? null,
+
+        // Snapshotted image + provenance.
+        image_url: entry.image_url ?? null,
+        image_path: entry.image_path ?? null,
+        custom_food_id: entry.custom_food_id ?? null,
+      })
       .select()
       .single();
-    if (!error && data)
-      set((s) => ({ entries: [data as MealEntry, ...s.entries] }));
+
+    if (error) {
+      console.warn("addEntry:", error.message);
+      return;
+    }
+    if (data) set((s) => ({ entries: [data as MealEntry, ...s.entries] }));
   },
 
   deleteEntry: async (id) => {

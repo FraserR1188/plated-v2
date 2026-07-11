@@ -57,7 +57,7 @@ export interface MealEntry {
   protein: number;
   carbs: number;
   fat: number;
-  source: string; // 'search' | 'barcode' | 'manual' | 'custom' (NOT NULL)
+  source: string; // 'search' | 'barcode' | 'manual' | 'custom' | 'copied' (NOT NULL)
 
   barcode?: string | null;
   off_id?: string | null;
@@ -72,6 +72,17 @@ export interface MealEntry {
   sat_fat?: number | null;
 
   eaten_at?: string | null; // real eating time; falls back to logged_at
+  // ── Images (snapshotted at log time, like the macros above) ──
+  // Same split as FoodProduct: image_url is directly renderable (OFF);
+  // image_path is a storage object PATH in the private bucket and must be
+  // signed via getSignedImageUrl() before display.
+  image_url?: string | null;
+  image_path?: string | null;
+
+  // Provenance. Not needed to render the thumbnail — the image is snapshotted.
+  // Here for the LLM query feature and any "most-logged custom foods" view.
+  // ON DELETE SET NULL: deleting a custom food must not delete your history.
+  custom_food_id?: string | null;
 }
 
 // Mirrors public.saved_ingredients ("My Library").

@@ -16,7 +16,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { useStore } from "../store/useStore";
-import { formatTime, resolveEatenAt } from "../lib/time";
+import { formatTime, resolveEatenAt, dateKey } from "../lib/time";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
 import { RootStackParamList, MEAL_LABELS } from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
@@ -107,6 +107,11 @@ export function ProductScreen() {
   );
   const [showPicker, setShowPicker] = useState(false);
 
+  // Did the user actually PICK a time, or are we still showing the default?
+  // This is the entire difference between a timestamp you can correlate
+  // against WHOOP recovery and one that just says "whenever I opened the app".
+  const [timeTouched, setTimeTouched] = useState(false);
+
   const [saving, setSaving] = useState(false);
 
   const g = parseFloat(serving) || 0;
@@ -129,6 +134,8 @@ export function ProductScreen() {
     // Android fires with type 'dismissed' on cancel.
     setShowPicker(false);
     if (event?.type === "dismissed" || !picked) return;
+
+    setTimeTouched(true); // ← ADD. Below the guard, so a cancel doesn't count.
 
     if (isEditing) {
       // Keep the entry's original calendar day; only swap the time.
@@ -161,11 +168,17 @@ export function ProductScreen() {
     };
 
     if (isEditing) {
-      await updateEntry(editEntryId!, macros);
+      // Only ever UPGRADE the flag. An edit that doesn't open the picker
+      // (changing the serving size, say) must NOT downgrade a previously
+      // confirmed time back to "estimated" — that would quietly destroy the
+      // one piece of provenance the correlation depends on.
+      const patch: Partial<MealEntry> = { ...macros };
+      if (timeTouched) patch.eaten_at_estimated = false;
+      await updateEntry(editEntryId!, patch);
     } else {
       await saveIngredient(product);
       await addEntry({
-        date,
+        date: dateKey(eatenAt),
         meal_type: mealType,
         name: product.name,
         brand: product.brand,
@@ -179,10 +192,10 @@ export function ProductScreen() {
         barcode: product.barcode,
         off_id: product.off_id,
 
-        // ── ADD ──
-        // Snapshot the image onto the entry. Whichever field the product
-        // carries, carry it through: OFF gives a renderable URL, custom foods
-        // give a private storage path.
+        // The picker defaults to now. If the user never touched it, this
+        // timestamp is "when I opened the app", not "when I ate".
+        eaten_at_estimated: !timeTouched, // ← ADD
+
         image_url: product.image_url ?? null,
         image_path: product.image_path ?? null,
         custom_food_id: product.custom_food_id ?? null,

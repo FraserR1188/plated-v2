@@ -11,9 +11,9 @@ import {
   CopyPayload,
 } from "../types";
 
-// ─── Profile CRUD ────────────────────────────────────────────
+import { dateKey } from "./time";
 
-const todayKey = () => new Date().toISOString().split("T")[0];
+// ─── Profile CRUD ────────────────────────────────────────────
 
 /** Fetch the current user's own profile. Returns null if not yet created. */
 export async function getMyProfile(): Promise<Profile | null> {
@@ -294,7 +294,7 @@ export async function copyEntriesToMyLog(payload: CopyPayload): Promise<void> {
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
-  const today = todayKey();
+  const today = dateKey(); // ← WAS: todayKey()  (UTC)
   const now = new Date().toISOString();
 
   const rows = payload.entries.map((entry) => ({
@@ -307,6 +307,7 @@ export async function copyEntriesToMyLog(payload: CopyPayload): Promise<void> {
     // You are eating this NOW, not when they ate it. eaten_at is what the WHOOP
     // correlation will key on, so it must be the time it went in YOUR mouth.
     eaten_at: now,
+    eaten_at_estimated: true,
 
     name: entry.name,
     brand: entry.brand ?? null,
@@ -346,7 +347,7 @@ export async function getTodayCaloriesForUser(userId: string): Promise<number> {
     .from("meal_entries")
     .select("calories")
     .eq("user_id", userId)
-    .eq("date", todayKey());
+    .eq("date", dateKey()); // ← WAS: todayKey()  (UTC)
 
   if (error || !data) return 0;
   return data.reduce((sum, r) => sum + (r.calories ?? 0), 0);

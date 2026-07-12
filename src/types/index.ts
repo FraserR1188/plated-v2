@@ -83,6 +83,7 @@ export interface MealEntry {
   // Here for the LLM query feature and any "most-logged custom foods" view.
   // ON DELETE SET NULL: deleting a custom food must not delete your history.
   custom_food_id?: string | null;
+  eaten_at_estimated: boolean;
 }
 
 // Mirrors public.saved_ingredients ("My Library").
@@ -250,4 +251,68 @@ export const MEAL_ICONS: Record<MealType, string> = {
   lunch: "☀️",
   dinner: "🌙",
   snacks: "🍎",
+};
+
+export type WhoopScoreState = "SCORED" | "PENDING_SCORE" | "UNSCORABLE";
+
+/** One row of public.whoop_correlation. Column names are snake_case — this is
+ *  read straight from a view, not through the camelCase mapping layer. */
+export type WhoopCorrelationRow = {
+  user_id: string;
+  cycle_id: number;
+  cycle_start: string;
+  cycle_end: string | null;
+  is_in_progress: boolean;
+  cycle_local_date: string;
+
+  // Same cycle: nutrition(N) fuelled strain(N).
+  strain: number | null;
+  kcal_same_cycle: number;
+  protein_same_cycle: number;
+  carbs_same_cycle: number;
+  fat_same_cycle: number;
+  sat_fat_same_cycle: number;
+  salt_same_cycle: number;
+  fibre_same_cycle: number;
+  sugar_same_cycle: number;
+  meal_count_same_cycle: number;
+
+  // Lagged: nutrition(N-1) preceded recovery(N) and sleep(N). THE USP.
+  prev_cycle_id: number | null;
+  kcal_prev_cycle: number | null;
+  protein_prev_cycle: number | null;
+  carbs_prev_cycle: number | null;
+  fat_prev_cycle: number | null;
+  sat_fat_prev_cycle: number | null;
+  salt_prev_cycle: number | null;
+  fibre_prev_cycle: number | null;
+  sugar_prev_cycle: number | null;
+  meal_count_prev_cycle: number | null;
+  last_meal_before_sleep_at: string | null;
+
+  recovery_score: number | null;
+  hrv_rmssd_milli: number | null;
+  resting_heart_rate: number | null;
+  spo2_percentage: number | null;
+  skin_temp_celsius: number | null;
+  user_calibrating: boolean | null;
+
+  sleep_id: string | null;
+  sleep_performance_percentage: number | null;
+  sleep_efficiency_percentage: number | null;
+  respiratory_rate: number | null;
+  total_in_bed_time_milli: number | null;
+  total_slow_wave_sleep_time_milli: number | null;
+  total_rem_sleep_time_milli: number | null;
+  disturbance_count: number | null;
+
+  // Filter on these before you draw a single conclusion.
+  cycle_scored: boolean;
+  recovery_scored: boolean | null;
+  sleep_scored: boolean | null;
+  nutrition_present: boolean;
+  prev_nutrition_present: boolean;
+  prev_cycle_contiguous: boolean;
+  timing_estimated_same_cycle: boolean;
+  timing_estimated_prev_cycle: boolean;
 };

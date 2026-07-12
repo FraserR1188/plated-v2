@@ -40,3 +40,28 @@ export function resolveEatenAt(hours: number, minutes: number): string {
 
   return candidate.toISOString();
 }
+
+/**
+ * The app's calendar day, in the user's LOCAL timezone.
+ *
+ * This exists because there were two of these and they disagreed.
+ * `src/lib/social.ts` had:
+ *
+ *     new Date().toISOString().split("T")[0]     // ← UTC
+ *
+ * ...while `useStore.todayKey()` used local Y/M/D components. In BST (UTC+1),
+ * at 00:30 local on the 12th, toISOString() still says the 11th. A meal copied
+ * at 00:30 got date = the 11th; TodayScreen filters on the 12th; the meal
+ * vanished. An hour a night in the UK, up to thirteen in Auckland.
+ *
+ * `meal_entries.date` is the app's day. `eaten_at` is the instant. The WHOOP
+ * join uses eaten_at and does not care about this function — but the UI does,
+ * and the two must not disagree about what day it is.
+ */
+export function dateKey(d: Date = new Date()): string {
+  return [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    String(d.getDate()).padStart(2, "0"),
+  ].join("-");
+}

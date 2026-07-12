@@ -9,6 +9,8 @@ import {
   FoodProduct,
 } from "../types";
 
+import { dateKey } from "../lib/time"; // ← add to the imports at the top
+
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
   protein: 150,
@@ -48,10 +50,8 @@ interface AppState {
   getAllEntries: () => MealEntry[];
 }
 
-export function todayKey(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+/** Re-exported for the screens that already import it from here. */
+export const todayKey = (): string => dateKey();
 
 function sumMacros(entries: MealEntry[]): DayTotals {
   return {
@@ -160,6 +160,11 @@ export const useStore = create<AppState>((set, get) => ({
         image_url: entry.image_url ?? null,
         image_path: entry.image_path ?? null,
         custom_food_id: entry.custom_food_id ?? null,
+        eaten_at_estimated: entry.eaten_at_estimated, // ← ADD. No `?? true`:
+        // the type makes it required,
+        // so let the compiler find the
+        // callers rather than papering
+        // over them with a default.
       })
       .select()
       .single();

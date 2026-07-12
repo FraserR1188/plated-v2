@@ -1,3 +1,9 @@
+-- ⚠️ STALE. Historical record of the v2 schema only.
+-- Missing: eaten_at, sat_fat, custom_foods, profiles, follows,
+-- ai_extractions, whoop_*, storage policies.
+-- The live schema is the remote DB. Do not read this to learn the schema.
+-- Do not run this.
+
 -- ================================================================
 -- plated. — Supabase Schema v2
 -- Ingredient-based tracking with saved library

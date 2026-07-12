@@ -455,6 +455,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     .from("ai_extractions")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
+    .neq("outcome", "rate_limited")
     .gte("created_at", hourAgo);
 
   if (countErr) {

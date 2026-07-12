@@ -30,6 +30,7 @@ interface AppState {
   loading: boolean;
 
   setUserId: (id: string | null) => void;
+  reset: () => void;
   fetchEntries: () => Promise<void>;
   fetchGoals: () => Promise<void>;
   fetchSavedIngredients: () => Promise<void>;
@@ -74,6 +75,16 @@ export const useStore = create<AppState>((set, get) => ({
   loading: false,
 
   setUserId: (id) => set({ userId: id }),
+
+  /** Wipe every trace of the signed-in user. Called on sign-out. */
+  reset: () =>
+    set({
+      userId: null,
+      entries: [],
+      savedIngredients: [],
+      goals: DEFAULT_GOALS,
+      loading: false,
+    }),
 
   fetchEntries: async () => {
     const { userId } = get();

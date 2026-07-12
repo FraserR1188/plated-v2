@@ -22,8 +22,11 @@ import {
   getWhoopConnection,
   connectWhoop,
   disconnectWhoop,
+  syncWhoop,
   type WhoopConnection,
 } from "../lib/whoop";
+
+import { supabase } from "../lib/supabase";
 
 // Map each goal field to its macro colour for the input accent
 const GOAL_FIELDS: {
@@ -83,6 +86,7 @@ export function SettingsScreen() {
     getAllEntries,
     savedIngredients,
     deleteIngredient,
+    reset, // ← ADD
   } = useStore();
 
   // ── Goal state ────────────────────────────────────────────
@@ -115,6 +119,8 @@ export function SettingsScreen() {
   const [whoopLoading, setWhoopLoading] = useState(true);
   const [whoopBusy, setWhoopBusy] = useState(false);
   const [whoopError, setWhoopError] = useState<string | null>(null);
+  const [whoopSyncing, setWhoopSyncing] = useState(false); // ← ADD
+  const [syncNote, setSyncNote] = useState<string | null>(null); // ← ADD
 
   // Load existing profile on mount
   useEffect(() => {
@@ -230,6 +236,36 @@ export function SettingsScreen() {
     );
   };
 
+  const handleSyncWhoop = async () => {
+    setWhoopSyncing(true);
+    setWhoopError(null);
+    setSyncNote(null);
+
+    // force: this is a deliberate tap, not an app foreground. The server still
+    // holds a 60s floor — the throttle is its decision, not ours.
+    const result = await syncWhoop({ force: true });
+
+    if (!result.ok) {
+      setWhoopError(result.message);
+    } else if (result.skipped === "throttled") {
+      setSyncNote("Already up to date.");
+    } else if (result.partial) {
+      // Rows landed, but the window did not advance. Saying "synced" would be
+      // a lie, and saying "failed" would be one too.
+      setSyncNote("Partly synced — we'll finish next time.");
+    } else {
+      const total = result.counts
+        ? Object.values(result.counts).reduce((a, b) => a + b, 0)
+        : 0;
+      setSyncNote(total > 0 ? `Synced ${total} records.` : "Nothing new.");
+    }
+
+    // Always re-read: a revoked sync has already flipped status server-side,
+    // and the card needs to switch to "Reconnect" without a restart.
+    await refreshWhoop();
+    setWhoopSyncing(false);
+  };
+
   // ── Goal handlers ─────────────────────────────────────────
   const handleChange = (key: string, val: string) => {
     setValues((prev) => ({ ...prev, [key]: val }));
@@ -283,9 +319,34 @@ export function SettingsScreen() {
     );
   };
 
+  const handleSignOut = () => {
+    Alert.alert("Sign out?", "You'll need to sign in again to see your log.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Sign out",
+        style: "destructive",
+        onPress: async () => {
+          const { error } = await supabase.auth.signOut();
+          if (error) {
+            Alert.alert("Couldn't sign out", error.message);
+            return;
+          }
+          // Clear the in-memory store BEFORE App.tsx swaps to AuthScreen —
+          // otherwise the next user gets a glimpse of this one's meals.
+          reset();
+        },
+      },
+    ]);
+  };
+
   const connected = whoop?.status === "connected";
   const revoked = whoop?.status === "revoked";
   const lastSync = relativeTime(whoop?.last_sync_at ?? null);
+
+  // A stale timestamp with no explanation is worse than no timestamp: the user
+  // reads "Last synced yesterday", assumes it's still working, and never finds
+  // out it has been failing for a week.
+  const syncFailing = !!whoop?.last_sync_error; // ← ADD
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -421,11 +482,31 @@ export function SettingsScreen() {
             <View>
               <View style={styles.whoopStatusRow}>
                 <View style={styles.whoopStatusLeft}>
-                  <View style={styles.whoopDot} />
+                  {/* A stale timestamp with no explanation is worse than no
+                      timestamp: the user reads "Last synced yesterday", assumes
+                      it's still working, and never finds out it has been
+                      failing for a week. */}
+                  <View
+                    style={[
+                      styles.whoopDot,
+                      syncFailing && { backgroundColor: Colors.danger },
+                    ]}
+                  />
                   <View>
                     <Text style={styles.whoopStatusText}>Connected</Text>
-                    <Text style={styles.whoopStatusSub}>
-                      {lastSync ? `Last synced ${lastSync}` : "Not synced yet"}
+                    <Text
+                      style={[
+                        styles.whoopStatusSub,
+                        syncFailing && { color: Colors.danger },
+                      ]}
+                    >
+                      {syncFailing
+                        ? lastSync
+                          ? `Sync failing · last worked ${lastSync}`
+                          : "Sync failing"
+                        : lastSync
+                          ? `Last synced ${lastSync}`
+                          : "Not synced yet"}
                     </Text>
                   </View>
                 </View>
@@ -438,11 +519,29 @@ export function SettingsScreen() {
 
               <Pressable
                 style={({ pressed }) => [
+                  styles.whoopSyncBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleSyncWhoop}
+                disabled={whoopSyncing || whoopBusy}
+              >
+                {whoopSyncing ? (
+                  <ActivityIndicator color={Colors.green} size="small" />
+                ) : (
+                  <Text style={styles.whoopSyncBtnText}>Sync now</Text>
+                )}
+              </Pressable>
+
+              {syncNote && <Text style={styles.whoopNoteText}>{syncNote}</Text>}
+
+              <Pressable
+                style={({ pressed }) => [
                   styles.whoopDisconnectBtn,
+                  { marginTop: Spacing.sm },
                   pressed && { opacity: 0.85 },
                 ]}
                 onPress={handleDisconnectWhoop}
-                disabled={whoopBusy}
+                disabled={whoopBusy || whoopSyncing}
               >
                 {whoopBusy ? (
                   <ActivityIndicator color={Colors.danger} size="small" />
@@ -536,6 +635,22 @@ export function SettingsScreen() {
             )}
           </Pressable>
         </View>
+
+        {/* ── Account ────────────────────────────────── */}
+        <SectionLabel title="Account" />
+        <View style={styles.card}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.signOutBtn,
+              pressed && { opacity: 0.85 },
+            ]}
+            onPress={handleSignOut}
+          >
+            <Text style={styles.signOutBtnText}>Sign out</Text>
+          </Pressable>
+        </View>
+
+        <View style={{ height: Spacing.xxl }} />
 
         {/* ── CSV Export ─────────────────────────────── */}
         <SectionLabel title="Export data" />
@@ -865,6 +980,38 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
     textAlign: "center",
     lineHeight: 17,
+  },
+  whoopSyncBtn: {
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: `${Colors.green}40`,
+    paddingVertical: 13,
+    alignItems: "center",
+  },
+  whoopSyncBtnText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    color: Colors.green,
+  },
+  whoopNoteText: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: Spacing.sm,
+    textAlign: "center",
+  },
+  signOutBtn: {
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingVertical: 13,
+    alignItems: "center",
+  },
+  signOutBtnText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.semibold,
+    color: Colors.danger,
   },
 
   // ── Goals ──────────────────────────────────────────────────

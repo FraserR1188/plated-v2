@@ -8,6 +8,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  AppState,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -15,6 +16,7 @@ import { AppNavigator } from "./src/navigation/AppNavigator";
 import { supabase, signIn, signUp } from "./src/lib/supabase";
 import { useStore } from "./src/store/useStore";
 import { Colors, Spacing, Radius, Typography } from "./src/theme";
+import { syncWhoop } from "./src/lib/whoop";
 
 export default function App() {
   const { setUserId, fetchEntries, fetchGoals, fetchSavedIngredients } =
@@ -22,6 +24,7 @@ export default function App() {
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  // ── Auth ────────────────────────────────────────────────────
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
@@ -50,6 +53,33 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // ── WHOOP sync ──────────────────────────────────────────────
+  //
+  // Its OWN top-level effect. This must NOT be nested inside the auth effect's
+  // callback — a hook called from inside another hook's callback is a
+  // rules-of-hooks violation, and React either throws "Invalid hook call" or
+  // silently never registers it.
+  //
+  // Fire-and-forget, deliberately. The 15-minute throttle lives on the SERVER
+  // and is keyed on last_sync_attempt_at, so it holds even when WHOOP is down.
+  // A client-side throttle would just be a second, worse copy of a decision
+  // already made correctly — and it would reset on every app restart, which is
+  // exactly when a user is most likely to foreground twice.
+  //
+  // A failure here is silent BY DESIGN. Settings owns the visible sync state.
+  // An error banner on the Today screen because a background poll timed out is
+  // the app complaining to someone who never asked it to do anything.
+  useEffect(() => {
+    if (!session) return;
+
+    syncWhoop().catch(() => {});
+
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next === "active") syncWhoop().catch(() => {});
+    });
+    return () => sub.remove();
+  }, [session]);
 
   if (loading) {
     return (

@@ -16,6 +16,15 @@
 //
 //   The client secret is never here. It never leaves the Edge Function.
 //   An APK is a zip file with extra steps.
+//
+// ── ADDED IN D2 ─────────────────────────────────────────────────────────
+//
+//   syncWhoop() — and one non-obvious thing about it. whoop-sync answers
+//   HTTP 200 for outcomes that are NOT successes: a throttled call, and a
+//   revoked connection. Both are ordinary states, not errors, and 503-ing
+//   the client for "you already synced four minutes ago" would be absurd.
+//
+//   So a 200 does not mean ok. You have to read the body. See below.
 // ============================================================
 
 import * as Linking from "expo-linking";
@@ -37,7 +46,13 @@ export type WhoopConnection = {
   scopes: string | null;
   status: WhoopStatus;
   connected_at: string;
+
+  /** Last SUCCESSFUL sync. Anchors the sync window. Never moves on failure. */
   last_sync_at: string | null;
+  /** Last ATTEMPT. The throttle key. Moves whether or not the sync worked. */
+  last_sync_attempt_at: string | null;
+  /** Null when the last sync succeeded. Anything else means it didn't. */
+  last_sync_error: string | null;
 };
 
 export type WhoopErrorCode =
@@ -47,6 +62,8 @@ export type WhoopErrorCode =
   | "exchange_failed"
   | "not_connected"
   | "server_error"
+  | "revoked" // the refresh token is dead; user must reconnect
+  | "transient" // WHOOP is unwell, or we timed out. Retry later.
   | "cancelled" // client-side: user backed out of the browser
   | "denied" // WHOOP-side: user tapped Deny on the consent screen
   | "network_error"; // client-side: never reached the function
@@ -61,10 +78,23 @@ export type ConnectSuccess = {
   ok: true;
   whoopUserId: number | null;
   scopes: string | null;
+  /** True when reconnecting under a DIFFERENT WHOOP account wiped the old data. */
+  dataPurged: boolean;
+};
+
+export type SyncSuccess = {
+  ok: true;
+  /** 'throttled' — too soon since the last attempt. Not an error; say nothing. */
+  skipped: "throttled" | "revoked" | null;
+  /** A sync that ran out of budget mid-pull. Rows landed, but the window did not advance. */
+  partial: boolean;
+  lastSyncAt: string | null;
+  counts: Record<string, number> | null;
 };
 
 export type ConnectResponse = ConnectSuccess | WhoopFailure;
 export type DisconnectResponse = { ok: true } | WhoopFailure;
+export type SyncResponse = SyncSuccess | WhoopFailure;
 
 const GENERIC_FAILURE: WhoopFailure = {
   ok: false,
@@ -90,7 +120,8 @@ export async function getWhoopConnection(): Promise<WhoopConnection | null> {
     const { data, error } = await supabase
       .from("whoop_connections")
       .select(
-        "user_id, whoop_user_id, scopes, status, connected_at, last_sync_at",
+        "user_id, whoop_user_id, scopes, status, connected_at, " +
+          "last_sync_at, last_sync_attempt_at, last_sync_error",
       )
       .maybeSingle();
 
@@ -223,9 +254,79 @@ export async function connectWhoop(): Promise<ConnectResponse> {
       ok: true,
       whoopUserId: (data as any).whoopUserId ?? null,
       scopes: (data as any).scopes ?? null,
+      dataPurged: (data as any).dataPurged === true,
     };
   } catch (e: any) {
     console.warn("whoop-auth-callback:", e?.message ?? e);
+    return GENERIC_FAILURE;
+  }
+}
+
+// ─── Sync ────────────────────────────────────────────────────
+
+/**
+ * Pull the last 7 days of cycles, sleeps, recoveries and workouts.
+ *
+ * Call this freely. The throttle lives on the SERVER — 15 minutes for an
+ * automatic sync, 60 seconds for a forced one — and it is keyed on
+ * last_sync_attempt_at, so it engages even when WHOOP is down. Rate-limiting
+ * in the client would just be a second, worse copy of a decision the server
+ * has already made correctly.
+ *
+ * `force: true` is the "Sync now" button. Fire-and-forget on app foreground
+ * with no options.
+ *
+ * THE 200-IS-NOT-OK TRAP: whoop-sync answers 200 for a throttled call and
+ * for a revoked connection, because neither is an error. supabase-js will
+ * NOT populate `error` for those. Read `data.ok`.
+ */
+export async function syncWhoop(
+  opts: { force?: boolean; days?: number } = {},
+): Promise<SyncResponse> {
+  try {
+    const { data, error } = await supabase.functions.invoke("whoop-sync", {
+      body: {
+        force: opts.force === true,
+        ...(opts.days ? { days: opts.days } : {}),
+      },
+    });
+
+    if (error) {
+      const parsed = await readErrorBody(error);
+      if (parsed) return parsed;
+      console.warn("whoop-sync:", error.message);
+      return GENERIC_FAILURE;
+    }
+
+    if (!data || typeof data !== "object") {
+      console.warn("whoop-sync: unexpected payload", data);
+      return GENERIC_FAILURE;
+    }
+
+    const body = data as any;
+
+    // A 200 with ok:false. The connection died and getValidToken already
+    // marked it revoked — the UI's job is to show "Reconnect", not to panic.
+    if (body.ok !== true) {
+      return {
+        ok: false,
+        error: (body.error as WhoopErrorCode) ?? "server_error",
+        message:
+          typeof body.message === "string" && body.message
+            ? body.message
+            : GENERIC_FAILURE.message,
+      };
+    }
+
+    return {
+      ok: true,
+      skipped: body.skipped ?? null,
+      partial: body.partial === true,
+      lastSyncAt: body.lastSyncAt ?? null,
+      counts: body.counts ?? null,
+    };
+  } catch (e: any) {
+    console.warn("whoop-sync:", e?.message ?? e);
     return GENERIC_FAILURE;
   }
 }

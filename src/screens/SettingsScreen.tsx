@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -18,6 +18,12 @@ import {
   upsertProfile,
   isUsernameAvailable,
 } from "../lib/social";
+import {
+  getWhoopConnection,
+  connectWhoop,
+  disconnectWhoop,
+  type WhoopConnection,
+} from "../lib/whoop";
 
 // Map each goal field to its macro colour for the input accent
 const GOAL_FIELDS: {
@@ -44,15 +50,31 @@ const GOAL_FIELDS: {
   { key: "sugar", label: "Sugar", unit: "g", color: MacroColor.sugar },
 ];
 
-const WHOOP_STEPS = [
-  "Export from plated using the button above.",
-  "In Whoop: Profile → My Data → Export.",
-  "Open both CSVs in Google Sheets — join on the date column.",
-  "Use VLOOKUP to match recovery score, HRV, and strain against your daily nutrition.",
-];
-
 // Username validation — mirrors DB constraint
 const USERNAME_REGEX = /^[a-z0-9_]{3,30}$/;
+
+/** "2 hours ago", "yesterday", "12 Jul" — no dependency, no ceremony. */
+function relativeTime(iso: string | null): string | null {
+  if (!iso) return null;
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return null;
+
+  const mins = Math.floor((Date.now() - then) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days} days ago`;
+
+  return new Date(iso).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+  });
+}
 
 export function SettingsScreen() {
   const {
@@ -88,6 +110,12 @@ export function SettingsScreen() {
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [usernameSaved, setUsernameSaved] = useState(false);
 
+  // ── WHOOP state ───────────────────────────────────────────
+  const [whoop, setWhoop] = useState<WhoopConnection | null>(null);
+  const [whoopLoading, setWhoopLoading] = useState(true);
+  const [whoopBusy, setWhoopBusy] = useState(false);
+  const [whoopError, setWhoopError] = useState<string | null>(null);
+
   // Load existing profile on mount
   useEffect(() => {
     getMyProfile()
@@ -105,6 +133,17 @@ export function SettingsScreen() {
       })
       .finally(() => setUsernameLoading(false));
   }, []);
+
+  // Load WHOOP connection on mount
+  const refreshWhoop = useCallback(async () => {
+    const conn = await getWhoopConnection();
+    setWhoop(conn);
+    setWhoopLoading(false);
+  }, []);
+
+  useEffect(() => {
+    refreshWhoop();
+  }, [refreshWhoop]);
 
   const handleUsernameChange = (text: string) => {
     setUsernameInput(text.toLowerCase().replace(/[^a-z0-9_]/g, ""));
@@ -145,6 +184,50 @@ export function SettingsScreen() {
     } finally {
       setUsernameSaving(false);
     }
+  };
+
+  // ── WHOOP handlers ────────────────────────────────────────
+
+  const handleConnectWhoop = async () => {
+    setWhoopBusy(true);
+    setWhoopError(null);
+
+    const result = await connectWhoop();
+
+    if (result.ok) {
+      await refreshWhoop();
+    } else if (result.error !== "cancelled") {
+      // A cancel is a user changing their mind, not a failure. Say nothing
+      // and put the button back — an error banner for "you tapped back"
+      // is the app blaming someone for a decision they made on purpose.
+      setWhoopError(result.message);
+    }
+
+    setWhoopBusy(false);
+  };
+
+  const handleDisconnectWhoop = () => {
+    Alert.alert(
+      "Disconnect WHOOP?",
+      "plated will stop pulling your recovery, sleep and strain. Anything already synced stays.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Disconnect",
+          style: "destructive",
+          onPress: async () => {
+            setWhoopBusy(true);
+            setWhoopError(null);
+
+            const result = await disconnectWhoop();
+            if (!result.ok) setWhoopError(result.message);
+
+            await refreshWhoop();
+            setWhoopBusy(false);
+          },
+        },
+      ],
+    );
   };
 
   // ── Goal handlers ─────────────────────────────────────────
@@ -199,6 +282,10 @@ export function SettingsScreen() {
       ],
     );
   };
+
+  const connected = whoop?.status === "connected";
+  const revoked = whoop?.status === "revoked";
+  const lastSync = relativeTime(whoop?.last_sync_at ?? null);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -321,6 +408,82 @@ export function SettingsScreen() {
           )}
         </View>
 
+        {/* ── WHOOP ──────────────────────────────────── */}
+        <SectionLabel title="Whoop" />
+        <View style={styles.card}>
+          {whoopLoading ? (
+            <ActivityIndicator
+              color={Colors.green}
+              style={{ paddingVertical: Spacing.md }}
+            />
+          ) : connected ? (
+            /* Connected */
+            <View>
+              <View style={styles.whoopStatusRow}>
+                <View style={styles.whoopStatusLeft}>
+                  <View style={styles.whoopDot} />
+                  <View>
+                    <Text style={styles.whoopStatusText}>Connected</Text>
+                    <Text style={styles.whoopStatusSub}>
+                      {lastSync ? `Last synced ${lastSync}` : "Not synced yet"}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <Text style={styles.whoopBody}>
+                plated is pulling your recovery, sleep and strain so it can sit
+                alongside what you've eaten.
+              </Text>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.whoopDisconnectBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleDisconnectWhoop}
+                disabled={whoopBusy}
+              >
+                {whoopBusy ? (
+                  <ActivityIndicator color={Colors.danger} size="small" />
+                ) : (
+                  <Text style={styles.whoopDisconnectBtnText}>Disconnect</Text>
+                )}
+              </Pressable>
+            </View>
+          ) : (
+            /* Not connected, or revoked */
+            <View>
+              <Text style={styles.whoopBody}>
+                {revoked
+                  ? "Your Whoop connection stopped working — access was revoked, or it expired. Reconnect and plated will pick up where it left off."
+                  : "Connect Whoop and plated will line up what you eat against how you actually recovered, slept and trained. Food is only half the story."}
+              </Text>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.whoopConnectBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleConnectWhoop}
+                disabled={whoopBusy}
+              >
+                {whoopBusy ? (
+                  <ActivityIndicator color={Colors.bg} />
+                ) : (
+                  <Text style={styles.whoopConnectBtnText}>
+                    {revoked ? "Reconnect Whoop" : "Connect Whoop"}
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          )}
+
+          {whoopError && (
+            <Text style={styles.whoopErrorText}>{whoopError}</Text>
+          )}
+        </View>
+
         {/* ── Daily goals ────────────────────────────── */}
         <SectionLabel title="Daily goals" />
         <View style={styles.card}>
@@ -378,8 +541,8 @@ export function SettingsScreen() {
         <SectionLabel title="Export data" />
         <View style={styles.card}>
           <Text style={styles.exportInfo}>
-            Export the last 30 days as a CSV to cross-reference with your Whoop
-            data in Google Sheets.
+            Your data is yours. Export the last 30 days as a CSV to keep, or to
+            dig into in a spreadsheet.
           </Text>
           <View style={styles.colsBox}>
             <Text style={styles.colsLabel}>Included columns</Text>
@@ -404,28 +567,6 @@ export function SettingsScreen() {
               <Text style={styles.exportBtnText}>Export last 30 days</Text>
             </Pressable>
           )}
-        </View>
-
-        {/* ── Whoop cross-reference ───────────────────── */}
-        <SectionLabel title="Whoop cross-reference" />
-        <View style={styles.card}>
-          <Text style={styles.whoopIntro}>
-            Once Whoop integration launches, this will be automatic. For now:
-          </Text>
-          {WHOOP_STEPS.map((step, i) => (
-            <View
-              key={i}
-              style={[
-                styles.step,
-                i < WHOOP_STEPS.length - 1 && styles.stepBorder,
-              ]}
-            >
-              <View style={styles.stepNum}>
-                <Text style={styles.stepNumText}>{i + 1}</Text>
-              </View>
-              <Text style={styles.stepText}>{step}</Text>
-            </View>
-          ))}
         </View>
 
         {/* ── Saved ingredients ──────────────────────── */}
@@ -660,6 +801,72 @@ const styles = StyleSheet.create({
     color: Colors.bg,
   },
 
+  // ── Whoop ──────────────────────────────────────────────────
+  whoopStatusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: Spacing.md,
+  },
+  whoopStatusLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+  },
+  whoopDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.green,
+  },
+  whoopStatusText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+  },
+  whoopStatusSub: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  whoopBody: {
+    fontSize: Typography.sm,
+    color: Colors.textSub,
+    lineHeight: 20,
+    marginBottom: Spacing.md,
+  },
+  whoopConnectBtn: {
+    backgroundColor: Colors.green,
+    borderRadius: Radius.full,
+    paddingVertical: 13,
+    alignItems: "center",
+  },
+  whoopConnectBtnText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    color: Colors.bg,
+  },
+  whoopDisconnectBtn: {
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: `${Colors.danger}40`,
+    paddingVertical: 13,
+    alignItems: "center",
+  },
+  whoopDisconnectBtnText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    color: Colors.danger,
+  },
+  whoopErrorText: {
+    fontSize: Typography.xs,
+    color: Colors.danger,
+    marginTop: Spacing.sm,
+    textAlign: "center",
+    lineHeight: 17,
+  },
+
   // ── Goals ──────────────────────────────────────────────────
   goalRow: {
     flexDirection: "row",
@@ -781,47 +988,6 @@ const styles = StyleSheet.create({
     fontSize: Typography.base,
     fontWeight: Typography.bold,
     color: Colors.text,
-  },
-
-  // ── Whoop ──────────────────────────────────────────────────
-  whoopIntro: {
-    fontSize: Typography.sm,
-    color: Colors.textSub,
-    marginBottom: Spacing.md,
-    lineHeight: 19,
-  },
-  step: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: Spacing.sm,
-    paddingVertical: 10,
-  },
-  stepBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.borderSub,
-  },
-  stepNum: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: Colors.greenDim,
-    borderWidth: 1,
-    borderColor: `${Colors.green}50`,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-    marginTop: 1,
-  },
-  stepNumText: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.bold,
-    color: Colors.green,
-  },
-  stepText: {
-    flex: 1,
-    fontSize: Typography.sm,
-    color: Colors.textSub,
-    lineHeight: 20,
   },
 
   // ── Ingredient library ─────────────────────────────────────

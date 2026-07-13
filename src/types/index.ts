@@ -72,6 +72,11 @@ export interface MealEntry {
   sat_fat?: number | null;
 
   eaten_at?: string | null; // real eating time; falls back to logged_at
+
+  planned: boolean; // DERIVED by the DB trigger at insert. Never set client-side.
+  confirmed_at: string | null; // "yes, I ate it" — the only way into the correlation
+  skipped_at: string | null; // "no, I didn't" — evidence; counts toward nothing
+
   // ── Images (snapshotted at log time, like the macros above) ──
   // Same split as FoodProduct: image_url is directly renderable (OFF);
   // image_path is a storage object PATH in the private bucket and must be

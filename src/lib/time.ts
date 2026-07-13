@@ -1,8 +1,19 @@
 // ============================================================
-// src/lib/time.ts — helpers for eaten_at handling
+// src/lib/time.ts — the app's one source of truth about "when"
+//
+// Two different questions live in here and must not be confused:
+//
+//   eaten_at  — an INSTANT. What the WHOOP correlation joins on, by UTC
+//               interval containment. Timezone-correct by construction.
+//   date      — the app's CALENDAR DAY, LOCAL. What TodayScreen filters on.
+//               Never derived in SQL: Postgres does not know what timezone
+//               the phone is in.
+//
+// `date` must always be dateKey(new Date(eaten_at)). Deriving it any other
+// way is how D2 put late-night meals on the wrong day.
 // ============================================================
 
-// Format an ISO timestamp as "HH:MM" (24h, matches UK convention).
+/** Format an ISO timestamp as "HH:MM" (24h, matches UK convention). */
 export function formatTime(iso: string | undefined | null): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -10,35 +21,6 @@ export function formatTime(iso: string | undefined | null): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(
     d.getMinutes(),
   ).padStart(2, "0")}`;
-}
-
-// Combine a picked wall-clock time (hours/minutes) with today's date,
-// rolling back a day when the picked time is meaningfully in the future.
-//
-// Rationale: the picker is time-only and defaults to "today". Someone
-// logging at 00:30 who picks 23:45 almost certainly means last night,
-// not tonight — so if the resulting timestamp is more than ROLLBACK_H
-// hours ahead of now, subtract a day.
-const ROLLBACK_H = 3;
-
-export function resolveEatenAt(hours: number, minutes: number): string {
-  const now = new Date();
-  const candidate = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-    hours,
-    minutes,
-    0,
-    0,
-  );
-
-  const aheadMs = candidate.getTime() - now.getTime();
-  if (aheadMs > ROLLBACK_H * 3600 * 1000) {
-    candidate.setDate(candidate.getDate() - 1);
-  }
-
-  return candidate.toISOString();
 }
 
 /**
@@ -54,9 +36,7 @@ export function resolveEatenAt(hours: number, minutes: number): string {
  * at 00:30 got date = the 11th; TodayScreen filters on the 12th; the meal
  * vanished. An hour a night in the UK, up to thirteen in Auckland.
  *
- * `meal_entries.date` is the app's day. `eaten_at` is the instant. The WHOOP
- * join uses eaten_at and does not care about this function — but the UI does,
- * and the two must not disagree about what day it is.
+ * There is exactly one of these. Keep it that way.
  */
 export function dateKey(d: Date = new Date()): string {
   return [
@@ -64,4 +44,132 @@ export function dateKey(d: Date = new Date()): string {
     String(d.getMonth() + 1).padStart(2, "0"),
     String(d.getDate()).padStart(2, "0"),
   ].join("-");
+}
+
+/**
+ * The inverse of dateKey: "2026-07-14" → local midnight on the 14th.
+ *
+ * DO NOT use `new Date("2026-07-14")`. A bare date string is parsed as UTC
+ * midnight, so west of Greenwich it lands on the 13th and the whole date
+ * navigation slides a day. This is the same class of bug as the one above,
+ * approached from the opposite direction — and now that the app can walk
+ * backwards and forwards through dates, it has somewhere to bite.
+ */
+export function parseDateKey(key: string): Date {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(y, m - 1, d, 0, 0, 0, 0);
+}
+
+/** Shift a date key by n days, staying in local time. Use for ‹ › navigation. */
+export function addDays(key: string, n: number): string {
+  const d = parseDateKey(key);
+  d.setDate(d.getDate() + n);
+  return dateKey(d);
+}
+
+/**
+ * How far ahead a meal can be before it stops being "I'm about to eat this"
+ * and starts being a plan.
+ *
+ * ⚠ ADVISORY ONLY. The DATABASE decides. `meal_entries_derive_planned()` owns
+ * this rule, using the database clock, so a skewed phone clock cannot mislabel
+ * a meal and no insert path can forget it. This constant exists purely so the
+ * UI can PREVIEW the decision ("this will be saved as planned") before the row
+ * comes back. If you change one, change both — and if they ever disagree,
+ * the database is right.
+ */
+export const PLANNING_GRACE_MINUTES = 30;
+
+/** Preview of what the DB trigger will decide. Never persist this. */
+export function willBePlanned(
+  eatenAtIso: string,
+  now: Date = new Date(),
+): boolean {
+  return (
+    new Date(eatenAtIso).getTime() >
+    now.getTime() + PLANNING_GRACE_MINUTES * 60 * 1000
+  );
+}
+
+/**
+ * A time-only picker has to guess which day you meant. Someone logging at 00:30
+ * who picks 23:45 means LAST night, not tonight — so a candidate more than
+ * ROLLBACK_H hours ahead of now gets rolled back a day.
+ *
+ * The heuristic is right, and it is also lethal to planning: tomorrow's 19:00
+ * dinner is ~27 hours ahead, which trips the rollback and silently returns
+ * TODAY at 19:00. The feature would look broken with nothing visible to blame.
+ *
+ * So the rule is: GUESS ONLY WHEN NOT TOLD. Pass `day` and the heuristic is
+ * off — an explicit date is not a guess to be second-guessed. Omit `day` and
+ * the old behaviour is preserved exactly, which is what every existing caller
+ * relies on.
+ */
+const ROLLBACK_H = 3;
+
+export function resolveEatenAt(
+  hours: number,
+  minutes: number,
+  /** The day the user explicitly chose. Omit to mean "today, and guess". */
+  day?: Date,
+): string {
+  const now = new Date();
+  const base = day ?? now;
+
+  const candidate = new Date(
+    base.getFullYear(),
+    base.getMonth(),
+    base.getDate(),
+    hours,
+    minutes,
+    0,
+    0,
+  );
+
+  // Only guess when we weren't told.
+  if (!day) {
+    const aheadMs = candidate.getTime() - now.getTime();
+    if (aheadMs > ROLLBACK_H * 3600 * 1000) {
+      candidate.setDate(candidate.getDate() - 1);
+    }
+  }
+
+  return candidate.toISOString();
+}
+
+/**
+ * The single call every insert path should make. Returns the pair, already
+ * consistent — `date` is derived FROM the resolved instant, never picked
+ * alongside it. That divergence is the D2 bug, and the only way to make it
+ * unreachable is to stop offering the two values separately.
+ */
+export function resolveEatenAtAndDate(
+  hours: number,
+  minutes: number,
+  day?: Date,
+): { eaten_at: string; date: string } {
+  const eaten_at = resolveEatenAt(hours, minutes, day);
+  return { eaten_at, date: dateKey(new Date(eaten_at)) };
+}
+
+/** "Today" / "Tomorrow" / "Yesterday" / "Sat 18 Jul" — for the date header. */
+export function formatDayLabel(key: string, now: Date = new Date()): string {
+  const today = dateKey(now);
+  if (key === today) return "Today";
+  if (key === addDays(today, 1)) return "Tomorrow";
+  if (key === addDays(today, -1)) return "Yesterday";
+
+  const d = parseDateKey(key);
+  const sameYear = d.getFullYear() === now.getFullYear();
+  return d.toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+  });
+}
+
+/** True when the key is a calendar day after today. Purely for UI copy. */
+export function isFutureDay(key: string, now: Date = new Date()): boolean {
+  return key > dateKey(now); // YYYY-MM-DD sorts chronologically as a string
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react"; // ← add useEffect
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -15,10 +15,18 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import DateTimePicker from "@react-native-community/datetimepicker";
-import { useStore } from "../store/useStore";
-import { formatTime, resolveEatenAt, dateKey } from "../lib/time";
+import { useStore, todayKey, MealEntryPatch } from "../store/useStore";
+import {
+  formatTime,
+  formatDayLabel,
+  resolveEatenAt,
+  resolveEatenAtAndDate,
+  parseDateKey,
+  dateKey,
+  willBePlanned,
+} from "../lib/time";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
-import { RootStackParamList, MEAL_LABELS } from "../types";
+import { RootStackParamList, MEAL_LABELS, MealType } from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Product">;
@@ -26,12 +34,20 @@ type Route = RouteProp<RootStackParamList, "Product">;
 
 const DEFAULT_PRESETS = [50, 75, 100, 150, 200];
 
+// When you plan Thursday's dinner on Sunday, "now" is a nonsense default —
+// it would file it at 16:43 because that happens to be when you opened the app.
+// A meal has a shape. Start from it; the user can still change it.
+const DEFAULT_HOUR: Record<MealType, number> = {
+  breakfast: 8,
+  lunch: 13,
+  dinner: 19,
+  snacks: 15,
+};
+
 // Product identity thumbnail.
 //   • OFF products arrive with image_url — a directly renderable URL.
 //   • Custom foods arrive with image_path — a path into the PRIVATE bucket,
 //     which has to be signed before it can be displayed.
-// Falls back to a themed placeholder when there's no image, the signing
-// fails, or the image itself fails to load.
 function ProductThumb({ uri, path }: { uri?: string; path?: string }) {
   const [errored, setErrored] = useState(false);
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
@@ -73,7 +89,7 @@ export function ProductScreen() {
   const navigation = useNavigation<Nav>();
   const {
     product,
-    date,
+    date: routeDate,
     mealType,
     editEntryId,
     initialServingG,
@@ -91,33 +107,56 @@ export function ProductScreen() {
       : null;
 
   const presets = servingPreset
-    ? [servingPreset, 50, 100, 150, 200].filter(
-        (v, i, a) => a.indexOf(v) === i, // dedupe if serving == a preset
-      )
+    ? [servingPreset, 50, 100, 150, 200].filter((v, i, a) => a.indexOf(v) === i)
     : DEFAULT_PRESETS;
 
   const [serving, setServing] = useState(
     String(initialServingG ?? servingPreset ?? 100),
   );
 
-  // ── Eaten-at time ───────────────────────────────────────────
-  // Editing → the entry's original time; new → now.
-  const [eatenAt, setEatenAt] = useState<Date>(
-    initialEatenAt ? new Date(initialEatenAt) : new Date(),
-  );
-  const [showPicker, setShowPicker] = useState(false);
+  // ── Eaten-at: ONE Date carrying both the day and the time ───
+  //
+  // Deliberately not two pieces of state. `date` and `eaten_at` diverging is
+  // the D2 bug; the surest way to prevent two values disagreeing is to only
+  // have one. `date` is DERIVED from this at submit, never picked alongside it.
+  const [eatenAt, setEatenAt] = useState<Date>(() => {
+    if (initialEatenAt) return new Date(initialEatenAt); // editing: keep it exactly
+
+    const day = parseDateKey(routeDate ?? todayKey());
+    if ((routeDate ?? todayKey()) === todayKey()) return new Date(); // today: now
+
+    // Another day: "now" is meaningless. Start from the shape of the meal.
+    day.setHours(DEFAULT_HOUR[mealType] ?? 12, 0, 0, 0);
+    return day;
+  });
+
+  const [pickerMode, setPickerMode] = useState<"date" | "time" | null>(null);
 
   // Did the user actually PICK a time, or are we still showing the default?
-  // This is the entire difference between a timestamp you can correlate
-  // against WHOOP recovery and one that just says "whenever I opened the app".
+  // This is the entire difference between a timestamp you can correlate against
+  // WHOOP recovery and one that just says "whenever I opened the app".
   const [timeTouched, setTimeTouched] = useState(false);
+
+  // Did the user explicitly choose a DAY? This gates the midnight roll-back.
+  //
+  // resolveEatenAt() guesses that a 23:45 picked at 00:30 means LAST night. That
+  // guess is right, and it must survive — but it is also lethal to planning,
+  // because tomorrow's 19:00 is ~27h ahead and would get rolled back into today.
+  // So: guess only when not told. Arriving on a non-today screen counts as being
+  // told, because you navigated there on purpose.
+  const [dateTouched, setDateTouched] = useState(false);
+  const dayIsExplicit =
+    isEditing || dateTouched || (routeDate ?? todayKey()) !== todayKey();
 
   const [saving, setSaving] = useState(false);
 
   const g = parseFloat(serving) || 0;
   const f = g / 100;
-
   const satFat100 = product.sat_fat_per100 ?? 0;
+
+  // What the DB trigger will decide. ADVISORY — the database is the authority;
+  // this only lets the UI tell the truth about what it's about to do.
+  const isPlanned = willBePlanned(eatenAt.toISOString());
 
   const preview = {
     calories: Math.round(product.cal_per100 * f),
@@ -130,20 +169,29 @@ export function ProductScreen() {
     sugar: +((product.sugar_per100 ?? 0) * f).toFixed(1),
   };
 
-  const onTimeChange = (event: any, picked?: Date) => {
-    // Android fires with type 'dismissed' on cancel.
-    setShowPicker(false);
+  const onDateChange = (event: any, picked?: Date) => {
+    setPickerMode(null);
     if (event?.type === "dismissed" || !picked) return;
 
-    setTimeTouched(true); // ← ADD. Below the guard, so a cancel doesn't count.
+    setDateTouched(true);
+    const next = new Date(eatenAt);
+    next.setFullYear(picked.getFullYear(), picked.getMonth(), picked.getDate());
+    setEatenAt(next);
+  };
 
-    if (isEditing) {
-      // Keep the entry's original calendar day; only swap the time.
-      const base = new Date(eatenAt);
-      base.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
-      setEatenAt(base);
+  const onTimeChange = (event: any, picked?: Date) => {
+    setPickerMode(null);
+    if (event?.type === "dismissed" || !picked) return;
+
+    setTimeTouched(true); // below the guard, so a cancel doesn't count
+
+    if (dayIsExplicit) {
+      // The day is settled. Swap the time and leave it alone.
+      const next = new Date(eatenAt);
+      next.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
+      setEatenAt(next);
     } else {
-      // New entry: resolve against today with midnight roll-back.
+      // Today, day untouched → let the roll-back heuristic do its job.
       setEatenAt(
         new Date(resolveEatenAt(picked.getHours(), picked.getMinutes())),
       );
@@ -153,6 +201,13 @@ export function ProductScreen() {
   const handleSubmit = async () => {
     if (!g) return;
     setSaving(true);
+
+    // The pair, derived together, from one value. `date` is never picked.
+    const { eaten_at, date } = resolveEatenAtAndDate(
+      eatenAt.getHours(),
+      eatenAt.getMinutes(),
+      eatenAt,
+    );
 
     const macros = {
       serving_g: g,
@@ -164,21 +219,25 @@ export function ProductScreen() {
       salt: (product.salt_per100 ?? 0) * f,
       fibre: (product.fibre_per100 ?? 0) * f,
       sugar: (product.sugar_per100 ?? 0) * f,
-      eaten_at: eatenAt.toISOString(),
+      eaten_at,
     };
 
     if (isEditing) {
       // Only ever UPGRADE the flag. An edit that doesn't open the picker
       // (changing the serving size, say) must NOT downgrade a previously
-      // confirmed time back to "estimated" — that would quietly destroy the
-      // one piece of provenance the correlation depends on.
-      const patch: Partial<MealEntry> = { ...macros };
+      // confirmed time back to "estimated" — that would quietly destroy the one
+      // piece of provenance the correlation depends on.
+      //
+      // `date` is NOT in this patch: the store derives it from eaten_at. That is
+      // the only place the relationship is enforced, and MealEntryPatch is shaped
+      // so this screen cannot bypass it even by accident.
+      const patch: MealEntryPatch = { ...macros };
       if (timeTouched) patch.eaten_at_estimated = false;
       await updateEntry(editEntryId!, patch);
     } else {
       await saveIngredient(product);
       await addEntry({
-        date: dateKey(eatenAt),
+        date,
         meal_type: mealType,
         name: product.name,
         brand: product.brand,
@@ -192,9 +251,13 @@ export function ProductScreen() {
         barcode: product.barcode,
         off_id: product.off_id,
 
-        // The picker defaults to now. If the user never touched it, this
-        // timestamp is "when I opened the app", not "when I ate".
-        eaten_at_estimated: !timeTouched, // ← ADD
+        // A PLANNED time is always an estimate, however deliberately you picked
+        // it — you have not eaten this yet, so 19:00 is a forecast, not a fact.
+        // It only becomes real if you adjust the time while confirming.
+        //
+        // For a meal you HAVE eaten, the old rule stands: an untouched picker
+        // says "when I opened the app", not "when I ate".
+        eaten_at_estimated: isPlanned ? true : !timeTouched,
 
         image_url: product.image_url ?? null,
         image_path: product.image_path ?? null,
@@ -229,6 +292,7 @@ export function ProductScreen() {
 
   const mealLabel = MEAL_LABELS[mealType];
   const canSubmit = g > 0;
+  const dayLabel = formatDayLabel(dateKey(eatenAt));
 
   const macroRows: {
     key: string;
@@ -371,7 +435,11 @@ export function ProductScreen() {
           </Pressable>
           <View style={styles.headerCentre}>
             <Text style={styles.headerTitle}>
-              {isEditing ? "Edit entry" : "Add to meal"}
+              {isEditing
+                ? "Edit entry"
+                : isPlanned
+                  ? "Plan a meal"
+                  : "Add to meal"}
             </Text>
             <View style={styles.mealPill}>
               <Text style={styles.mealPillText}>{mealLabel}</Text>
@@ -459,33 +527,83 @@ export function ProductScreen() {
           </View>
         </View>
 
-        {/* ── Timing card ─────────────────────────────── */}
+        {/* ── Timing card — TWO chips ─────────────────── */}
+        {/*
+          Two chips, not one control: Android's picker cannot do date and time in
+          a single dialog. Two taps for a planned meal, and — crucially — ZERO
+          extra taps for the 95% case of logging something you just ate, because
+          the date chip already says Today.
+        */}
         <View style={styles.card}>
-          <Text style={styles.cardSectionLabel}>When did you eat this?</Text>
-          <Pressable
-            style={({ pressed }) => [
-              styles.timePill,
-              pressed && { opacity: 0.8 },
-            ]}
-            onPress={() => setShowPicker(true)}
-          >
-            <Text style={styles.timeClock}>🕐</Text>
-            <Text style={styles.timePillText}>
-              Plated at{" "}
-              <Text style={styles.timePillValue}>
+          <Text style={styles.cardSectionLabel}>
+            {isPlanned ? "When will you eat this?" : "When did you eat this?"}
+          </Text>
+
+          <View style={styles.whenRow}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.whenChip,
+                isPlanned && styles.whenChipPlanned,
+                pressed && { opacity: 0.8 },
+              ]}
+              onPress={() => setPickerMode("date")}
+            >
+              <Text style={styles.whenIcon}>{isPlanned ? "📅" : "🗓"}</Text>
+              <Text
+                style={[styles.whenValue, isPlanned && styles.whenValuePlanned]}
+                numberOfLines={1}
+              >
+                {dayLabel}
+              </Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.whenChip,
+                isPlanned && styles.whenChipPlanned,
+                pressed && { opacity: 0.8 },
+              ]}
+              onPress={() => setPickerMode("time")}
+            >
+              <Text style={styles.whenIcon}>🕐</Text>
+              <Text
+                style={[
+                  styles.whenValue,
+                  styles.whenValueMono,
+                  isPlanned && styles.whenValuePlanned,
+                ]}
+              >
                 {formatTime(eatenAt.toISOString())}
               </Text>
-            </Text>
-            <Text style={styles.timeEdit}>Change</Text>
-          </Pressable>
+            </Pressable>
+          </View>
 
-          {showPicker && (
+          <Text style={styles.whenCaption}>
+            {isPlanned ? (
+              <>
+                Saved as a plan.{" "}
+                <Text style={styles.whenCaptionStrong}>
+                  We'll ask if you actually ate it.
+                </Text>
+              </>
+            ) : (
+              <>
+                Plated at{" "}
+                <Text style={styles.whenCaptionStrong}>
+                  {formatTime(eatenAt.toISOString())}
+                </Text>
+                , {dayLabel.toLowerCase()}.
+              </>
+            )}
+          </Text>
+
+          {pickerMode && (
             <DateTimePicker
               value={eatenAt}
-              mode="time"
+              mode={pickerMode}
               is24Hour
               display="default"
-              onChange={onTimeChange}
+              onChange={pickerMode === "date" ? onDateChange : onTimeChange}
             />
           )}
         </View>
@@ -539,7 +657,11 @@ export function ProductScreen() {
                 !canSubmit && styles.addBtnTextDisabled,
               ]}
             >
-              {isEditing ? "Update entry" : `Add to ${mealLabel}`}
+              {isEditing
+                ? "Update entry"
+                : isPlanned
+                  ? `Plan ${mealLabel.toLowerCase()} for ${dayLabel.toLowerCase()}`
+                  : `Add to ${mealLabel}`}
             </Text>
           )}
         </Pressable>
@@ -573,7 +695,6 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.sm,
   },
 
-  // Header — paddingTop applied inline via insets
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -621,7 +742,6 @@ const styles = StyleSheet.create({
     color: Colors.green,
   },
 
-  // Product card
   productCard: {
     backgroundColor: Colors.surface,
     borderRadius: Radius.lg,
@@ -684,7 +804,6 @@ const styles = StyleSheet.create({
     opacity: 0.3,
   },
 
-  // Macro grid — 8 cells wrap into 2×4
   macroGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -713,7 +832,6 @@ const styles = StyleSheet.create({
     fontWeight: Typography.medium,
   },
 
-  // Shared card
   card: {
     backgroundColor: Colors.surface,
     borderRadius: Radius.lg,
@@ -731,7 +849,6 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
 
-  // Serving
   servingSuggestion: {
     fontSize: Typography.sm,
     color: Colors.textSub,
@@ -795,41 +912,55 @@ const styles = StyleSheet.create({
     color: Colors.green,
   },
 
-  // Timing
-  timePill: {
+  // Timing — two chips side by side
+  whenRow: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+  },
+  whenChip: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: Spacing.sm,
     backgroundColor: Colors.surface2,
     borderRadius: Radius.md,
     borderWidth: 1,
     borderColor: Colors.border,
-    paddingHorizontal: Spacing.md,
+    paddingHorizontal: Spacing.sm,
     paddingVertical: Spacing.md,
   },
-  timeClock: {
-    fontSize: 16,
+  whenChipPlanned: {
+    backgroundColor: `${MacroColor.protein}12`,
+    borderColor: `${MacroColor.protein}40`,
   },
-  timePillText: {
-    flex: 1,
+  whenIcon: {
+    fontSize: 15,
+  },
+  whenValue: {
     fontSize: Typography.base,
-    color: Colors.textSub,
-    fontWeight: Typography.medium,
-  },
-  timePillValue: {
-    color: Colors.text,
     fontWeight: Typography.bold,
+    color: Colors.text,
+    letterSpacing: -0.2,
+    flexShrink: 1,
+  },
+  whenValueMono: {
     fontVariant: ["tabular-nums"],
   },
-  timeEdit: {
+  whenValuePlanned: {
+    color: MacroColor.protein,
+  },
+  whenCaption: {
     fontSize: Typography.xs,
-    fontWeight: Typography.bold,
-    color: Colors.green,
-    textTransform: "uppercase",
-    letterSpacing: 0.4,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+    marginTop: Spacing.sm,
+  },
+  whenCaptionStrong: {
+    color: Colors.textSub,
+    fontWeight: Typography.semibold,
   },
 
-  // Preview
   previewHeader: {
     flexDirection: "row",
     alignItems: "center",
@@ -893,7 +1024,6 @@ const styles = StyleSheet.create({
     fontWeight: Typography.medium,
   },
 
-  // FAB
   fab: {
     position: "absolute",
     bottom: 0,

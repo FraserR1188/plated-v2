@@ -249,10 +249,15 @@ export async function getEntriesForUser(
     .select("*")
     .eq("user_id", userId)
     .eq("date", date)
+    // A plan is not food. Migration 4's follower policy already makes these rows
+    // unreachable, so this is defence in depth — but it also says out loud what
+    // this function returns, which the policy cannot do from over here.
+    .or("planned.eq.false,confirmed_at.not.is.null")
+    .is("skipped_at", null)
     // NOT created_at — that column does not exist on meal_entries (see the note
-    // at the top of src/types/index.ts). eaten_at is nullable on old rows, so
-    // nullsFirst: false pushes them to the end rather than the front.
-    .order("eaten_at", { ascending: true, nullsFirst: false });
+    // at the top of src/types/index.ts). eaten_at is NOT NULL as of migration 3,
+    // so the nullsFirst dance is no longer needed.
+    .order("eaten_at", { ascending: true });
 
   if (error) throw error;
   return data ?? [];
@@ -347,7 +352,11 @@ export async function getTodayCaloriesForUser(userId: string): Promise<number> {
     .from("meal_entries")
     .select("calories")
     .eq("user_id", userId)
-    .eq("date", dateKey()); // ← WAS: todayKey()  (UTC)
+    .eq("date", dateKey())
+    // "2,400 kcal today" must mean EATEN. A plan they haven't touched and a meal
+    // they told us they skipped are both zero, as far as anyone else is concerned.
+    .or("planned.eq.false,confirmed_at.not.is.null")
+    .is("skipped_at", null);
 
   if (error || !data) return 0;
   return data.reduce((sum, r) => sum + (r.calories ?? 0), 0);

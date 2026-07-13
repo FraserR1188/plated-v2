@@ -8,8 +8,7 @@ import {
   MealType,
   FoodProduct,
 } from "../types";
-
-import { dateKey } from "../lib/time"; // ← add to the imports at the top
+import { dateKey } from "../lib/time";
 
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
@@ -21,6 +20,53 @@ const DEFAULT_GOALS: Goals = {
   fibre: 30,
   sugar: 30,
 };
+
+/**
+ * Fields a caller is allowed to change on an existing entry.
+ *
+ * Deliberately NOT `Partial<MealEntry>`:
+ *   - `date` is absent. It is DERIVED from `eaten_at` (see updateEntry). Letting a
+ *     caller set it independently is how `date` and `eaten_at` diverged in D2 and
+ *     put late-night meals on the wrong day.
+ *   - `planned` is absent. It is set once, by the DB trigger, at insert. Moving a
+ *     meal is not the same as saying you ate it.
+ *   - `confirmed_at` / `skipped_at` are absent. Only confirmEntries / skipEntries
+ *     may write them.
+ *   - `id`, `user_id`, `logged_at` are absent. They are not editable.
+ *
+ * If you need one of those, add a purpose-built action. Do not widen this type.
+ */
+export type MealEntryPatch = Partial<
+  Pick<
+    MealEntry,
+    | "name"
+    | "brand"
+    | "meal_type"
+    | "serving_g"
+    | "calories"
+    | "protein"
+    | "carbs"
+    | "fat"
+    | "sat_fat"
+    | "salt"
+    | "fibre"
+    | "sugar"
+    | "eaten_at"
+    | "eaten_at_estimated"
+    | "image_url"
+    | "image_path"
+  >
+>;
+
+/** Macro totals split by whether the food has actually been eaten. */
+export interface SplitTotals {
+  /** Logged entries + confirmed planned entries. What actually went in you. */
+  eaten: DayTotals;
+  /** Planned entries not yet confirmed or skipped. The intention. */
+  planned: DayTotals;
+  /** eaten + planned. What the goal ring measures against. */
+  total: DayTotals;
+}
 
 interface AppState {
   userId: string | null;
@@ -35,37 +81,99 @@ interface AppState {
   fetchGoals: () => Promise<void>;
   fetchSavedIngredients: () => Promise<void>;
 
+  /**
+   * `planned`, `confirmed_at` and `skipped_at` are omitted on purpose: the DB
+   * trigger derives them. The client never sends them, so no insert path — copy,
+   * social, barcode, AI, anything written later — can get the rule wrong.
+   */
   addEntry: (
-    entry: Omit<MealEntry, "id" | "user_id" | "logged_at">,
+    entry: Omit<
+      MealEntry,
+      "id" | "user_id" | "logged_at" | "planned" | "confirmed_at" | "skipped_at"
+    >,
   ) => Promise<void>;
   deleteEntry: (id: string) => Promise<void>;
-  updateEntry: (id: string, patch: Partial<MealEntry>) => Promise<void>;
+  updateEntry: (id: string, patch: MealEntryPatch) => Promise<void>;
   saveGoals: (goals: Goals) => Promise<void>;
 
-  // Save an ingredient to the library (or increment use_count if it exists)
+  /** "Yes, I ate these." Optionally correct the time while confirming. */
+  confirmEntries: (
+    ids: string[],
+    correctedEatenAt?: Record<string, string>,
+  ) => Promise<void>;
+  /** "No, I didn't." Keeps the row as evidence; it counts toward nothing. */
+  skipEntries: (ids: string[]) => Promise<void>;
+
   saveIngredient: (product: FoodProduct) => Promise<SavedIngredient | null>;
   deleteIngredient: (id: string) => Promise<void>;
 
+  /** Counts toward goals: logged + confirmed + unconfirmed-planned. Excludes skipped. */
   getTotalsForDate: (date: string) => DayTotals;
+  /** Same set, split into eaten vs planned, for the two-arc ring. */
+  getSplitTotalsForDate: (date: string) => SplitTotals;
   getEntriesForMeal: (date: string, mealType: MealType) => MealEntry[];
+  /** Every planned meal awaiting an answer, any day. For the Review screen. */
+  getPendingEntries: () => MealEntry[];
+  /** Pending meals whose calendar day has ENDED. For the banner — never nags about today. */
+  getDuePendingEntries: () => MealEntry[];
   getAllEntries: () => MealEntry[];
 }
 
 /** Re-exported for the screens that already import it from here. */
 export const todayKey = (): string => dateKey();
 
+/** Awaiting an answer: planned, neither confirmed nor skipped. */
+const isPending = (e: MealEntry): boolean =>
+  e.planned && !e.confirmed_at && !e.skipped_at;
+
+/** Actually eaten: a normal logged entry, or a planned one the user confirmed. */
+const isEaten = (e: MealEntry): boolean => !e.planned || !!e.confirmed_at;
+
+/** Answered "no". Counts toward nothing — not goals, not correlation, not sections. */
+const isSkipped = (e: MealEntry): boolean => !!e.skipped_at;
+
+const EMPTY_TOTALS: DayTotals = {
+  calories: 0,
+  protein: 0,
+  carbs: 0,
+  fat: 0,
+  satFat: 0,
+  salt: 0,
+  fibre: 0,
+  sugar: 0,
+};
+
 function sumMacros(entries: MealEntry[]): DayTotals {
-  return {
-    calories: entries.reduce((s, e) => s + e.calories, 0),
-    protein: entries.reduce((s, e) => s + e.protein, 0),
-    carbs: entries.reduce((s, e) => s + e.carbs, 0),
-    fat: entries.reduce((s, e) => s + e.fat, 0),
-    satFat: entries.reduce((s, e) => s + (e.sat_fat ?? 0), 0),
-    salt: entries.reduce((s, e) => s + (e.salt ?? 0), 0),
-    fibre: entries.reduce((s, e) => s + (e.fibre ?? 0), 0),
-    sugar: entries.reduce((s, e) => s + (e.sugar ?? 0), 0),
-  };
+  return entries.reduce<DayTotals>(
+    (t, e) => ({
+      calories: t.calories + e.calories,
+      protein: t.protein + e.protein,
+      carbs: t.carbs + e.carbs,
+      fat: t.fat + e.fat,
+      satFat: t.satFat + (e.sat_fat ?? 0),
+      salt: t.salt + (e.salt ?? 0),
+      fibre: t.fibre + (e.fibre ?? 0),
+      sugar: t.sugar + (e.sugar ?? 0),
+    }),
+    { ...EMPTY_TOTALS },
+  );
 }
+
+const addTotals = (a: DayTotals, b: DayTotals): DayTotals => ({
+  calories: a.calories + b.calories,
+  protein: a.protein + b.protein,
+  carbs: a.carbs + b.carbs,
+  fat: a.fat + b.fat,
+  satFat: a.satFat + b.satFat,
+  salt: a.salt + b.salt,
+  fibre: a.fibre + b.fibre,
+  sugar: a.sugar + b.sugar,
+});
+
+/** Chronological within a meal section. `logged_at` is useless here — five meal-prepped
+ *  chillis are created in the same two seconds and would otherwise sort arbitrarily. */
+const byEatenAt = (a: MealEntry, b: MealEntry): number =>
+  (a.eaten_at ?? "").localeCompare(b.eaten_at ?? "");
 
 export const useStore = create<AppState>((set, get) => ({
   userId: null,
@@ -86,6 +194,10 @@ export const useStore = create<AppState>((set, get) => ({
       loading: false,
     }),
 
+  // NOTE: still unbounded. ~2,200 rows/year today and planning will push that up,
+  // re-fetched on every screen focus. The bounded query, when it lands, is
+  // "last N days + everything future + everything pending" — not a flat date window,
+  // because a pending meal from three weeks ago must still reach the banner.
   fetchEntries: async () => {
     const { userId } = get();
     if (!userId) return;
@@ -95,6 +207,7 @@ export const useStore = create<AppState>((set, get) => ({
       .select("*")
       .eq("user_id", userId)
       .order("logged_at", { ascending: false });
+    if (error) console.warn("fetchEntries:", error.message);
     if (!error && data) set({ entries: data as MealEntry[] });
     set({ loading: false });
   },
@@ -137,17 +250,20 @@ export const useStore = create<AppState>((set, get) => ({
     const { userId } = get();
     if (!userId) return;
 
-    // EXPLICIT snake_case mapping — do NOT spread. The old version worked only
-    // because MealEntry happens to be schema-shaped; listing every column makes
-    // that a guarantee rather than a coincidence, and makes a forgotten column a
-    // compile error at the call site instead of a silent null in the database.
+    // EXPLICIT snake_case mapping — do NOT spread. Listing every column makes a
+    // forgotten one a compile error at the call site instead of a silent null.
+    //
+    // `planned` / `confirmed_at` / `skipped_at` are ABSENT by design. The BEFORE
+    // INSERT trigger owns them, using the DATABASE clock. A phone with a skewed
+    // clock cannot mislabel a meal, and a future insert path cannot forget the rule.
+    // The derived value comes straight back in the RETURNING row below.
     const { data, error } = await supabase
       .from("meal_entries")
       .insert({
         user_id: userId,
         logged_at: new Date().toISOString(),
 
-        date: entry.date,
+        date: entry.date, // LOCAL day, from dateKey(). Never derived in SQL.
         meal_type: entry.meal_type,
         name: entry.name,
         brand: entry.brand ?? null,
@@ -165,17 +281,16 @@ export const useStore = create<AppState>((set, get) => ({
 
         barcode: entry.barcode ?? null,
         off_id: entry.off_id ?? null,
-        eaten_at: entry.eaten_at ?? null,
 
-        // Snapshotted image + provenance.
+        // An explicit NULL here would DEFEAT the column default — Postgres only
+        // applies a default when the column is omitted. The trigger coalesces it,
+        // but callers should be passing a real timestamp regardless.
+        eaten_at: entry.eaten_at,
+        eaten_at_estimated: entry.eaten_at_estimated,
+
         image_url: entry.image_url ?? null,
         image_path: entry.image_path ?? null,
         custom_food_id: entry.custom_food_id ?? null,
-        eaten_at_estimated: entry.eaten_at_estimated, // ← ADD. No `?? true`:
-        // the type makes it required,
-        // so let the compiler find the
-        // callers rather than papering
-        // over them with a default.
       })
       .select()
       .single();
@@ -188,23 +303,126 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   deleteEntry: async (id) => {
-    await supabase.from("meal_entries").delete().eq("id", id);
+    const { error } = await supabase.from("meal_entries").delete().eq("id", id);
+    if (error) {
+      // Do NOT drop it locally. A failed delete that vanishes from the UI comes
+      // back to life on the next fetch, which looks like a ghost.
+      console.warn("deleteEntry:", error.message);
+      return;
+    }
     set((s) => ({ entries: s.entries.filter((e) => e.id !== id) }));
   },
 
   updateEntry: async (id, patch) => {
+    // `date` is DERIVED, never passed in. If eaten_at moves, the day follows it.
+    // This is the only place that relationship is enforced, and MealEntryPatch is
+    // shaped so a caller cannot bypass it.
+    const next: Record<string, unknown> = { ...patch };
+    if (patch.eaten_at !== undefined) {
+      next.date = dateKey(new Date(patch.eaten_at));
+    }
+
     const { data, error } = await supabase
       .from("meal_entries")
-      .update(patch)
+      .update(next)
       .eq("id", id)
       .select()
       .single();
-    if (!error && data) {
+
+    if (error) {
+      console.warn("updateEntry:", error.message);
+      return;
+    }
+    if (data) {
       set((s) => ({
         entries: s.entries.map((e) => (e.id === id ? (data as MealEntry) : e)),
       }));
-    } else if (error) {
-      console.warn("updateEntry:", error.message);
+    }
+  },
+
+  confirmEntries: async (ids, correctedEatenAt) => {
+    if (ids.length === 0) return;
+    const now = new Date().toISOString();
+
+    // Meals whose time the user corrected while confirming need a per-row update:
+    // eaten_at moved, so `date` must follow, and the time is no longer a guess.
+    const corrected = correctedEatenAt ?? {};
+    const plainIds = ids.filter((id) => !corrected[id]);
+
+    const updates: Promise<void>[] = Object.entries(corrected)
+      .filter(([id]) => ids.includes(id))
+      .map(async ([id, eatenAt]) => {
+        const { data, error } = await supabase
+          .from("meal_entries")
+          .update({
+            eaten_at: eatenAt,
+            date: dateKey(new Date(eatenAt)),
+            eaten_at_estimated: false, // they told us the real time
+            confirmed_at: now,
+          })
+          .eq("id", id)
+          .select()
+          .single();
+        if (error) {
+          console.warn("confirmEntries (corrected):", error.message);
+          return;
+        }
+        if (data)
+          set((s) => ({
+            entries: s.entries.map((e) =>
+              e.id === id ? (data as MealEntry) : e,
+            ),
+          }));
+      });
+
+    if (plainIds.length > 0) {
+      updates.push(
+        (async () => {
+          // eaten_at_estimated stays TRUE: they said "yes" to the whole batch, not
+          // to a specific clock time. It fails safe, which is the point of the column.
+          const { data, error } = await supabase
+            .from("meal_entries")
+            .update({ confirmed_at: now })
+            .in("id", plainIds)
+            .select();
+          if (error) {
+            console.warn("confirmEntries:", error.message);
+            return;
+          }
+          if (data) {
+            const byId = new Map(
+              (data as MealEntry[]).map((e) => [e.id, e] as const),
+            );
+            set((s) => ({
+              entries: s.entries.map((e) => byId.get(e.id) ?? e),
+            }));
+          }
+        })(),
+      );
+    }
+
+    await Promise.all(updates);
+  },
+
+  skipEntries: async (ids) => {
+    if (ids.length === 0) return;
+    // NOT a delete. The row persists as evidence of a plan abandoned — which is
+    // what makes "you skip your planned dinner 40% of Thursdays" possible later.
+    // It counts toward nothing: not goals, not sections, not the correlation.
+    const { data, error } = await supabase
+      .from("meal_entries")
+      .update({ skipped_at: new Date().toISOString() })
+      .in("id", ids)
+      .select();
+    if (error) {
+      console.warn("skipEntries:", error.message);
+      return;
+    }
+    if (data) {
+      const byId = new Map(
+        (data as MealEntry[]).map((e) => [e.id, e] as const),
+      );
+      set((s) => ({ entries: s.entries.map((e) => byId.get(e.id) ?? e) }));
     }
   },
 
@@ -230,7 +448,6 @@ export const useStore = create<AppState>((set, get) => ({
     const { userId, savedIngredients } = get();
     if (!userId) return null;
 
-    // Check if already saved (match by name + brand)
     const existing = savedIngredients.find(
       (i) =>
         i.name.toLowerCase() === product.name.toLowerCase() &&
@@ -238,7 +455,6 @@ export const useStore = create<AppState>((set, get) => ({
     );
 
     if (existing) {
-      // Increment use count
       await supabase
         .from("saved_ingredients")
         .update({ use_count: existing.use_count + 1 })
@@ -252,7 +468,6 @@ export const useStore = create<AppState>((set, get) => ({
       return updated;
     }
 
-    // Insert new
     const { data, error } = await supabase
       .from("saved_ingredients")
       .insert({
@@ -289,9 +504,38 @@ export const useStore = create<AppState>((set, get) => ({
     }));
   },
 
-  getTotalsForDate: (date) =>
-    sumMacros(get().entries.filter((e) => e.date === date)),
+  getTotalsForDate: (date) => {
+    const totals = get().getSplitTotalsForDate(date);
+    return totals.total;
+  },
+
+  getSplitTotalsForDate: (date) => {
+    const relevant = get().entries.filter(
+      (e) => e.date === date && !isSkipped(e),
+    );
+    const eaten = sumMacros(relevant.filter(isEaten));
+    const planned = sumMacros(relevant.filter(isPending));
+    return { eaten, planned, total: addTotals(eaten, planned) };
+  },
+
   getEntriesForMeal: (date, mealType) =>
-    get().entries.filter((e) => e.date === date && e.meal_type === mealType),
+    get()
+      .entries.filter(
+        (e) => e.date === date && e.meal_type === mealType && !isSkipped(e),
+      )
+      .sort(byEatenAt),
+
+  getPendingEntries: () => get().entries.filter(isPending).sort(byEatenAt),
+
+  // The banner only ever asks about days that are OVER. A lunch you planned for
+  // 13:00 today is not something the app should be interrogating you about at 14:00 —
+  // it just joins tomorrow's batch, which is one tap you're already making.
+  getDuePendingEntries: () => {
+    const today = todayKey();
+    return get()
+      .entries.filter((e) => isPending(e) && e.date < today)
+      .sort(byEatenAt);
+  },
+
   getAllEntries: () => get().entries,
 }));

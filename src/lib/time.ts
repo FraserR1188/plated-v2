@@ -11,7 +11,19 @@
 //
 // `date` must always be dateKey(new Date(eaten_at)). Deriving it any other
 // way is how D2 put late-night meals on the wrong day.
+//
+// D4 adds a THIRD question, and it is genuinely different from both:
+//
+//   eaten_time — a LOCAL WALL CLOCK, with no day attached. "07:30".
+//                What a bundle item stores. It is not an instant and it is
+//                not a day; it is the thing you rebuild an instant FROM,
+//                once you know which day you're rebuilding it on.
+//
+// That third type is what makes bundles DST-correct for free. See the
+// comment on sameTimeOnDay() below — it's the whole reason bundles are safe.
 // ============================================================
+
+import { MealType } from "../types";
 
 /** Format an ISO timestamp as "HH:MM" (24h, matches UK convention). */
 export function formatTime(iso: string | undefined | null): string {
@@ -77,6 +89,9 @@ export function addDays(key: string, n: number): string {
  * UI can PREVIEW the decision ("this will be saved as planned") before the row
  * comes back. If you change one, change both — and if they ever disagree,
  * the database is right.
+ *
+ * As of migration 5 there is a THIRD copy of this rule, in
+ * meal_entries_no_future_logged(). Change all three or none.
  */
 export const PLANNING_GRACE_MINUTES = 30;
 
@@ -142,6 +157,12 @@ export function resolveEatenAt(
  * consistent — `date` is derived FROM the resolved instant, never picked
  * alongside it. That divergence is the D2 bug, and the only way to make it
  * unreachable is to stop offering the two values separately.
+ *
+ * D4 NOTE: applyEntries() derives `date` from `eaten_at` again, internally,
+ * and EntryDraft has no `date` field at all. That is not redundancy. This
+ * function protects the CALLER from producing a bad pair; EntryDraft protects
+ * the TABLE from ever receiving one, no matter who writes the next builder.
+ * Callers take `eaten_at` from the pair and discard `date`.
  */
 export function resolveEatenAtAndDate(
   hours: number,
@@ -172,4 +193,96 @@ export function formatDayLabel(key: string, now: Date = new Date()): string {
 /** True when the key is a calendar day after today. Purely for UI copy. */
 export function isFutureDay(key: string, now: Date = new Date()): boolean {
   return key > dateKey(now); // YYYY-MM-DD sorts chronologically as a string
+}
+
+// ============================================================
+// D4 — wall-clock time, detached from any day
+// ============================================================
+
+/**
+ * Where a meal sits in a day when nobody has said otherwise.
+ *
+ * MOVED HERE FROM ProductScreen, which is the only reason this comment is
+ * long: it now has two callers with different needs, and it is a policy about
+ * TIME, not about a screen.
+ *
+ *   ProductScreen — planning Thursday's dinner on Sunday, "now" is nonsense.
+ *                   It would file it at 16:43 because that's when you opened
+ *                   the app. A meal has a shape; start from it.
+ *
+ *   Bundles       — an item saved from an entry inherits that entry's real
+ *                   time. This is the fallback for an item that somehow has
+ *                   none, and the seed for any future "build a bundle from
+ *                   scratch" path.
+ *
+ * These must not drift apart. One definition.
+ */
+export const DEFAULT_HOUR: Record<MealType, number> = {
+  breakfast: 8,
+  lunch: 13,
+  dinner: 19,
+  snacks: 15,
+};
+
+/** A local wall clock with no day attached. What meal_bundle_items.eaten_time is. */
+export interface TimeOfDay {
+  hours: number;
+  minutes: number;
+}
+
+/**
+ * The LOCAL wall clock of an instant. The inverse of resolveEatenAt's inputs.
+ *
+ * Note getHours(), not getUTCHours(). A meal eaten at 12:30 BST is 11:30Z, and
+ * copying it to Tuesday must produce 12:30 on Tuesday — the number the user saw,
+ * not the number the server stored.
+ */
+export function localHM(iso: string): TimeOfDay {
+  const d = new Date(iso);
+  return { hours: d.getHours(), minutes: d.getMinutes() };
+}
+
+/**
+ * Postgres `time` → TimeOfDay.
+ *
+ * PostgREST hands back "07:30:00", not "07:30". Seconds are discarded: a bundle
+ * item is a prediction, and a prediction accurate to the second is a lie about
+ * its own precision.
+ */
+export function parseTimeOfDay(t: string): TimeOfDay {
+  const [h, m] = t.split(":").map(Number);
+  return { hours: h ?? 0, minutes: m ?? 0 };
+}
+
+/** TimeOfDay → Postgres `time`. "07:30" is accepted by a `time` column. */
+export function formatTimeOfDay({ hours, minutes }: TimeOfDay): string {
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+/**
+ * Rebuild an instant: this wall-clock time, on that day.
+ *
+ * ⚠ THIS IS WHY BUNDLES AND COPY-A-DAY ARE DST-SAFE, so don't "simplify" it
+ * into arithmetic.
+ *
+ * The obvious implementation of copy-a-day is `new Date(eaten_at + 24h)`. It is
+ * wrong twice a year: across a clock change, Monday's 12:30 lunch lands at 11:30
+ * or 13:30 on Tuesday. Nobody would notice for months, and the meals would sit
+ * in the wrong WHOOP cycle at exactly the boundary where cycles are already
+ * confusing.
+ *
+ * Going through the local Date constructor — which is what resolveEatenAt does —
+ * asks the platform "what instant is 12:30 local on this date?", and the platform
+ * knows about DST. So the time survives the day change, which is what the user
+ * meant.
+ *
+ * The explicit `day` also switches OFF resolveEatenAt's roll-back heuristic,
+ * which is essential: tomorrow's 19:00 is ~27h ahead and would otherwise be
+ * rolled straight back into today.
+ *
+ * Both D4 sources reduce to this call. They differ only in where the TimeOfDay
+ * comes from — an entry's eaten_at, or a bundle item's eaten_time.
+ */
+export function sameTimeOnDay(t: TimeOfDay, dayKey: string): string {
+  return resolveEatenAt(t.hours, t.minutes, parseDateKey(dayKey));
 }

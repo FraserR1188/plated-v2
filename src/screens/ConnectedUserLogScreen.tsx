@@ -66,7 +66,8 @@ function sumEntries(entries: MealEntry[]) {
 
 function entryToProduct(entry: MealEntry): FoodProduct {
   // Reconstruct per-100g values from the stored totals + serving_g
-  const factor = entry.serving_g > 0 ? 100 / entry.serving_g : 1;
+  const factor =
+    entry.serving_g != null && entry.serving_g > 0 ? 100 / entry.serving_g : 1;
   return {
     name: entry.name,
     brand: entry.brand ?? "",
@@ -77,7 +78,7 @@ function entryToProduct(entry: MealEntry): FoodProduct {
     salt_per100: parseFloat(((entry.salt ?? 0) * factor).toFixed(2)),
     fibre_per100: parseFloat(((entry.fibre ?? 0) * factor).toFixed(1)),
     sugar_per100: parseFloat(((entry.sugar ?? 0) * factor).toFixed(1)),
-    serving_g: entry.serving_g,
+    serving_g: entry.serving_g ?? undefined,
   };
 }
 

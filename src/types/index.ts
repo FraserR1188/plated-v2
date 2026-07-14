@@ -1,14 +1,40 @@
 // ============================================================
 // src/types/index.ts — plated types
 //
-// VERIFIED against information_schema on 2026-07-11. Do not "tidy"
-// these field names: they mirror the real Postgres columns exactly.
-// The previous version had drifted (ingredient_name/created_at, which
-// don't exist) and TypeScript was reporting errors on CORRECT code as
-// a result. Schema is the source of truth; this file follows it.
+// VERIFIED against information_schema on 2026-07-13 (post-migration-5).
+// Do not "tidy" these field names: they mirror the real Postgres columns
+// exactly. Schema is the source of truth; this file follows it.
+//
+// D4 CORRECTED THREE DIVERGENCES. If you are reading an older copy of this
+// file, or a comment that contradicts what's below, THIS file is right:
+//
+//   1. eaten_at was `?: string | null`. It is NOT NULL in the DB, and the `?`
+//      was the dangerous half — see the comment on the field.
+//   2. serving_g was `number`. It is NULLABLE in the DB.
+//   3. meal_type carried a comment claiming it was nullable. It is NOT NULL
+//      as of migration 3.
 // ============================================================
 
 export type MealType = "breakfast" | "lunch" | "dinner" | "snacks";
+
+/**
+ * Where an entry came from.
+ *
+ * There is NO check constraint on meal_entries.source, so adding a value here
+ * needs no migration — which is why 'bundle' could just appear.
+ *
+ * MealEntry.source is typed `string`, not this union, and that is deliberate:
+ * the DB will hand you back whatever is in the column, including values written
+ * before this union existed. Type your READS wide and your WRITES narrow. Use
+ * EntrySource when constructing a row; accept `string` when reading one.
+ */
+export type EntrySource =
+  | "search"
+  | "barcode"
+  | "manual"
+  | "custom"
+  | "copied"
+  | "bundle";
 
 // ─── Food & Logging ──────────────────────────────────────────
 
@@ -41,41 +67,91 @@ export interface FoodProduct {
   image_path?: string;
 }
 
-// Mirrors public.meal_entries.
-//
-// NULLABILITY WARNING: salt, fibre, sugar and sat_fat are nullable in the
-// DB — rows logged before those migrations have NULL. ALWAYS coalesce when
-// summing (`e.salt ?? 0`), or a single old row turns the whole total into
-// NaN. This has already bitten useStore/HistoryScreen/csv.
+/**
+ * Mirrors public.meal_entries.
+ *
+ * ─── NULLABILITY: THE SAME `?? 0` MEANS TWO OPPOSITE THINGS ───
+ *
+ * salt, fibre, sugar and sat_fat are NULLABLE with a DEFAULT of 0. So:
+ *
+ *     NULL  =  we do not know how much fibre this had
+ *     0     =  we know, and it had none
+ *
+ * READING — always coalesce. `e.salt ?? 0` when summing, or a single old row
+ *   turns the whole total into NaN. This has already bitten useStore,
+ *   HistoryScreen and csv.
+ *
+ * WRITING — NEVER coalesce. `sat_fat: entry.sat_fat ?? 0` in an INSERT does not
+ *   protect anything; it DESTROYS the distinction, permanently, replacing
+ *   "unknown" with the assertion "zero grams" — which then feeds your goals and
+ *   your WHOOP correlation and propagates into every copy. Pass `?? null`.
+ *
+ * Same three characters, opposite consequences. useStore.addEntry gets this
+ * right (`?? null`); social.ts's copy path does not (`?? 0`). addEntry is the
+ * house style.
+ */
 export interface MealEntry {
   id: string;
   user_id: string;
-  date: string; // 'YYYY-MM-DD'
-  logged_at: string; // when the row was created (NOT NULL)
-  name: string; // NOT the old `ingredient_name`
+  date: string; // 'YYYY-MM-DD' — LOCAL. Always dateKey(new Date(eaten_at)).
+  logged_at: string; // when the ROW was created (NOT NULL). Not when you ate.
+  name: string;
   calories: number;
   protein: number;
   carbs: number;
   fat: number;
-  source: string; // 'search' | 'barcode' | 'manual' | 'custom' | 'copied' (NOT NULL)
+
+  /** NOT NULL. See EntrySource — read wide, write narrow. */
+  source: string;
 
   barcode?: string | null;
   off_id?: string | null;
-  serving_g: number; // nullable in DB, but every write path sets it
-  meal_type: MealType; // nullable in DB, but every write path sets it
+
+  /**
+   * NULLABLE in the DB, and `number` was a lie.
+   *
+   * Every write path sets it, which is why nobody noticed — but a row that ever
+   * got a null renders as "0g" in TodayScreen (Math.round(null) === 0) and,
+   * worse, makes foodLookup.mealEntryToProduct fall back to `g = 100`, which
+   * silently rescales every macro by 100/actual on the next edit.
+   *
+   * Typing it honestly turns both of those into compile errors. They are real
+   * bugs, not new ones.
+   */
+  serving_g: number | null;
+
+  /** NOT NULL, default 'breakfast', as of migration 3. */
+  meal_type: MealType;
+
   brand?: string | null;
 
-  // Nullable — see the warning above.
+  // Nullable. NULL = unknown, 0 = zero grams. See the warning above.
   salt?: number | null;
   fibre?: number | null;
   sugar?: number | null;
   sat_fat?: number | null;
 
-  eaten_at?: string | null; // real eating time; falls back to logged_at
+  /**
+   * NOT NULL, default now(), as of migration 3. Required and non-null HERE.
+   *
+   * The `?` was the dangerous half of the old type, not the `| null`. An
+   * explicit null now RAISES, loudly, thanks to the trigger. But OPTIONAL means
+   * OMITTABLE, and an omitted column is exactly when a DEFAULT fires — so a
+   * draft that simply forgot eaten_at would not crash. It would silently land
+   * the meal at now(), derive planned = false, and walk into the WHOOP
+   * correlation as a meal you ate.
+   *
+   * This is the join key for the entire product. It should be the hardest field
+   * in this interface to get wrong, not the softest.
+   */
+  eaten_at: string;
 
-  planned: boolean; // DERIVED by the DB trigger at insert. Never set client-side.
-  confirmed_at: string | null; // "yes, I ate it" — the only way into the correlation
-  skipped_at: string | null; // "no, I didn't" — evidence; counts toward nothing
+  /** DERIVED by the DB trigger from eaten_at, at insert. NEVER set client-side. */
+  planned: boolean;
+  /** "yes, I ate it" — the only way a plan enters the correlation. */
+  confirmed_at: string | null;
+  /** "no, I didn't" — evidence. Counts toward nothing. */
+  skipped_at: string | null;
 
   // ── Images (snapshotted at log time, like the macros above) ──
   // Same split as FoodProduct: image_url is directly renderable (OFF);
@@ -85,15 +161,188 @@ export interface MealEntry {
   image_path?: string | null;
 
   // Provenance. Not needed to render the thumbnail — the image is snapshotted.
-  // Here for the LLM query feature and any "most-logged custom foods" view.
-  // ON DELETE SET NULL: deleting a custom food must not delete your history.
+  // ON DELETE SET NULL (verified): deleting a custom food does not delete your
+  // history, it just orphans the link.
   custom_food_id?: string | null;
+
+  /** Fails safe: true means "we guessed when you ate this". */
   eaten_at_estimated: boolean;
 }
 
+// ─── D4: the shared apply path ───────────────────────────────
+
+/**
+ * A fully-resolved row destined for meal_entries. The caller has ALREADY
+ * decided when this was (or will be) eaten; applyEntries() just writes it.
+ *
+ * This is the single shape that bundles, copy-a-day and the social copy all
+ * flow through. They differ ONLY in which builder produces the draft.
+ *
+ * ─── WHAT THIS TYPE DELIBERATELY CANNOT EXPRESS ───
+ *
+ *   date       Derived from eaten_at INSIDE applyEntries, via local dateKey().
+ *              Carrying both would let a caller construct a divergent pair —
+ *              which is the D2 bug, and it shipped. resolveEatenAtAndDate()
+ *              protects the CALLER from making a bad pair; this omission
+ *              protects the TABLE from ever receiving one, no matter who writes
+ *              the next builder.
+ *
+ *   planned    Derived by the BEFORE INSERT trigger from eaten_at, on the
+ *              DATABASE clock. Applying a bundle to Thursday produces planned
+ *              meals with no flag, no argument and no awareness of planning
+ *              anywhere in the bundle code. If you find yourself wanting to add
+ *              `planned` here, you have misunderstood the trigger.
+ *
+ *   targetMeal There isn't one. Copy-a-day must preserve EACH ROW's own
+ *              meal_type (Monday's lunch → Tuesday's lunch), so meal_type is
+ *              per-draft. The social path's "put their curry in my dinner"
+ *              override is resolved by ITS builder, before it gets here.
+ *
+ *   user_id / id / logged_at    The DB owns all three.
+ *
+ * Same philosophy as MealEntryPatch: divergence is unrepresentable, not merely
+ * discouraged. Do not widen it.
+ */
+export interface EntryDraft {
+  name: string;
+  brand: string | null;
+  serving_g: number | null;
+
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+
+  // null = UNKNOWN. 0 = zero grams. Do NOT coalesce on the way in.
+  sat_fat: number | null;
+  salt: number | null;
+  fibre: number | null;
+  sugar: number | null;
+
+  meal_type: MealType;
+
+  /**
+   * ISO instant. REQUIRED. The caller resolved it — via sameTimeOnDay() for
+   * bundles and copy-a-day, or new Date() for the social copy.
+   *
+   * Never build this with `+ 24h`. Across a DST boundary that lands Monday's
+   * 12:30 lunch at 11:30 or 13:30 on Tuesday. sameTimeOnDay() goes through the
+   * local Date constructor, which knows about clock changes.
+   */
+  eaten_at: string;
+
+  /** Always true for an applied bundle: it's a prediction, however precise. */
+  eaten_at_estimated: boolean;
+
+  source: EntrySource;
+  barcode: string | null;
+  off_id: string | null;
+
+  /**
+   * ⚠ image_path and custom_food_id are CARRIED by draftsFromDay and
+   * draftsFromBundle, and DROPPED by draftsFromFeedEntry.
+   *
+   * This is not an inconsistency to clean up. It falls out of storage RLS:
+   * a bundle is YOUR food, so the private-bucket path is under YOUR folder and
+   * getSignedImageUrl() will sign it. A friend's custom food lives under THEIR
+   * folder and cannot be signed by you — you'd render a broken placeholder AND
+   * embed their user id in your row for nothing. Same columns, two different
+   * correct answers. Read the comment in src/lib/social.ts before unifying the
+   * builders.
+   */
+  image_url: string | null;
+  image_path: string | null;
+  custom_food_id: string | null;
+}
+
+// ─── D4: bundles ─────────────────────────────────────────────
+
+/** Mirrors public.meal_bundles (migration 5). */
+export interface MealBundle {
+  id: string;
+  user_id: string;
+  name: string;
+
+  /**
+   * Ordering. use_count ALONE ossifies — January's bundle sits at the top
+   * forever — so the list sorts by last_used_at first. Both are bumped
+   * atomically by the bump_bundle_use() RPC, never read-modify-written from
+   * local state the way saved_ingredients does it (that pattern silently loses
+   * increments across two devices).
+   */
+  use_count: number;
+  last_used_at: string | null;
+
+  created_at: string;
+  // NOTE: no updated_at. The DB has two competing touch functions
+  // (handle_updated_at, set_updated_at) and no trigger wired to either. A
+  // column nothing maintains is a column that lies. last_used_at earns its keep.
+}
+
+/**
+ * Mirrors public.meal_bundle_items (migration 5).
+ *
+ * SNAPSHOT, not a reference. Consistent with meal_entries. An OFF product's
+ * values change under you; a custom food gets edited or deleted. A reference
+ * rots; a snapshot cannot. Accepted cost: editing your "usual porridge" custom
+ * food does NOT update the bundle that contains it.
+ */
+export interface MealBundleItem {
+  id: string;
+  bundle_id: string;
+  user_id: string; // denormalised for RLS
+  position: number;
+
+  name: string;
+  brand: string | null;
+  serving_g: number | null;
+
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+
+  // Same rule as MealEntry. NULL = unknown, 0 = zero grams.
+  sat_fat: number | null;
+  salt: number | null;
+  fibre: number | null;
+  sugar: number | null;
+
+  meal_type: MealType;
+
+  /**
+   * A LOCAL WALL CLOCK, with no day attached. PostgREST hands it back as
+   * "07:30:00" — use parseTimeOfDay() from src/lib/time.ts, never
+   * `new Date(eaten_time)`.
+   *
+   * This is the type that makes bundles DST-safe by construction. An instant or
+   * an offset would shift "07:30 porridge" by an hour across a clock change.
+   * A `time` has no such opinion — the client rebuilds the instant on the target
+   * day, and the platform handles the rest.
+   */
+  eaten_time: string;
+
+  barcode: string | null;
+  off_id: string | null;
+  image_url: string | null;
+  image_path: string | null;
+  custom_food_id: string | null;
+}
+
+/** What getBundles() returns: the bundle with its items, ordered by position. */
+export interface MealBundleWithItems extends MealBundle {
+  items: MealBundleItem[];
+}
+
+/** A new item, before the DB has given it an id or a parent. */
+export type MealBundleItemDraft = Omit<
+  MealBundleItem,
+  "id" | "bundle_id" | "user_id"
+>;
+
+// ─── Saved ingredients ───────────────────────────────────────
+
 // Mirrors public.saved_ingredients ("My Library").
-// Previously imported by AddIngredientScreen and useStore but NEVER DEFINED —
-// it only worked because Babel strips type-only imports before bundling.
 export interface SavedIngredient {
   id: string;
   user_id: string;
@@ -156,7 +405,17 @@ export interface CustomFood {
   serving_g: number | null;
   serving_label: string | null; // e.g. "1 bowl (45g)"
   created_at: string;
-  image_url: string | null; // Session B: storage object PATH, not a URL
+
+  /**
+   * ⚠ MISNAMED COLUMN. This is a storage object PATH into the private
+   * custom-food-images bucket, NOT a URL. There is no image_path column on
+   * custom_foods — the path lives here.
+   *
+   * foodLookup.customFoodToProduct() maps it to FoodProduct.image_PATH, which is
+   * correct and is what keeps a private path out of meal_entries.image_url. Do
+   * not "fix" that mapping to match the column name.
+   */
+  image_url: string | null;
   label_image_url: string | null;
 }
 
@@ -188,6 +447,14 @@ export interface FriendSummary {
 
 export type CopyScope = "ingredient" | "meal_section" | "full_day";
 
+/**
+ * The SOCIAL copy payload. It is a NAVIGATION type, not a data-layer one —
+ * CopyConfirmScreen receives it and turns it into EntryDrafts.
+ *
+ * targetMeal stops at the builder. It never reaches meal_entries: applyEntries
+ * takes per-row meal_type, because copy-a-day has to preserve each row's own
+ * section and a payload-level override cannot express that.
+ */
 export interface CopyPayload {
   scope: CopyScope;
   entries: MealEntry[];
@@ -206,7 +473,8 @@ export type RootStackParamList = {
     date: string;
     mealType: MealType;
     editEntryId?: string;
-    initialServingG?: number;
+    // now `| null` because MealEntry.serving_g is honestly nullable
+    initialServingG?: number | null;
     initialEatenAt?: string;
   };
 
@@ -257,6 +525,9 @@ export const MEAL_ICONS: Record<MealType, string> = {
   dinner: "🌙",
   snacks: "🍎",
 };
+
+// NOTE: DEFAULT_HOUR used to live in ProductScreen. It is now in
+// src/lib/time.ts — it is a policy about TIME, and bundles need the same answer.
 
 export type WhoopScoreState = "SCORED" | "PENDING_SCORE" | "UNSCORABLE";
 

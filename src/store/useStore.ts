@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { supabase } from "../lib/supabase";
 import {
   MealEntry,
+  MealBundleWithItems,
   SavedIngredient,
   Goals,
   DayTotals,
@@ -9,6 +10,8 @@ import {
   FoodProduct,
 } from "../types";
 import { dateKey } from "../lib/time";
+import { applyEntries, draftsFromDay } from "../lib/entries";
+import * as bundleApi from "../lib/bundles";
 
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
@@ -68,9 +71,15 @@ export interface SplitTotals {
   total: DayTotals;
 }
 
+/** What a write action reports back. `null` error means it worked. */
+export interface WriteResult {
+  error: string | null;
+}
+
 interface AppState {
   userId: string | null;
   entries: MealEntry[];
+  bundles: MealBundleWithItems[];
   savedIngredients: SavedIngredient[];
   goals: Goals;
   loading: boolean;
@@ -80,6 +89,7 @@ interface AppState {
   fetchEntries: () => Promise<void>;
   fetchGoals: () => Promise<void>;
   fetchSavedIngredients: () => Promise<void>;
+  fetchBundles: () => Promise<void>;
 
   /**
    * `planned`, `confirmed_at` and `skipped_at` are omitted on purpose: the DB
@@ -93,7 +103,16 @@ interface AppState {
     >,
   ) => Promise<void>;
   deleteEntry: (id: string) => Promise<void>;
-  updateEntry: (id: string, patch: MealEntryPatch) => Promise<void>;
+  /** Multi-delete, for selection mode. One round-trip, not N. */
+  deleteEntries: (ids: string[]) => Promise<WriteResult>;
+
+  /**
+   * ⚠ RETURNS AN ERROR NOW. It used to swallow failures into console.warn and
+   * return void — which was survivable until migration 5 gave the database a
+   * reason to REFUSE an update (moving a logged meal into the future). A refusal
+   * the UI can't see is a screen that closes as if it saved. Callers must check.
+   */
+  updateEntry: (id: string, patch: MealEntryPatch) => Promise<WriteResult>;
   saveGoals: (goals: Goals) => Promise<void>;
 
   /** "Yes, I ate these." Optionally correct the time while confirming. */
@@ -104,6 +123,30 @@ interface AppState {
   /** "No, I didn't." Keeps the row as evidence; it counts toward nothing. */
   skipEntries: (ids: string[]) => Promise<void>;
 
+  // ── D4 ──
+  /** Copy entries onto another day, keeping each row's wall clock and section. */
+  copyEntriesToDay: (
+    entries: MealEntry[],
+    targetDayKey: string,
+  ) => Promise<WriteResult>;
+  /** "Save these 4 as a bundle." */
+  saveBundleFromEntries: (
+    name: string,
+    entries: MealEntry[],
+  ) => Promise<WriteResult>;
+  /** "Add these to an existing bundle." Why there is no bundle editor screen. */
+  addEntriesToBundle: (
+    bundle: MealBundleWithItems,
+    entries: MealEntry[],
+  ) => Promise<WriteResult>;
+  applyBundleToDay: (
+    bundle: MealBundleWithItems,
+    targetDayKey: string,
+  ) => Promise<WriteResult>;
+  renameBundle: (bundleId: string, name: string) => Promise<WriteResult>;
+  removeBundleItem: (bundleId: string, itemId: string) => Promise<WriteResult>;
+  removeBundle: (bundleId: string) => Promise<WriteResult>;
+
   saveIngredient: (product: FoodProduct) => Promise<SavedIngredient | null>;
   deleteIngredient: (id: string) => Promise<void>;
 
@@ -112,6 +155,8 @@ interface AppState {
   /** Same set, split into eaten vs planned, for the two-arc ring. */
   getSplitTotalsForDate: (date: string) => SplitTotals;
   getEntriesForMeal: (date: string, mealType: MealType) => MealEntry[];
+  /** Everything visible on a day, across all four sections. What copy-a-day copies. */
+  getEntriesForDate: (date: string) => MealEntry[];
   /** Every planned meal awaiting an answer, any day. For the Review screen. */
   getPendingEntries: () => MealEntry[];
   /** Pending meals whose calendar day has ENDED. For the banner — never nags about today. */
@@ -150,6 +195,9 @@ function sumMacros(entries: MealEntry[]): DayTotals {
       protein: t.protein + e.protein,
       carbs: t.carbs + e.carbs,
       fat: t.fat + e.fat,
+      // Coalesce on the READ. A single NULL from an old row would otherwise turn
+      // the whole total into NaN. (On a WRITE this idiom is destructive — see
+      // the note in src/types/index.ts.)
       satFat: t.satFat + (e.sat_fat ?? 0),
       salt: t.salt + (e.salt ?? 0),
       fibre: t.fibre + (e.fibre ?? 0),
@@ -171,13 +219,18 @@ const addTotals = (a: DayTotals, b: DayTotals): DayTotals => ({
 });
 
 /** Chronological within a meal section. `logged_at` is useless here — five meal-prepped
- *  chillis are created in the same two seconds and would otherwise sort arbitrarily. */
+ *  chillis are created in the same two seconds and would otherwise sort arbitrarily.
+ *  Doubly so now: a bundle inserts all its items in ONE statement. */
 const byEatenAt = (a: MealEntry, b: MealEntry): number =>
-  (a.eaten_at ?? "").localeCompare(b.eaten_at ?? "");
+  a.eaten_at.localeCompare(b.eaten_at);
+
+const msg = (e: unknown, fallback: string): string =>
+  e instanceof Error ? e.message : fallback;
 
 export const useStore = create<AppState>((set, get) => ({
   userId: null,
   entries: [],
+  bundles: [],
   savedIngredients: [],
   goals: DEFAULT_GOALS,
   loading: false,
@@ -189,15 +242,23 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       userId: null,
       entries: [],
+      bundles: [],
       savedIngredients: [],
       goals: DEFAULT_GOALS,
       loading: false,
     }),
 
-  // NOTE: still unbounded. ~2,200 rows/year today and planning will push that up,
-  // re-fetched on every screen focus. The bounded query, when it lands, is
-  // "last N days + everything future + everything pending" — not a flat date window,
-  // because a pending meal from three weeks ago must still reach the banner.
+  // NOTE: still unbounded. ~2,200 rows/year today; planning pushed that up and
+  // bundles push it up again, re-fetched on every screen focus.
+  //
+  // D4 MITIGATION: every write path below now APPENDS the RETURNING rows to
+  // local state instead of triggering a refetch. That's instant UI and it means
+  // applying a five-item bundle costs one insert, not one insert plus a full
+  // table scan. The unbounded fetchEntries() is still there on focus.
+  //
+  // The bounded query, when it lands, is "last N days + everything future +
+  // everything pending" — not a flat date window, because a pending meal from
+  // three weeks ago must still reach the banner.
   fetchEntries: async () => {
     const { userId } = get();
     if (!userId) return;
@@ -210,6 +271,16 @@ export const useStore = create<AppState>((set, get) => ({
     if (error) console.warn("fetchEntries:", error.message);
     if (!error && data) set({ entries: data as MealEntry[] });
     set({ loading: false });
+  },
+
+  fetchBundles: async () => {
+    const { userId } = get();
+    if (!userId) return;
+    try {
+      set({ bundles: await bundleApi.getBundles() });
+    } catch (e) {
+      console.warn("fetchBundles:", msg(e, "unknown"));
+    }
   },
 
   fetchGoals: async () => {
@@ -274,6 +345,9 @@ export const useStore = create<AppState>((set, get) => ({
         protein: entry.protein,
         carbs: entry.carbs,
         fat: entry.fat,
+
+        // `?? null`, NOT `?? 0`. NULL means "unknown"; 0 means "zero grams".
+        // Coalescing to 0 here would destroy that distinction permanently.
         sat_fat: entry.sat_fat ?? null,
         salt: entry.salt ?? null,
         fibre: entry.fibre ?? null,
@@ -283,8 +357,8 @@ export const useStore = create<AppState>((set, get) => ({
         off_id: entry.off_id ?? null,
 
         // An explicit NULL here would DEFEAT the column default — Postgres only
-        // applies a default when the column is omitted. The trigger coalesces it,
-        // but callers should be passing a real timestamp regardless.
+        // applies a default when the column is omitted. eaten_at is NOT NULL and
+        // required by the type, so this cannot be forgotten any more.
         eaten_at: entry.eaten_at,
         eaten_at_estimated: entry.eaten_at_estimated,
 
@@ -313,6 +387,21 @@ export const useStore = create<AppState>((set, get) => ({
     set((s) => ({ entries: s.entries.filter((e) => e.id !== id) }));
   },
 
+  deleteEntries: async (ids) => {
+    if (ids.length === 0) return { error: null };
+    const { error } = await supabase
+      .from("meal_entries")
+      .delete()
+      .in("id", ids);
+    if (error) {
+      console.warn("deleteEntries:", error.message);
+      return { error: "Couldn't remove those. Check your connection." };
+    }
+    const gone = new Set(ids);
+    set((s) => ({ entries: s.entries.filter((e) => !gone.has(e.id)) }));
+    return { error: null };
+  },
+
   updateEntry: async (id, patch) => {
     // `date` is DERIVED, never passed in. If eaten_at moves, the day follows it.
     // This is the only place that relationship is enforced, and MealEntryPatch is
@@ -331,13 +420,31 @@ export const useStore = create<AppState>((set, get) => ({
 
     if (error) {
       console.warn("updateEntry:", error.message);
-      return;
+
+      // Migration 5's meal_entries_no_future_logged_bu raises when you try to
+      // move a LOGGED meal into the future. That refusal is correct — a plan is
+      // not a fact, and time must not launder one into the other in either
+      // direction — but the user needs to be TOLD, and offered the thing they
+      // actually wanted, which is a copy.
+      //
+      // Matched on the message rather than the SQLSTATE because PostgREST
+      // surfaces a plpgsql RAISE as a generic error; if you tighten the trigger's
+      // errcode later, tighten this with it.
+      if (/cannot move a logged meal into the future/i.test(error.message)) {
+        return {
+          error:
+            "You've already eaten this, so it can't be moved to a future day — that would tell the app you ate it then. Copy it to that day instead.",
+        };
+      }
+      return { error: "Couldn't save that change. Check your connection." };
     }
+
     if (data) {
       set((s) => ({
         entries: s.entries.map((e) => (e.id === id ? (data as MealEntry) : e)),
       }));
     }
+    return { error: null };
   },
 
   confirmEntries: async (ids, correctedEatenAt) => {
@@ -426,6 +533,125 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
+  // ─── D4 ────────────────────────────────────────────────────
+
+  copyEntriesToDay: async (entries, targetDayKey) => {
+    if (entries.length === 0) return { error: null };
+    try {
+      // The rows come back with the trigger's `planned` already decided. Append
+      // THOSE, never a guess — copying to a future day produces planned = true,
+      // and a store that assumed false would put a plan into your correlation.
+      const inserted = await applyEntries(draftsFromDay(entries, targetDayKey));
+      set((s) => ({ entries: [...inserted, ...s.entries] }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't copy those. Check your connection.") };
+    }
+  },
+
+  saveBundleFromEntries: async (name, entries) => {
+    try {
+      const bundle = await bundleApi.createBundleFromEntries(name, entries);
+      set((s) => ({ bundles: [bundle, ...s.bundles] }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't save the bundle.") };
+    }
+  },
+
+  addEntriesToBundle: async (bundle, entries) => {
+    try {
+      const items = await bundleApi.appendEntriesToBundle(bundle, entries);
+      set((s) => ({
+        bundles: s.bundles.map((b) =>
+          b.id === bundle.id
+            ? {
+                ...b,
+                items: [...b.items, ...items].sort(
+                  (a, z) => a.position - z.position,
+                ),
+              }
+            : b,
+        ),
+      }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't add those to the bundle.") };
+    }
+  },
+
+  applyBundleToDay: async (bundle, targetDayKey) => {
+    try {
+      const inserted = await bundleApi.applyBundle(bundle, targetDayKey);
+      set((s) => ({
+        entries: [...inserted, ...s.entries],
+        // Mirror the RPC's effect locally so the list re-sorts immediately,
+        // rather than jumping around on the next fetch.
+        bundles: s.bundles
+          .map((b) =>
+            b.id === bundle.id
+              ? {
+                  ...b,
+                  use_count: b.use_count + 1,
+                  last_used_at: new Date().toISOString(),
+                }
+              : b,
+          )
+          .sort((a, z) => {
+            const al = a.last_used_at ?? "";
+            const zl = z.last_used_at ?? "";
+            if (al !== zl) return zl.localeCompare(al);
+            return z.use_count - a.use_count;
+          }),
+      }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't apply the bundle.") };
+    }
+  },
+
+  renameBundle: async (bundleId, name) => {
+    try {
+      const updated = await bundleApi.renameBundle(bundleId, name);
+      set((s) => ({
+        bundles: s.bundles.map((b) =>
+          b.id === bundleId ? { ...b, name: updated.name } : b,
+        ),
+      }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't rename that.") };
+    }
+  },
+
+  removeBundleItem: async (bundleId, itemId) => {
+    try {
+      await bundleApi.deleteBundleItem(itemId);
+      set((s) => ({
+        bundles: s.bundles.map((b) =>
+          b.id === bundleId
+            ? { ...b, items: b.items.filter((i) => i.id !== itemId) }
+            : b,
+        ),
+      }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't remove that item.") };
+    }
+  },
+
+  removeBundle: async (bundleId) => {
+    try {
+      await bundleApi.deleteBundle(bundleId);
+      set((s) => ({ bundles: s.bundles.filter((b) => b.id !== bundleId) }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't delete that bundle.") };
+    }
+  },
+
+  // ─── Saved ingredients ─────────────────────────────────────
+
   saveGoals: async (goals) => {
     const { userId } = get();
     if (!userId) return;
@@ -455,6 +681,11 @@ export const useStore = create<AppState>((set, get) => ({
     );
 
     if (existing) {
+      // ⚠ READ-MODIFY-WRITE off LOCAL state. Two devices logging the same food
+      // in the same minute lose an increment. Left as-is because it only affects
+      // list ORDER, but note that meal_bundles deliberately does NOT do this —
+      // it calls the atomic bump_bundle_use() RPC instead. If saved_ingredients
+      // ever gets an RPC of its own, use it.
       await supabase
         .from("saved_ingredients")
         .update({ use_count: existing.use_count + 1 })
@@ -504,6 +735,8 @@ export const useStore = create<AppState>((set, get) => ({
     }));
   },
 
+  // ─── Selectors ─────────────────────────────────────────────
+
   getTotalsForDate: (date) => {
     const totals = get().getSplitTotalsForDate(date);
     return totals.total;
@@ -523,6 +756,15 @@ export const useStore = create<AppState>((set, get) => ({
       .entries.filter(
         (e) => e.date === date && e.meal_type === mealType && !isSkipped(e),
       )
+      .sort(byEatenAt),
+
+  // "Copy what you can SEE." Skipped rows are hidden from the sections, so they
+  // are excluded here too — and therefore from copy-a-day and from bundles, for
+  // free. Pending and future-planned rows ARE included: copying Monday's planned
+  // lunch onto Tuesday is the whole point.
+  getEntriesForDate: (date) =>
+    get()
+      .entries.filter((e) => e.date === date && !isSkipped(e))
       .sort(byEatenAt),
 
   getPendingEntries: () => get().entries.filter(isPending).sort(byEatenAt),

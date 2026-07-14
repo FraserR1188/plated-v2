@@ -24,9 +24,10 @@ import {
   parseDateKey,
   dateKey,
   willBePlanned,
+  DEFAULT_HOUR,
 } from "../lib/time";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
-import { RootStackParamList, MEAL_LABELS, MealType } from "../types";
+import { RootStackParamList, MEAL_LABELS } from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Product">;
@@ -34,15 +35,10 @@ type Route = RouteProp<RootStackParamList, "Product">;
 
 const DEFAULT_PRESETS = [50, 75, 100, 150, 200];
 
-// When you plan Thursday's dinner on Sunday, "now" is a nonsense default —
-// it would file it at 16:43 because that happens to be when you opened the app.
-// A meal has a shape. Start from it; the user can still change it.
-const DEFAULT_HOUR: Record<MealType, number> = {
-  breakfast: 8,
-  lunch: 13,
-  dinner: 19,
-  snacks: 15,
-};
+// NOTE (D4): DEFAULT_HOUR used to be declared here. It now lives in
+// src/lib/time.ts, because it is a policy about TIME, not about this screen —
+// bundles need the same answer, and two definitions would drift. It is imported
+// above. Do not re-add it here.
 
 // Product identity thumbnail.
 //   • OFF products arrive with image_url — a directly renderable URL.
@@ -110,6 +106,8 @@ export function ProductScreen() {
     ? [servingPreset, 50, 100, 150, 200].filter((v, i, a) => a.indexOf(v) === i)
     : DEFAULT_PRESETS;
 
+  // initialServingG is `number | null` as of D4 (MealEntry.serving_g is nullable
+  // in the DB, and the type used to lie about it). `??` already handles null.
   const [serving, setServing] = useState(
     String(initialServingG ?? servingPreset ?? 100),
   );
@@ -156,6 +154,9 @@ export function ProductScreen() {
 
   // What the DB trigger will decide. ADVISORY — the database is the authority;
   // this only lets the UI tell the truth about what it's about to do.
+  //
+  // The bundle sheet's Logged/Planned pills use this same call, per item, and
+  // the same copy. It is the same distinction; keep the language identical.
   const isPlanned = willBePlanned(eatenAt.toISOString());
 
   const preview = {
@@ -209,6 +210,21 @@ export function ProductScreen() {
       eatenAt,
     );
 
+    // ⚠ KNOWN BUG, NOT FIXED IN D4 — flagged so nobody "discovers" it later.
+    //
+    // On an EDIT, every macro below is recomputed from `product`, which
+    // mealEntryToProduct() reconstructed by DIVIDING the stored per-serving
+    // values and rounding (Math.round / toFixed). The round-trip does not
+    // commute: a 250g entry at 437 kcal comes back as 175 kcal/100g and
+    // multiplies out to 437.5.
+    //
+    // So editing a logged meal's TIME silently moves its CALORIES, and it
+    // compounds on every edit. The fix is to only recompute when `serving`
+    // actually changed — a ProductScreen redesign, not a patch. Until then, know
+    // that this is here.
+    //
+    // (This is also why createBundleFromEntries snapshots MealEntry →
+    // meal_bundle_items directly and never routes through FoodProduct.)
     const macros = {
       serving_g: g,
       calories: product.cal_per100 * f,
@@ -233,7 +249,30 @@ export function ProductScreen() {
       // so this screen cannot bypass it even by accident.
       const patch: MealEntryPatch = { ...macros };
       if (timeTouched) patch.eaten_at_estimated = false;
-      await updateEntry(editEntryId!, patch);
+
+      // ⚠ D4: updateEntry RETURNS AN ERROR NOW, AND THIS SCREEN MUST NOT POP ON IT.
+      //
+      // Migration 5 added meal_entries_no_future_logged_bu, which REFUSES an
+      // update that leaves a logged meal (planned = false) with an eaten_at in
+      // the future. That closes a real hole: before it, you could open a
+      // breakfast you'd eaten, move it to next Thursday, and the freeze trigger
+      // would pin planned = false — giving you a row the DB believes you ATE,
+      // dated in the future, which passes the WHOOP correlation's gate on its
+      // first clause and is invisible to the banner, getPendingEntries() and
+      // whoop_unassigned_meals.
+      //
+      // But this screen used to popToTop() unconditionally while updateEntry
+      // swallowed failures into a console.warn. Adding the trigger without this
+      // check would have turned a silent CORRUPTION into a silent NO-OP: the
+      // screen closes, the row is unchanged, and the user is told nothing.
+      //
+      // So: check, tell them, and STAY.
+      const { error } = await updateEntry(editEntryId!, patch);
+      if (error) {
+        setSaving(false);
+        Alert.alert("Can't save that", error, [{ text: "OK" }]);
+        return; // ← DO NOT POP. The edit did not happen.
+      }
     } else {
       await saveIngredient(product);
       await addEntry({
@@ -263,6 +302,11 @@ export function ProductScreen() {
         image_path: product.image_path ?? null,
         custom_food_id: product.custom_food_id ?? null,
       });
+      // NOTE: addEntry still swallows its errors into console.warn and returns
+      // void, so an insert failure here pops as if it worked. Less urgent than
+      // the edit path (nothing is being corrupted — the meal just isn't saved,
+      // and the user will notice the empty section), but it is the same class of
+      // bug and it should go the same way.
     }
 
     setSaving(false);

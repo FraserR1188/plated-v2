@@ -1,11 +1,9 @@
 // ============================================================
 // src/lib/foodLookup.ts — barcode/name resolution across sources
-// Session B (Half 2): custom food images threaded through.
-//   • CreateCustomFoodInput makes image_url optional (it's set
-//     AFTER insert, once we have an id to build the path from)
-//   • createCustomFood uses EXPLICIT snake_case mapping, not a
-//     spread — spreads have silently no-opped new columns before
-//   • setCustomFoodImage persists the storage path post-upload
+//
+// D4 CHANGE: mealEntryToProduct() can now return NULL, and callers must handle
+// it. See the comment on that function — it was silently rewriting every macro
+// on any entry whose serving_g was null.
 // ============================================================
 
 import { supabase } from "./supabase";
@@ -32,18 +30,58 @@ export function customFoodToProduct(cf: CustomFood): FoodProduct {
     serving_label: cf.serving_label ?? undefined,
     source: "custom",
     custom_food_id: cf.id,
-    // NOTE: image_path, not image_url. The bucket is private, so this is
-    // a storage OBJECT PATH that must be signed before it can be rendered.
-    // image_url stays reserved for directly-renderable URLs (i.e. OFF).
+
+    // ⚠ image_PATH, not image_url — even though the COLUMN is called image_url.
+    //
+    // custom_foods.image_url stores a storage OBJECT PATH into the PRIVATE
+    // bucket. It must be signed via getSignedImageUrl() before it can be
+    // rendered. FoodProduct.image_url is reserved for directly-renderable URLs
+    // (Open Food Facts).
+    //
+    // This line is load-bearing for a PRIVACY guarantee, not just a rendering
+    // one. social.ts's copy path deliberately drops image_path and copies
+    // image_url — so if this mapped to image_url instead, every copy of a
+    // friend's homemade food would carry THEIR private bucket path into YOUR
+    // row (rendering broken, since you can't sign it, which is why nobody would
+    // notice). Do NOT "fix" this to match the column name.
     image_path: cf.image_url ?? undefined,
   };
 }
 
-// Rebuild per-100g values from a logged entry (which stores
-// per-serving values + serving_g). Lets ProductScreen edit an
-// existing entry with zero extra data fetching.
-export function mealEntryToProduct(e: MealEntry): FoodProduct {
-  const g = e.serving_g > 0 ? e.serving_g : 100;
+/**
+ * Rebuild per-100g values from a logged entry, so ProductScreen can edit it.
+ *
+ * ⚠ RETURNS NULL WHEN serving_g IS MISSING. Handle it.
+ *
+ * This used to be:
+ *
+ *     const g = e.serving_g > 0 ? e.serving_g : 100;
+ *
+ * MealEntry.serving_g was typed `number`, but the COLUMN is nullable. And
+ * `null > 0` is false — so an entry with no serving weight silently fell back
+ * to g = 100, and every macro was reconstructed as though the entry had weighed
+ * 100g. Open that entry in ProductScreen, change nothing, hit Update, and all
+ * eight macros are rewritten by a factor of 100/actual. Not drift — a rewrite.
+ *
+ * There is no correct fallback, because a snapshot with no weight genuinely
+ * cannot be un-multiplied. So it refuses, and the caller offers to delete and
+ * re-add instead.
+ *
+ * ─── AND EVEN WHEN serving_g IS VALID, THIS IS LOSSY ───
+ *
+ * Math.round() and toFixed() below mean the round-trip does not commute. A 250g
+ * entry at 437 kcal → 175 kcal/100g → 437.5 kcal. Small, but it compounds on
+ * every edit, and ProductScreen.handleSubmit rebuilds ALL macros from the
+ * product even when only the time changed.
+ *
+ * Which is why bundles snapshot MealEntry → meal_bundle_items DIRECTLY and
+ * never come through here. If you find yourself routing a bundle through
+ * FoodProduct, stop.
+ */
+export function mealEntryToProduct(e: MealEntry): FoodProduct | null {
+  if (e.serving_g == null || e.serving_g <= 0) return null;
+
+  const g = e.serving_g;
   const per100 = (v: number | undefined | null) => ((v ?? 0) / g) * 100;
 
   return {
@@ -60,7 +98,6 @@ export function mealEntryToProduct(e: MealEntry): FoodProduct {
     barcode: e.barcode ?? undefined,
     off_id: e.off_id ?? undefined,
 
-    // ── ADD ──
     // Provenance and imagery, snapshotted on the entry at log time. Without
     // these, editing a logged entry produced a FoodProduct with no picture and
     // no idea where it came from — so ProductThumb fell back to the placeholder
@@ -194,9 +231,6 @@ export async function setCustomFoodImages(
   const userId = useStore.getState().userId;
   if (!userId) return { food: null, error: "Not signed in." };
 
-  // Explicit snake_case, and only the columns we actually have. Building the
-  // patch object by hand (rather than spreading) keeps this in line with the
-  // rest of the file — spreads have silently no-opped new columns before.
   const patch: { image_url?: string; label_image_url?: string } = {};
   if (paths.front) patch.image_url = paths.front;
   if (paths.label) patch.label_image_url = paths.label;

@@ -129,7 +129,7 @@ export async function getWhoopConnection(): Promise<WhoopConnection | null> {
       console.warn("getWhoopConnection:", error.message);
       return null;
     }
-    return (data as WhoopConnection) ?? null;
+    return (data as unknown as WhoopConnection) ?? null;
   } catch (e: any) {
     console.warn("getWhoopConnection:", e?.message ?? e);
     return null;

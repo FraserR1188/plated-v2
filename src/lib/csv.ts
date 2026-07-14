@@ -33,7 +33,7 @@ export async function exportCSV(entries: MealEntry[]): Promise<void> {
       cell(e.meal_type),
       cell(e.name),
       cell(e.brand ?? ""),
-      cell(e.serving_g.toFixed(1)),
+      cell(e.serving_g != null ? e.serving_g.toFixed(1) : ""),
       cell(Math.round(e.calories)),
       cell(e.protein.toFixed(1)),
       cell(e.carbs.toFixed(1)),

@@ -123,6 +123,18 @@ interface AppState {
   /** "No, I didn't." Keeps the row as evidence; it counts toward nothing. */
   skipEntries: (ids: string[]) => Promise<void>;
 
+  /**
+   * Bulk retime, for selection mode. Writes ONLY eaten_at (+ derived date),
+   * never a macro — so it cannot trip the ProductScreen round-trip that rewrites
+   * calories on a time edit. Each row keeps its own calendar day; only the wall
+   * clock moves. Returns an error so a no_future_logged refusal is visible.
+   */
+  retimeEntries: (
+    ids: string[],
+    hours: number,
+    minutes: number,
+  ) => Promise<WriteResult>;
+
   // ── D4 ──
   /** Copy entries onto another day, keeping each row's wall clock and section. */
   copyEntriesToDay: (
@@ -531,6 +543,68 @@ export const useStore = create<AppState>((set, get) => ({
       );
       set((s) => ({ entries: s.entries.map((e) => byId.get(e.id) ?? e) }));
     }
+  },
+
+  retimeEntries: async (ids, hours, minutes) => {
+    if (ids.length === 0) return { error: null };
+    const { entries } = get();
+    const nowMs = Date.now();
+
+    // One time, applied per row. Each keeps its OWN calendar day: we take that
+    // row's existing eaten_at and swap only the hours/minutes, so retiming a
+    // selection that spans days doesn't drag everything onto one date.
+    const results = await Promise.all(
+      ids.map(async (id) => {
+        const cur = entries.find((e) => e.id === id);
+        if (!cur) return { id, ok: false as const, reason: "not found" };
+
+        const next = new Date(cur.eaten_at);
+        next.setHours(hours, minutes, 0, 0);
+
+        const nextPatch: Record<string, unknown> = {
+          eaten_at: next.toISOString(),
+          date: dateKey(next), // LOCAL day, follows eaten_at. Never in SQL.
+        };
+        // A PAST time is a real time — the user is recording when they actually
+        // ate, so it stops being an estimate. A future time is still a forecast,
+        // so leave the flag alone. (This mirrors ProductScreen's rule.)
+        if (next.getTime() <= nowMs) nextPatch.eaten_at_estimated = false;
+
+        const { data, error } = await supabase
+          .from("meal_entries")
+          .update(nextPatch)
+          .eq("id", id)
+          .select()
+          .single();
+
+        if (error) return { id, ok: false as const, reason: error.message };
+        return { id, ok: true as const, row: data as MealEntry };
+      }),
+    );
+
+    const updated = new Map(
+      results.flatMap((r) => (r.ok ? [[r.id, r.row] as const] : [])),
+    );
+    if (updated.size > 0) {
+      set((s) => ({ entries: s.entries.map((e) => updated.get(e.id) ?? e) }));
+    }
+
+    const failures = results.filter((r) => !r.ok);
+    if (failures.length > 0) {
+      // Same refusal ProductScreen's edit path handles: the no_future_logged
+      // trigger rejects moving an EATEN meal (logged, or a confirmed plan) into
+      // the future. Matched on message, in step with updateEntry above.
+      const futureRefusal = failures.some(
+        (f) =>
+          !f.ok && /cannot move a logged meal into the future/i.test(f.reason),
+      );
+      return {
+        error: futureRefusal
+          ? "Some of these are already eaten, so they can't move to a future time. Copy them to that day instead."
+          : "Couldn't set the time on some of those. Check your connection.",
+      };
+    }
+    return { error: null };
   },
 
   // ─── D4 ────────────────────────────────────────────────────

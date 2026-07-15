@@ -43,9 +43,24 @@ import {
 const isPending = (e: MealEntry) =>
   e.planned && !e.confirmed_at && !e.skipped_at;
 
+/** Pending AND its planned time has already passed — eligible for an inline
+ *  "Ate it?". A dinner planned for tonight at 19:00, seen at 15:00, is pending
+ *  but NOT overdue: it hasn't happened yet, so we don't ask. This is recomputed
+ *  on render, so the button appears when the screen next re-renders after the
+ *  time passes (a focus or pull-to-refresh forces that). */
+const isOverduePending = (e: MealEntry): boolean =>
+  isPending(e) && new Date(e.eaten_at).getTime() <= Date.now();
+
 /** serving_g is nullable in the DB. Math.round(null) is 0, which renders "0g". */
 const servingLabel = (g: number | null): string =>
   g != null && g > 0 ? `${Math.round(g)}g` : "—";
+
+/** Salt is sub-gram, so Math.round() would collapse it to 0 — and the raw float
+ *  sum shows a "0.4660000000000001" tail. Floored to 2dp: trims the noise, keeps
+ *  small values visible (0.04 stays 0.04, not "0.0"), and the +1e-9 nudge stops
+ *  a value like 0.47 slipping to 0.46 on FP error. Swap Math.floor→Math.round if
+ *  you'd rather round to nearest. */
+const roundSalt = (g: number): number => Math.floor(g * 100 + 1e-9) / 100;
 
 export function TodayScreen() {
   const navigation =
@@ -59,6 +74,7 @@ export function TodayScreen() {
     getDuePendingEntries,
     confirmEntries,
     skipEntries,
+    retimeEntries,
     deleteEntry,
     deleteEntries,
     copyEntriesToDay,
@@ -86,7 +102,7 @@ export function TodayScreen() {
   const selecting = selection !== null;
 
   const [sheet, setSheet] = useState<
-    null | "apply" | "save" | "copy" // copy = the date picker for copy-a-day
+    null | "apply" | "save" | "copy" | "time" // copy = date picker; time = bulk retime
   >(null);
   const [busy, setBusy] = useState(false);
 
@@ -119,6 +135,16 @@ export function TodayScreen() {
     const all = useStore.getState().getAllEntries();
     return all.filter((e) => selection.has(e.id));
   }, [selection]);
+
+  // The subset we can actually confirm: planned meals whose time has passed.
+  // Confirming a still-future plan ("yes, I ate tomorrow's dinner") is nonsense,
+  // and an already-eaten row is a no-op — so "Mark eaten" acts on these only, and
+  // hides entirely when there are none.
+  const overduePendingSelected = useMemo(
+    () => selectedEntries.filter(isOverduePending),
+    [selectedEntries],
+  );
+  const hasOverduePending = overduePendingSelected.length > 0;
 
   const exitSelection = () => {
     setSelection(null);
@@ -175,6 +201,28 @@ export function TodayScreen() {
       initialEatenAt: entry.eaten_at,
     });
   };
+
+  // "Ate it" on a single overdue-planned row. Goes STRAIGHT to the store's
+  // confirm action — deliberately NOT through ProductScreen, whose edit path
+  // recomputes every macro from a lossy round-trip. confirmEntries writes only
+  // confirmed_at, so calories can't drift.
+  const handleConfirmOne = (entry: MealEntry) => {
+    void confirmEntries([entry.id]);
+  };
+
+  // Bulk "Mark eaten" — confirms only the overdue-planned rows in the selection.
+  // Selection is KEPT (not cleared) so you can immediately chain "Set time" to
+  // correct when you actually ate. Confirm and retime are two separate steps for
+  // now — see the D5 note; combine later if testing says so.
+  const handleMarkEatenSelected = async () => {
+    const ids = overduePendingSelected.map((e) => e.id);
+    if (ids.length === 0) return;
+    setBusy(true);
+    await confirmEntries(ids);
+    setBusy(false);
+  };
+
+  const handleSetTimeSelected = () => setSheet("time");
 
   const handleDeleteOne = (entry: MealEntry) => {
     Alert.alert("Remove item", `Remove "${entry.name}"?`, [
@@ -239,6 +287,25 @@ export function TodayScreen() {
     setSelected(target); // land on the day you just filled. Show, don't tell.
   };
 
+  // Bulk retime: one time, applied to every selected row (each keeps its own
+  // calendar day). Writes only the clock — never a macro. Selection is kept so a
+  // partial failure stays on screen.
+  const onSetTimePicked = async (event: any, picked?: Date) => {
+    setSheet(null);
+    if (event?.type === "dismissed" || !picked) return;
+    const ids = selectedEntries.map((e) => e.id);
+    if (ids.length === 0) return;
+
+    setBusy(true);
+    const { error } = await retimeEntries(
+      ids,
+      picked.getHours(),
+      picked.getMinutes(),
+    );
+    setBusy(false);
+    if (error) Alert.alert("Couldn't set the time", error);
+  };
+
   // Greeting only makes sense on the day you're actually living through.
   const hour = new Date().getHours();
   const greeting =
@@ -263,7 +330,7 @@ export function TodayScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.scroll,
-          selecting && { paddingBottom: 120 },
+          selecting && { paddingBottom: 160 },
         ]}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -342,6 +409,16 @@ export function TodayScreen() {
             mode="date"
             display="default"
             onChange={onCopyDayPicked}
+          />
+        )}
+
+        {sheet === "time" && (
+          <DateTimePicker
+            value={new Date(selectedEntries[0]?.eaten_at ?? Date.now())}
+            mode="time"
+            is24Hour
+            display="default"
+            onChange={onSetTimePicked}
           />
         )}
 
@@ -438,9 +515,11 @@ export function TodayScreen() {
               consumed={Math.round(totals.total.sugar)}
               goal={goals.sugar}
             />
+            {/* Salt is the one sub-gram macro: rounded to 2dp, not to a whole
+                number, or a real 0.47g day would read as "0g". */}
             <MacroBar
               macro="salt"
-              consumed={totals.total.salt}
+              consumed={roundSalt(totals.total.salt)}
               goal={goals.salt}
               unit="g"
             />
@@ -481,6 +560,7 @@ export function TodayScreen() {
               navigation.navigate("AddIngredient", { date: selected, mealType })
             }
             onPress={handlePress}
+            onConfirm={handleConfirmOne}
             onLongPress={selecting ? toggle : beginSelection}
           />
         ))}
@@ -493,6 +573,9 @@ export function TodayScreen() {
         <SelectionActionBar
           count={selectedEntries.length}
           busy={busy}
+          hasOverduePending={hasOverduePending}
+          onMarkEaten={handleMarkEatenSelected}
+          onSetTime={handleSetTimeSelected}
           onCopy={() => setSheet("copy")}
           onBundle={() => setSheet("save")}
           onDelete={handleDeleteSelected}
@@ -557,10 +640,19 @@ function NavBtn({ label, onPress }: { label: string; onPress: () => void }) {
 }
 
 // ─── Selection action bar ───────────────────────────────────────────────────
+//
+// Two rows. The top row is STATE — "Mark eaten" (only when the selection holds a
+// meal that was planned and whose time has passed) and "Set time". The bottom
+// row is ORGANISE — copy, bundle, remove, unchanged from D4. Keeping "Mark
+// eaten" conditional stops the bar hitting five buttons in the common case of
+// selecting already-logged food to copy or bundle.
 
 function SelectionActionBar({
   count,
   busy,
+  hasOverduePending,
+  onMarkEaten,
+  onSetTime,
   onCopy,
   onBundle,
   onDelete,
@@ -568,6 +660,9 @@ function SelectionActionBar({
 }: {
   count: number;
   busy: boolean;
+  hasOverduePending: boolean;
+  onMarkEaten: () => void;
+  onSetTime: () => void;
   onCopy: () => void;
   onBundle: () => void;
   onDelete: () => void;
@@ -589,36 +684,61 @@ function SelectionActionBar({
           <ActivityIndicator color={Colors.green} />
         </View>
       ) : (
-        <View style={barStyles.actions}>
-          <Pressable
-            style={({ pressed }) => [
-              barStyles.action,
-              pressed && { opacity: 0.75 },
-            ]}
-            onPress={onCopy}
-          >
-            <Text style={barStyles.actionText}>Copy to…</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              barStyles.action,
-              pressed && { opacity: 0.75 },
-            ]}
-            onPress={onBundle}
-          >
-            <Text style={barStyles.actionText}>
-              Save {count === 1 ? "as bundle" : `these ${count} as a bundle`}
-            </Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              barStyles.actionDanger,
-              pressed && { opacity: 0.75 },
-            ]}
-            onPress={onDelete}
-          >
-            <Text style={barStyles.actionDangerText}>Remove</Text>
-          </Pressable>
+        <View style={barStyles.rows}>
+          {/* State row: confirm + retime */}
+          <View style={barStyles.actions}>
+            {hasOverduePending && (
+              <Pressable
+                style={({ pressed }) => [
+                  barStyles.actionPrimary,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={onMarkEaten}
+              >
+                <Text style={barStyles.actionPrimaryText}>Mark eaten</Text>
+              </Pressable>
+            )}
+            <Pressable
+              style={({ pressed }) => [
+                barStyles.action,
+                pressed && { opacity: 0.75 },
+              ]}
+              onPress={onSetTime}
+            >
+              <Text style={barStyles.actionText}>Set time</Text>
+            </Pressable>
+          </View>
+
+          {/* Organise row: copy / bundle / remove */}
+          <View style={barStyles.actions}>
+            <Pressable
+              style={({ pressed }) => [
+                barStyles.action,
+                pressed && { opacity: 0.75 },
+              ]}
+              onPress={onCopy}
+            >
+              <Text style={barStyles.actionText}>Copy to…</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                barStyles.action,
+                pressed && { opacity: 0.75 },
+              ]}
+              onPress={onBundle}
+            >
+              <Text style={barStyles.actionText}>Save bundle</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                barStyles.actionDanger,
+                pressed && { opacity: 0.75 },
+              ]}
+              onPress={onDelete}
+            >
+              <Text style={barStyles.actionDangerText}>Remove</Text>
+            </Pressable>
+          </View>
         </View>
       )}
     </View>
@@ -658,6 +778,9 @@ const barStyles = StyleSheet.create({
     paddingVertical: Spacing.md,
     alignItems: "center",
   },
+  rows: {
+    gap: 6,
+  },
   actions: {
     flexDirection: "row",
     gap: 6,
@@ -677,6 +800,23 @@ const barStyles = StyleSheet.create({
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
     color: Colors.green,
+    textAlign: "center",
+  },
+  // The primary state action — filled, so "Mark eaten" reads as the emphasised
+  // thing to do when there's a planned meal waiting on an answer.
+  actionPrimary: {
+    flex: 1,
+    backgroundColor: Colors.green,
+    borderRadius: Radius.full,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  actionPrimaryText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.bold,
+    color: Colors.bg,
     textAlign: "center",
   },
   actionDanger: {
@@ -1246,6 +1386,12 @@ const sheetStyles = StyleSheet.create({
 // Nothing auto-expires. A user who ignores the app for a day would silently lose
 // meals they genuinely ate — under-reporting instead of over-reporting, which is
 // the same bias wearing a different hat. Pending meals wait.
+//
+// NB (D5): this banner is the NEXT-DAY net — it only ever asks about days that
+// are already over (getDuePendingEntries). Confirming a meal on the SAME day it
+// was planned now happens inline on the row ("Ate it") or in the selection bar
+// ("Mark eaten"), so a meal you planned this morning and ate no longer has to
+// wait until midnight to count.
 
 function ConfirmBanner({
   entries,
@@ -1523,6 +1669,7 @@ function MealSection({
   selection,
   onAdd,
   onPress,
+  onConfirm,
   onLongPress,
 }: {
   mealType: MealType;
@@ -1531,6 +1678,7 @@ function MealSection({
   selection: Set<string> | null;
   onAdd: () => void;
   onPress: (e: MealEntry) => void;
+  onConfirm: (e: MealEntry) => void;
   onLongPress: (e: MealEntry) => void;
 }) {
   const selecting = selection !== null;
@@ -1572,6 +1720,9 @@ function MealSection({
 
       {entries.map((entry, i) => {
         const pending = isPending(entry);
+        // Only ask "Ate it?" once the planned time has actually passed. A future
+        // plan (tonight's dinner, seen this afternoon) stays a quiet dimmed row.
+        const canConfirmInline = !selecting && isOverduePending(entry);
         const picked = selection?.has(entry.id) ?? false;
         const time = formatTime(entry.eaten_at);
         return (
@@ -1620,6 +1771,22 @@ function MealSection({
                 </Text>
               </Text>
             </View>
+
+            {/* Inline confirm for an overdue plan. Nested Pressable: the tap is
+                handled here and does NOT fall through to the row's edit press. */}
+            {canConfirmInline && (
+              <Pressable
+                onPress={() => onConfirm(entry)}
+                hitSlop={6}
+                style={({ pressed }) => [
+                  mealStyles.ateInline,
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={mealStyles.ateInlineText}>Ate it</Text>
+              </Pressable>
+            )}
+
             <Text
               style={[mealStyles.rowCals, pending && mealStyles.rowCalsPending]}
             >
@@ -1937,6 +2104,23 @@ const mealStyles = StyleSheet.create({
     color: Colors.textSub,
     fontWeight: Typography.semibold,
     fontVariant: ["tabular-nums"],
+  },
+  // Inline "Ate it" — matches the banner's confirm chip (greenSoft, green
+  // border/text). Sits between the macros and the calorie figure on an overdue
+  // planned row only.
+  ateInline: {
+    backgroundColor: Colors.greenSoft,
+    borderRadius: Radius.full,
+    borderWidth: 1,
+    borderColor: `${Colors.green}40`,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginRight: Spacing.sm,
+  },
+  ateInlineText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.bold,
+    color: Colors.green,
   },
   rowCals: {
     fontSize: Typography.sm,

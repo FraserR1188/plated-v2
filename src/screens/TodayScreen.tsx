@@ -20,6 +20,7 @@ import { MacroBar } from "../components/MacroBar";
 import { useStore, todayKey } from "../store/useStore";
 import { mealEntryToProduct } from "../lib/foodLookup";
 import { previewBundle } from "../lib/bundles";
+import { roundSalt } from "../lib/macros";
 import {
   formatTime,
   formatDayLabel,
@@ -54,13 +55,6 @@ const isOverduePending = (e: MealEntry): boolean =>
 /** serving_g is nullable in the DB. Math.round(null) is 0, which renders "0g". */
 const servingLabel = (g: number | null): string =>
   g != null && g > 0 ? `${Math.round(g)}g` : "—";
-
-/** Salt is sub-gram, so Math.round() would collapse it to 0 — and the raw float
- *  sum shows a "0.4660000000000001" tail. Floored to 2dp: trims the noise, keeps
- *  small values visible (0.04 stays 0.04, not "0.0"), and the +1e-9 nudge stops
- *  a value like 0.47 slipping to 0.46 on FP error. Swap Math.floor→Math.round if
- *  you'd rather round to nearest. */
-const roundSalt = (g: number): number => Math.floor(g * 100 + 1e-9) / 100;
 
 export function TodayScreen() {
   const navigation =

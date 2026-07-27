@@ -35,6 +35,19 @@ type Route = RouteProp<RootStackParamList, "Product">;
 
 const DEFAULT_PRESETS = [50, 75, 100, 150, 200];
 
+// Traffic-light mapping for aiEstimate.confidence — "trust this less" reads
+// the same way across the app as any other warning colour.
+const AI_CONFIDENCE_COLOR: Record<"high" | "medium" | "low", string> = {
+  high: Colors.green,
+  medium: Colors.warning,
+  low: Colors.danger,
+};
+const AI_CONFIDENCE_LABEL: Record<"high" | "medium" | "low", string> = {
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
+
 // NOTE (D4): DEFAULT_HOUR used to be declared here. It now lives in
 // src/lib/time.ts, because it is a policy about TIME, not about this screen —
 // bundles need the same answer, and two definitions would drift. It is imported
@@ -281,8 +294,12 @@ export function ProductScreen() {
         name: product.name,
         brand: product.brand,
         ...macros,
-        source:
-          product.source === "custom"
+        // AI-recognized drafts have no barcode and aren't source: "custom",
+        // so without this check first they'd silently fall through to
+        // "search" and the estimate's provenance would be lost.
+        source: product.aiEstimate
+          ? "ai_photo"
+          : product.source === "custom"
             ? "custom"
             : product.barcode
               ? "barcode"
@@ -490,6 +507,46 @@ export function ProductScreen() {
             </View>
           </View>
         </View>
+
+        {/* ── AI estimate notice ──────────────────────── */}
+        {/* Only present on a draft built from scan-meal-photo. The macros
+            below are a photo-based guess, not a lookup — this says so
+            before the user sees a single number, states how confident the
+            guess is, and offers the model's other reads of the same photo
+            as plain information (not selectable — only the primary dish
+            got a macro estimate). */}
+        {product.aiEstimate ? (
+          <View style={styles.aiCard}>
+            <View style={styles.aiHeaderRow}>
+              <Text style={styles.aiTitle}>🤖 AI estimate</Text>
+              <View
+                style={[
+                  styles.confidencePill,
+                  { backgroundColor: `${AI_CONFIDENCE_COLOR[product.aiEstimate.confidence]}18` },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.confidencePillText,
+                    { color: AI_CONFIDENCE_COLOR[product.aiEstimate.confidence] },
+                  ]}
+                >
+                  {AI_CONFIDENCE_LABEL[product.aiEstimate.confidence]} confidence
+                </Text>
+              </View>
+            </View>
+            {product.aiEstimate.alternatives.length > 0 ? (
+              <Text style={styles.aiAlternatives}>
+                Could also be: {product.aiEstimate.alternatives.join(", ")}
+              </Text>
+            ) : null}
+            {product.aiEstimate.notes.map((note, i) => (
+              <Text key={i} style={styles.aiNote}>
+                {note}
+              </Text>
+            ))}
+          </View>
+        ) : null}
 
         {/* ── Product identity card ───────────────────── */}
         <View style={styles.productCard}>
@@ -793,6 +850,43 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     padding: Spacing.md,
     marginBottom: Spacing.md,
+  },
+  aiCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    gap: Spacing.xs,
+  },
+  aiHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  aiTitle: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    color: Colors.text,
+  },
+  confidencePill: {
+    borderRadius: Radius.full,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  confidencePillText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+  },
+  aiAlternatives: {
+    fontSize: Typography.sm,
+    color: Colors.textSub,
+  },
+  aiNote: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    lineHeight: 16,
   },
   productName: {
     fontSize: Typography.md,

@@ -20,13 +20,17 @@ import {
   Platform,
   Pressable,
   Image,
+  Alert,
 } from "react-native";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import * as ImagePicker from "expo-image-picker";
 import { searchFood } from "../lib/openfoodfacts";
 import { useStore } from "../store/useStore";
+import { prepareImage } from "../lib/imagePrep";
+import { scanMealPhoto, mealScanToFoodProduct } from "../lib/mealRecognition";
 import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
 import {
   FoodProduct,
@@ -49,6 +53,7 @@ export function AddIngredientScreen() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodProduct[]>([]);
   const [searching, setSearching] = useState(false);
+  const [scanningMeal, setScanningMeal] = useState(false);
 
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -73,6 +78,61 @@ export function AddIngredientScreen() {
 
   const handleSelectProduct = (product: FoodProduct) =>
     navigation.navigate("Product", { product, date, mealType });
+
+  // Photo of a PLATE, not a barcode or a label — a different button from
+  // "Scan" above. Camera only (no library): recognising what's on the
+  // plate depends on it being a fresh photo of food in front of the
+  // camera, not an old library image of anything. The photo itself is
+  // never uploaded or stored; scanMealPhoto sends the bytes for
+  // recognition and gets numbers back. Nothing reaches meal_entries until
+  // the user confirms on ProductScreen — mealScanToFoodProduct only builds
+  // an editable draft.
+  const handleScanMeal = async () => {
+    const perm = await ImagePicker.requestCameraPermissionsAsync();
+    if (!perm.granted) {
+      Alert.alert(
+        "Camera access needed",
+        "Allow camera access to scan a meal photo.",
+      );
+      return;
+    }
+
+    const picked = await ImagePicker.launchCameraAsync({
+      quality: 1,
+      base64: false,
+    });
+    if (picked.canceled || !picked.assets?.[0]) return;
+
+    const asset = picked.assets[0];
+    setScanningMeal(true);
+    try {
+      const prepared = await prepareImage(
+        { uri: asset.uri, width: asset.width, height: asset.height },
+        "meal",
+      );
+      if (!prepared) {
+        Alert.alert(
+          "Couldn't process that photo",
+          "Try taking it again.",
+        );
+        return;
+      }
+
+      const scan = await scanMealPhoto(prepared.base64);
+      if (!scan.ok) {
+        Alert.alert("Couldn't identify that meal", scan.message);
+        return;
+      }
+
+      navigation.navigate("Product", {
+        product: mealScanToFoodProduct(scan),
+        date,
+        mealType,
+      });
+    } finally {
+      setScanningMeal(false);
+    }
+  };
 
   const handleLibrarySelect = (saved: SavedIngredient) => {
     const product: FoodProduct = {
@@ -137,16 +197,36 @@ export function AddIngredientScreen() {
             </View>
           </View>
 
-          <Pressable
-            style={({ pressed }) => [
-              styles.scanBtn,
-              pressed && { opacity: 0.75 },
-            ]}
-            onPress={() => navigation.navigate("Scanner", { date, mealType })}
-          >
-            <Text style={styles.scanIcon}>⌗</Text>
-            <Text style={styles.scanLabel}>Scan</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.scanBtn,
+                pressed && { opacity: 0.75 },
+              ]}
+              onPress={() => navigation.navigate("Scanner", { date, mealType })}
+            >
+              <Text style={styles.scanIcon}>⌗</Text>
+              <Text style={styles.scanLabel}>Scan</Text>
+            </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.scanBtn,
+                pressed && { opacity: 0.75 },
+              ]}
+              onPress={handleScanMeal}
+              disabled={scanningMeal}
+            >
+              {scanningMeal ? (
+                <ActivityIndicator size="small" color={Colors.textSub} />
+              ) : (
+                <>
+                  <Text style={styles.scanIcon}>📷</Text>
+                  <Text style={styles.scanLabel}>Scan meal</Text>
+                </>
+              )}
+            </Pressable>
+          </View>
         </View>
 
         {/* ── Tab switcher ────────────────────────────── */}
@@ -507,6 +587,10 @@ const styles = StyleSheet.create({
     fontSize: Typography.xs,
     fontWeight: Typography.semibold,
     color: Colors.green,
+  },
+  headerActions: {
+    flexDirection: "row",
+    gap: Spacing.xs,
   },
   scanBtn: {
     flexDirection: "row",

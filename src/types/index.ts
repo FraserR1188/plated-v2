@@ -34,7 +34,8 @@ export type EntrySource =
   | "manual"
   | "custom"
   | "copied"
-  | "bundle";
+  | "bundle"
+  | "ai_photo";
 
 // ─── Food & Logging ──────────────────────────────────────────
 
@@ -65,6 +66,23 @@ export interface FoodProduct {
   image_url?: string;
   image_thumb_url?: string;
   image_path?: string;
+
+  /**
+   * Present ONLY for a draft built from scan-meal-photo
+   * (mealScanToFoodProduct). Nothing else sets this.
+   *
+   * Two jobs: (1) ProductScreen shows it as a confidence/alternatives
+   * notice, since this product's macros are an AI estimate rather than a
+   * lookup; (2) it's how ProductScreen's addEntry call picks the
+   * "ai_photo" EntrySource — this product has no barcode and isn't
+   * source: "custom", so without this flag it would silently fall through
+   * to "search" and the estimate's provenance would be lost.
+   */
+  aiEstimate?: {
+    alternatives: string[];
+    confidence: "high" | "medium" | "low";
+    notes: string[];
+  };
 }
 
 /**

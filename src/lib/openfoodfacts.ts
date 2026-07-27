@@ -159,7 +159,10 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function rankResults(products: FoodProduct[], query: string): FoodProduct[] {
+export function rankResults(
+  products: FoodProduct[],
+  query: string,
+): FoodProduct[] {
   const normQuery = normalise(query);
   return products
     .map((p) => ({ p, score: scoreProduct(p, normQuery) }))

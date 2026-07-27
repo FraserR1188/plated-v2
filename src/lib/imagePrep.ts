@@ -31,10 +31,19 @@ import type { PhotoKind } from "./customFoodImages";
 // server-side, so there is no accuracy to be gained by sending more.
 const MAX_EDGE = 1568;
 
-// Front-of-pack is a thumbnail; the label has to survive OCR.
-const QUALITY: Record<PhotoKind, number> = {
+// "meal" is NOT a PhotoKind: PhotoKind is the storage upload convention in
+// customFoodImages.ts (path = {user}/{food}/{kind}.jpg), and a meal-photo
+// scan is never uploaded — see scan-meal-photo's header comment. It only
+// needs a JPEG quality here, so it gets its own small union rather than
+// widening PhotoKind to mean something it doesn't.
+export type PrepareKind = PhotoKind | "meal";
+
+// Front-of-pack is a thumbnail; the label has to survive OCR; a meal photo
+// needs enough detail for the model to judge portion size and components.
+const QUALITY: Record<PrepareKind, number> = {
   front: 0.7,
   label: 0.85,
+  meal: 0.8,
 };
 
 // Belt and braces. After a 1568px resize we can't realistically hit this,
@@ -60,7 +69,7 @@ export type SourceImage = {
  */
 export async function prepareImage(
   source: SourceImage,
-  kind: PhotoKind,
+  kind: PrepareKind,
 ): Promise<PreparedImage | null> {
   try {
     const context = ImageManipulator.manipulate(source.uri);

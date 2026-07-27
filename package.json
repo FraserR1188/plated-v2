@@ -7,7 +7,9 @@
     "android": "expo start --android",
     "build:dev": "eas build -p android --profile development --local",
     "build:preview": "eas build -p android --profile preview",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -42,7 +44,8 @@
     "babel-preset-expo": "~54.0.10",
     "patch-package": "^8.0.1",
     "supabase": "^2.109.1",
-    "typescript": "^5.3.0"
+    "typescript": "^5.3.0",
+    "vitest": "^4.1.10"
   },
   "private": true
 }

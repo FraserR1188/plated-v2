@@ -78,7 +78,15 @@ import {
   LabelConfirmSheet,
   type LabelConfirmApply,
 } from "../components/LabelConfirmSheet";
-import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
+import {
+  Colors,
+  Spacing,
+  Radius,
+  Typography,
+  MacroColor,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 import { RootStackParamList, MEAL_LABELS } from "../types";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "CreateFood">;
@@ -849,7 +857,8 @@ function PhotoSlot({
 
 // ─── Styles ──────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   safe: { flex: 1, backgroundColor: Colors.bg },
   scroll: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm },
 
@@ -865,7 +874,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
   },
@@ -885,7 +894,7 @@ const styles = StyleSheet.create({
   mealPill: {
     alignSelf: "flex-start",
     backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: 9,
     paddingVertical: 2,
     borderWidth: 1,
@@ -906,7 +915,7 @@ const styles = StyleSheet.create({
 
   card: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.md,
@@ -940,7 +949,7 @@ const styles = StyleSheet.create({
   photoSlot: {
     width: 88,
     height: 88,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     backgroundColor: Colors.surface2,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -1007,7 +1016,7 @@ const styles = StyleSheet.create({
   },
   textField: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingVertical: Spacing.sm,
@@ -1018,6 +1027,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xs,
   },
   barcodeField: {
+    fontFamily: Fonts.mono.medium,
     letterSpacing: 1.5,
     fontVariant: ["tabular-nums"],
   },
@@ -1029,7 +1039,7 @@ const styles = StyleSheet.create({
   },
   macroGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   macroInputCell: {
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     paddingVertical: Spacing.sm,
     paddingHorizontal: 6,
     alignItems: "center",
@@ -1044,6 +1054,7 @@ const styles = StyleSheet.create({
   macroInput: {
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     letterSpacing: -0.2,
     minWidth: 34,
     textAlign: "center",
@@ -1066,7 +1077,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: Spacing.sm,
   },
-  servingInput: { width: 80, textAlign: "center", marginBottom: 0 },
+  servingInput: {
+    width: 80,
+    textAlign: "center",
+    marginBottom: 0,
+    fontFamily: Fonts.mono.medium,
+  },
   servingUnit: {
     fontSize: Typography.base,
     fontWeight: Typography.semibold,
@@ -1076,7 +1092,7 @@ const styles = StyleSheet.create({
 
   errorText: {
     fontSize: Typography.sm,
-    color: "#FF6B6B",
+    color: Colors.danger,
     textAlign: "center",
     marginBottom: Spacing.sm,
     fontWeight: Typography.medium,
@@ -1096,14 +1112,14 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 16,
     alignItems: "center",
   },
   // Same button, but flowing in the scroll content rather than pinned.
   inlineSaveBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 16,
     alignItems: "center",
     marginBottom: Spacing.md,
@@ -1120,4 +1136,5 @@ const styles = StyleSheet.create({
     letterSpacing: 0.1,
   },
   saveBtnTextDisabled: { color: Colors.textMuted },
-});
+  }),
+);

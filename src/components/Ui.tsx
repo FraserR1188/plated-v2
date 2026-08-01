@@ -14,7 +14,13 @@ import {
   View,
   ViewStyle,
 } from "react-native";
-import { Colors, Radius, Spacing, Typography } from "../theme";
+import {
+  Colors,
+  Radius,
+  Spacing,
+  Typography,
+  withDefaultFont,
+} from "../theme/tokens";
 
 // ─── Card ────────────────────────────────────────────────────────────────────
 
@@ -166,18 +172,19 @@ export function EmptyState({
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   // Card
   card: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.md,
   },
   cardInner: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.borderSub,
     padding: Spacing.md,
@@ -207,7 +214,7 @@ const styles = StyleSheet.create({
 
   // Badge
   badge: {
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -221,7 +228,7 @@ const styles = StyleSheet.create({
 
   // Pill
   pill: {
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.xs + 2,
     backgroundColor: Colors.surface2,
@@ -275,7 +282,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.sm,
     backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: `${Colors.green}50`,
   },
@@ -284,4 +291,5 @@ const styles = StyleSheet.create({
     fontWeight: Typography.semibold,
     color: Colors.green,
   },
-});
+  }),
+);

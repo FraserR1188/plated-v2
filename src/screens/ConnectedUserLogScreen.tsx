@@ -29,7 +29,15 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
-import { Colors, Spacing, Typography, Radius, MacroColor } from "../theme";
+import {
+  Colors,
+  Spacing,
+  Typography,
+  Radius,
+  MacroColor,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 import { getEntriesForUser, followUser, unfollowUser } from "../lib/social";
 import {
   RootStackParamList,
@@ -403,7 +411,8 @@ export function ConnectedUserLogScreen() {
 
 // ─── Styles ──────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   root: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -435,7 +444,7 @@ const styles = StyleSheet.create({
     margin: Spacing.md,
     padding: Spacing.md,
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     gap: 4,
@@ -443,6 +452,7 @@ const styles = StyleSheet.create({
   daySummaryCalories: {
     fontSize: Typography.xxl,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     color: Colors.green,
   },
   daySummaryLabel: {
@@ -459,7 +469,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
@@ -472,6 +482,7 @@ const styles = StyleSheet.create({
   macroChipText: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
     color: Colors.text,
   },
   macroChipLabel: {
@@ -485,7 +496,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
     padding: Spacing.md,
     backgroundColor: Colors.green,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     alignItems: "center",
   },
   copyDayBtnText: {
@@ -504,7 +515,7 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.md,
     marginBottom: Spacing.sm,
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     overflow: "hidden",
@@ -559,7 +570,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderWidth: 1,
@@ -584,4 +595,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
   },
-});
+  }),
+);

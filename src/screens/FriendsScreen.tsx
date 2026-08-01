@@ -25,7 +25,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
-import { Colors, Spacing, Typography, Radius } from "../theme";
+import {
+  Colors,
+  Spacing,
+  Typography,
+  Radius,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 import {
   searchUsers,
   followUser,
@@ -496,7 +503,8 @@ export function FriendsScreen() {
 
 // ─── Styles ──────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   root: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -524,7 +532,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     paddingHorizontal: Spacing.sm,
     height: 44,
     borderWidth: 1,
@@ -602,7 +610,7 @@ const styles = StyleSheet.create({
   // "follows you" badge
   followsYouBadge: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
@@ -634,6 +642,7 @@ const styles = StyleSheet.create({
   caloriePillText: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
     color: Colors.green,
   },
   caloriePillLabel: {
@@ -645,7 +654,7 @@ const styles = StyleSheet.create({
   followBtn: {
     paddingHorizontal: 16,
     paddingVertical: 7,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     minWidth: 84,
     alignItems: "center",
   },
@@ -679,7 +688,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   avatarText: {
-    color: "#fff",
+    color: Colors.text,
     fontWeight: Typography.bold,
   },
 
@@ -724,4 +733,5 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 20,
   },
-});
+  }),
+);

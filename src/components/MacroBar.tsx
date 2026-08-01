@@ -17,7 +17,13 @@ import {
   Spacing,
   Radius,
   Typography,
-} from "../theme";
+  Fonts,
+} from "../theme/tokens";
+
+// Macros where MORE than the goal is a bad thing — salt, sat fat and sugar
+// are limits to stay under. Protein, fibre, carbs and fat going over goal is
+// neutral-to-good, not a warning, so they never turn red here.
+const LIMIT_MACROS = new Set(["salt", "satFat", "sugar"]);
 
 type Props = {
   macro: string; // key into MacroColor — 'protein' | 'carbs' | 'fat' | etc.
@@ -40,6 +46,7 @@ export function MacroBar({
   const trackColor = MacroColorSoft[macro] ?? `${Colors.green}18`;
   const progress = goal > 0 ? Math.min(consumed / goal, 1) : 0;
   const isOver = consumed > goal;
+  const showWarning = isOver && LIMIT_MACROS.has(macro);
   const displayLabel = label ?? macro.charAt(0).toUpperCase() + macro.slice(1);
 
   const animWidth = useRef(new Animated.Value(0)).current;
@@ -69,7 +76,7 @@ export function MacroBar({
           <Text
             style={[
               styles.valueHighlight,
-              { color: isOver ? Colors.coral : Colors.text },
+              { color: showWarning ? Colors.coral : Colors.text },
             ]}
           >
             {consumed}
@@ -94,14 +101,14 @@ export function MacroBar({
             styles.fill,
             {
               height: barHeight,
-              backgroundColor: isOver ? Colors.coral : color,
+              backgroundColor: showWarning ? Colors.coral : color,
               width: animWidth.interpolate({
                 inputRange: [0, 1],
                 outputRange: ["0%", "100%"],
               }),
               // Softer right-edge radius when not complete
-              borderTopRightRadius: progress < 1 ? 2 : Radius.full,
-              borderBottomRightRadius: progress < 1 ? 2 : Radius.full,
+              borderTopRightRadius: progress < 1 ? 2 : Radius.pill,
+              borderBottomRightRadius: progress < 1 ? 2 : Radius.pill,
             },
           ]}
         />
@@ -135,6 +142,7 @@ const styles = StyleSheet.create({
   label: {
     fontSize: Typography.sm,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
     color: Colors.textSub,
   },
   labelCompact: {
@@ -148,17 +156,19 @@ const styles = StyleSheet.create({
   },
   valueHighlight: {
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
   },
   valueMuted: {
     color: Colors.textMuted,
     fontWeight: Typography.regular,
+    fontFamily: Fonts.mono.regular,
   },
   track: {
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     overflow: "hidden",
   },
   fill: {
-    borderTopLeftRadius: Radius.full,
-    borderBottomLeftRadius: Radius.full,
+    borderTopLeftRadius: Radius.pill,
+    borderBottomLeftRadius: Radius.pill,
   },
 });

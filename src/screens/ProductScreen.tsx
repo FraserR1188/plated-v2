@@ -26,7 +26,15 @@ import {
   willBePlanned,
   DEFAULT_HOUR,
 } from "../lib/time";
-import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
+import {
+  Colors,
+  Spacing,
+  Radius,
+  Typography,
+  MacroColor,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 import { RootStackParamList, MEAL_LABELS } from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
 
@@ -786,7 +794,8 @@ export function ProductScreen() {
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   safe: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -808,7 +817,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
   },
@@ -831,7 +840,7 @@ const styles = StyleSheet.create({
   mealPill: {
     alignSelf: "flex-start",
     backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: 9,
     paddingVertical: 2,
     borderWidth: 1,
@@ -845,7 +854,7 @@ const styles = StyleSheet.create({
 
   productCard: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.md,
@@ -853,7 +862,7 @@ const styles = StyleSheet.create({
   },
   aiCard: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.md,
@@ -871,7 +880,7 @@ const styles = StyleSheet.create({
     color: Colors.text,
   },
   confidencePill: {
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: 9,
     paddingVertical: 3,
   },
@@ -925,7 +934,7 @@ const styles = StyleSheet.create({
   thumb: {
     width: 60,
     height: 60,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     backgroundColor: Colors.surface2,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -948,7 +957,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   macroCell: {
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     padding: Spacing.sm,
     alignItems: "center",
     minWidth: "22%",
@@ -957,6 +966,7 @@ const styles = StyleSheet.create({
   macroCellVal: {
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     letterSpacing: -0.2,
   },
   macroCellUnit: {
@@ -972,7 +982,7 @@ const styles = StyleSheet.create({
 
   card: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.md,
@@ -1007,13 +1017,14 @@ const styles = StyleSheet.create({
   servingInput: {
     flex: 1,
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.md,
     fontSize: Typography.xxl,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     color: Colors.text,
     textAlign: "center",
     letterSpacing: -1,
@@ -1031,7 +1042,7 @@ const styles = StyleSheet.create({
   preset: {
     flex: 1,
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     paddingVertical: 8,
     alignItems: "center",
     borderWidth: 1,
@@ -1044,6 +1055,7 @@ const styles = StyleSheet.create({
   presetText: {
     fontSize: Typography.xs,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
     color: Colors.textMuted,
   },
   presetTextActive: {
@@ -1062,7 +1074,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: Spacing.sm,
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.sm,
@@ -1083,6 +1095,7 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   whenValueMono: {
+    fontFamily: Fonts.mono.bold,
     fontVariant: ["tabular-nums"],
   },
   whenValuePlanned: {
@@ -1107,7 +1120,7 @@ const styles = StyleSheet.create({
   },
   previewServingBadge: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: 9,
     paddingVertical: 3,
   },
@@ -1125,6 +1138,7 @@ const styles = StyleSheet.create({
   calValue: {
     fontSize: Typography.hero,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     color: Colors.green,
     letterSpacing: -2,
     lineHeight: Typography.hero * 1.0,
@@ -1149,6 +1163,7 @@ const styles = StyleSheet.create({
   previewCellVal: {
     fontSize: Typography.base,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     letterSpacing: -0.3,
   },
   previewCellUnit: {
@@ -1176,7 +1191,7 @@ const styles = StyleSheet.create({
   },
   addBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 16,
     alignItems: "center",
   },
@@ -1195,7 +1210,7 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
   },
   deleteBtn: {
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 12,
     alignItems: "center",
     marginTop: Spacing.sm,
@@ -1205,4 +1220,5 @@ const styles = StyleSheet.create({
     fontWeight: Typography.semibold,
     color: Colors.danger,
   },
-});
+  }),
+);

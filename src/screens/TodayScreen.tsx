@@ -29,7 +29,7 @@ import {
   dateKey,
   addDays,
 } from "../lib/time";
-import { Colors, Spacing, Radius, Typography } from "../theme";
+import { Colors, Spacing, Radius, Typography, Fonts } from "../theme/tokens";
 import {
   RootStackParamList,
   MealEntry,
@@ -761,11 +761,13 @@ const barStyles = StyleSheet.create({
   count: {
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.text,
   },
   cancel: {
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.green,
   },
   busy: {
@@ -782,7 +784,7 @@ const barStyles = StyleSheet.create({
   action: {
     flex: 1,
     backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: `${Colors.green}40`,
     paddingVertical: 10,
@@ -793,6 +795,7 @@ const barStyles = StyleSheet.create({
   actionText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.green,
     textAlign: "center",
   },
@@ -801,7 +804,7 @@ const barStyles = StyleSheet.create({
   actionPrimary: {
     flex: 1,
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 10,
     paddingHorizontal: 8,
     alignItems: "center",
@@ -810,11 +813,12 @@ const barStyles = StyleSheet.create({
   actionPrimaryText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.bg,
     textAlign: "center",
   },
   actionDanger: {
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingVertical: 10,
@@ -825,6 +829,7 @@ const barStyles = StyleSheet.create({
   actionDangerText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.danger,
   },
 });
@@ -1146,8 +1151,8 @@ const sheetStyles = StyleSheet.create({
   },
   sheet: {
     backgroundColor: Colors.bg,
-    borderTopLeftRadius: Radius.lg,
-    borderTopRightRadius: Radius.lg,
+    borderTopLeftRadius: Radius.card,
+    borderTopRightRadius: Radius.card,
     borderTopWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.md,
@@ -1166,6 +1171,7 @@ const sheetStyles = StyleSheet.create({
   title: {
     fontSize: Typography.md,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.text,
     letterSpacing: -0.3,
     marginBottom: Spacing.xs,
@@ -1174,13 +1180,14 @@ const sheetStyles = StyleSheet.create({
     fontSize: Typography.sm,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
     lineHeight: Typography.sm * 1.5,
     paddingVertical: Spacing.md,
   },
 
   bundle: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     marginBottom: Spacing.sm,
@@ -1195,6 +1202,7 @@ const sheetStyles = StyleSheet.create({
   bundleName: {
     fontSize: Typography.base,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.text,
     letterSpacing: -0.2,
   },
@@ -1202,14 +1210,16 @@ const sheetStyles = StyleSheet.create({
     fontSize: Typography.xs,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
     marginTop: 2,
   },
   renameInput: {
     fontSize: Typography.base,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.text,
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: `${Colors.green}50`,
     paddingHorizontal: Spacing.sm,
@@ -1217,13 +1227,14 @@ const sheetStyles = StyleSheet.create({
   },
   applyBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
   applyBtnText: {
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.bg,
   },
 
@@ -1243,16 +1254,18 @@ const sheetStyles = StyleSheet.create({
   itemName: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     color: Colors.text,
   },
   itemMeta: {
     fontSize: Typography.xs,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
     marginTop: 2,
   },
   pill: {
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -1268,6 +1281,7 @@ const sheetStyles = StyleSheet.create({
   pillText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
   },
   pillTextPlanned: { color: Colors.blue },
   pillTextLogged: { color: Colors.green },
@@ -1275,17 +1289,20 @@ const sheetStyles = StyleSheet.create({
     fontSize: Typography.sm,
     color: Colors.textMuted,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     paddingHorizontal: 2,
   },
   note: {
     fontSize: Typography.xs,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
     lineHeight: Typography.xs * 1.5,
   },
   noteStrong: {
     color: Colors.green,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
   },
   deleteBundle: {
     paddingVertical: Spacing.sm,
@@ -1294,23 +1311,25 @@ const sheetStyles = StyleSheet.create({
   deleteBundleText: {
     fontSize: Typography.xs,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     color: Colors.danger,
   },
 
   nameInput: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.md,
     fontSize: Typography.base,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     color: Colors.text,
   },
   primary: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 14,
     alignItems: "center",
   },
@@ -1322,6 +1341,7 @@ const sheetStyles = StyleSheet.create({
   primaryText: {
     fontSize: Typography.base,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.bg,
   },
   primaryTextDisabled: {
@@ -1331,6 +1351,7 @@ const sheetStyles = StyleSheet.create({
     fontSize: Typography.xs,
     color: Colors.textMuted,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     textTransform: "uppercase",
     letterSpacing: 0.6,
     marginTop: Spacing.sm,
@@ -1340,7 +1361,7 @@ const sheetStyles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.md,
@@ -1352,11 +1373,13 @@ const sheetStyles = StyleSheet.create({
     flex: 1,
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     color: Colors.text,
   },
   appendMeta: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     color: Colors.green,
     fontVariant: ["tabular-nums"],
   },
@@ -1368,6 +1391,7 @@ const sheetStyles = StyleSheet.create({
   closeText: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     color: Colors.textSub,
   },
 });
@@ -1498,7 +1522,7 @@ function ConfirmBanner({
 const bannerStyles = StyleSheet.create({
   banner: {
     backgroundColor: `${Colors.amber}12`,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: `${Colors.amber}40`,
     padding: Spacing.md,
@@ -1507,6 +1531,7 @@ const bannerStyles = StyleSheet.create({
   title: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     color: Colors.text,
     lineHeight: Typography.sm * 1.4,
     marginBottom: Spacing.sm,
@@ -1518,7 +1543,7 @@ const bannerStyles = StyleSheet.create({
   primary: {
     flex: 1,
     backgroundColor: Colors.amber,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 9,
     alignItems: "center",
     justifyContent: "center",
@@ -1526,12 +1551,13 @@ const bannerStyles = StyleSheet.create({
   primaryText: {
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.bg,
   },
   secondary: {
     paddingHorizontal: Spacing.md,
     paddingVertical: 9,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: `${Colors.amber}50`,
     alignItems: "center",
@@ -1540,6 +1566,7 @@ const bannerStyles = StyleSheet.create({
   secondaryText: {
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.amber,
   },
   list: {
@@ -1551,7 +1578,7 @@ const bannerStyles = StyleSheet.create({
     alignItems: "center",
     gap: Spacing.sm,
     backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.sm,
@@ -1563,6 +1590,7 @@ const bannerStyles = StyleSheet.create({
   itemName: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     color: Colors.text,
   },
   itemMeta: {
@@ -1570,10 +1598,11 @@ const bannerStyles = StyleSheet.create({
     color: Colors.textMuted,
     marginTop: 2,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
   },
   ate: {
     backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: `${Colors.green}40`,
     paddingHorizontal: 10,
@@ -1582,10 +1611,11 @@ const bannerStyles = StyleSheet.create({
   ateText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.green,
   },
   didnt: {
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: 10,
@@ -1594,6 +1624,7 @@ const bannerStyles = StyleSheet.create({
   didntText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.textMuted,
   },
 });
@@ -1637,6 +1668,7 @@ const statStyles = StyleSheet.create({
   label: {
     fontSize: Typography.xs,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
     color: Colors.textMuted,
     textTransform: "uppercase",
     letterSpacing: 0.5,
@@ -1644,6 +1676,7 @@ const statStyles = StyleSheet.create({
   value: {
     fontSize: Typography.lg,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     letterSpacing: -0.5,
     color: Colors.text,
   },
@@ -1651,6 +1684,7 @@ const statStyles = StyleSheet.create({
     fontSize: Typography.xs,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
   },
 });
 
@@ -1838,6 +1872,7 @@ const styles = StyleSheet.create({
   greeting: {
     fontSize: Typography.xl,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.text,
     letterSpacing: -0.5,
   },
@@ -1846,6 +1881,7 @@ const styles = StyleSheet.create({
     color: Colors.textSub,
     marginTop: 3,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
   },
   dateCaret: {
     color: Colors.textMuted,
@@ -1862,7 +1898,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
   },
@@ -1872,10 +1908,11 @@ const styles = StyleSheet.create({
     marginTop: -2,
     color: Colors.textSub,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
   },
   bundleBtn: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: 12,
@@ -1885,13 +1922,14 @@ const styles = StyleSheet.create({
   bundleBtnText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.textSub,
   },
 
   backToToday: {
     alignSelf: "flex-start",
     backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: `${Colors.green}40`,
     paddingHorizontal: 12,
@@ -1902,13 +1940,14 @@ const styles = StyleSheet.create({
   backToTodayText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.green,
   },
 
   selectAll: {
     alignSelf: "flex-start",
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: 12,
@@ -1918,12 +1957,13 @@ const styles = StyleSheet.create({
   selectAllText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.textSub,
   },
 
   ringCard: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingVertical: Spacing.lg,
@@ -1947,16 +1987,18 @@ const styles = StyleSheet.create({
     fontSize: Typography.xs,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
     marginTop: -Spacing.sm,
   },
   plannedNoteStrong: {
     color: Colors.textSub,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
   },
 
   card: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.md,
@@ -1965,6 +2007,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     color: Colors.textSub,
     textTransform: "uppercase",
     letterSpacing: 0.6,
@@ -1978,7 +2021,7 @@ const styles = StyleSheet.create({
 const mealStyles = StyleSheet.create({
   section: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     marginBottom: Spacing.md,
@@ -1999,7 +2042,7 @@ const mealStyles = StyleSheet.create({
   iconWrap: {
     width: 32,
     height: 32,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     backgroundColor: Colors.surface2,
     alignItems: "center",
     justifyContent: "center",
@@ -2008,6 +2051,7 @@ const mealStyles = StyleSheet.create({
   title: {
     fontSize: Typography.base,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.text,
     letterSpacing: -0.2,
   },
@@ -2019,11 +2063,12 @@ const mealStyles = StyleSheet.create({
   calories: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
     color: Colors.textSub,
   },
   addBtn: {
     backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderWidth: 1,
@@ -2032,6 +2077,7 @@ const mealStyles = StyleSheet.create({
   addBtnText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.green,
     letterSpacing: 0.2,
   },
@@ -2072,6 +2118,7 @@ const mealStyles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 14,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.bg,
   },
   rowBody: {
@@ -2081,11 +2128,13 @@ const mealStyles = StyleSheet.create({
   rowName: {
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     color: Colors.text,
     letterSpacing: -0.1,
   },
   rowBrand: {
     fontWeight: Typography.regular,
+    fontFamily: Fonts.sans.regular,
     color: Colors.textMuted,
   },
   rowMacros: {
@@ -2093,10 +2142,12 @@ const mealStyles = StyleSheet.create({
     color: Colors.textMuted,
     marginTop: 3,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.mono.medium,
   },
   rowTime: {
     color: Colors.textSub,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
     fontVariant: ["tabular-nums"],
   },
   // Inline "Ate it" — matches the banner's confirm chip (greenSoft, green
@@ -2104,7 +2155,7 @@ const mealStyles = StyleSheet.create({
   // planned row only.
   ateInline: {
     backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: `${Colors.green}40`,
     paddingHorizontal: 10,
@@ -2114,11 +2165,13 @@ const mealStyles = StyleSheet.create({
   ateInlineText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
     color: Colors.green,
   },
   rowCals: {
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     color: Colors.text,
     minWidth: 32,
     textAlign: "right",
@@ -2135,6 +2188,7 @@ const mealStyles = StyleSheet.create({
     fontSize: Typography.sm,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
   },
 
   footer: {
@@ -2147,5 +2201,6 @@ const mealStyles = StyleSheet.create({
   footerText: {
     fontSize: Typography.xs,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
   },
 });

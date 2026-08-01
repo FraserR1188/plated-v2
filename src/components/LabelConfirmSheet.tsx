@@ -38,11 +38,21 @@ import {
   type MacroSet,
   type Reading,
 } from "../lib/labelExtraction";
-import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
+import {
+  Colors,
+  Spacing,
+  Radius,
+  Typography,
+  MacroColor,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 
 // Amber, for "the model wasn't sure". Not in the macro palette on
-// purpose — it must not be mistaken for a macro colour.
-const WARN = "#F5A623";
+// purpose — it must not be mistaken for a macro colour. Colors.warning
+// is deliberately a different shade from MacroColor.carbs for exactly
+// this reason (see tokens.ts).
+const WARN = Colors.warning;
 
 const MACRO_META: Record<
   MacroKey,
@@ -417,7 +427,8 @@ function MacroCell({
 
 // ─── Styles ──────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   backdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.6)",
@@ -425,8 +436,8 @@ const styles = StyleSheet.create({
   },
   sheet: {
     backgroundColor: Colors.bg,
-    borderTopLeftRadius: Radius.lg,
-    borderTopRightRadius: Radius.lg,
+    borderTopLeftRadius: Radius.card,
+    borderTopRightRadius: Radius.card,
     borderTopWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.md,
@@ -487,7 +498,7 @@ const styles = StyleSheet.create({
   toggle: {
     flexDirection: "row",
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     padding: 3,
     marginBottom: Spacing.md,
     borderWidth: 1,
@@ -497,7 +508,7 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 8,
     alignItems: "center",
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
   },
   toggleTabActive: { backgroundColor: Colors.surface },
   toggleTabText: {
@@ -510,7 +521,7 @@ const styles = StyleSheet.create({
   // ── Missing-weight prompt ──
   weightPrompt: {
     backgroundColor: `${WARN}12`,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: `${WARN}35`,
     padding: Spacing.md,
@@ -535,13 +546,14 @@ const styles = StyleSheet.create({
   },
   weightInput: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingVertical: Spacing.sm,
     paddingHorizontal: Spacing.md,
     fontSize: Typography.base,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
     color: Colors.text,
     width: 92,
     textAlign: "center",
@@ -564,7 +576,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   cell: {
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     paddingVertical: Spacing.sm,
     paddingHorizontal: 6,
     alignItems: "center",
@@ -579,6 +591,7 @@ const styles = StyleSheet.create({
   cellValue: {
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     letterSpacing: -0.2,
   },
   cellUnit: {
@@ -601,7 +614,7 @@ const styles = StyleSheet.create({
 
   notes: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.sm,
@@ -630,7 +643,7 @@ const styles = StyleSheet.create({
   flex1: { flex: 1 },
   primaryBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 15,
     alignItems: "center",
     justifyContent: "center",
@@ -648,7 +661,7 @@ const styles = StyleSheet.create({
   primaryBtnTextDisabled: { color: Colors.textMuted },
   secondaryBtn: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingVertical: 15,
@@ -668,4 +681,5 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: Spacing.sm,
   },
-});
+  }),
+);

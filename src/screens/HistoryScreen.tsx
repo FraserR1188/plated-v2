@@ -2,7 +2,15 @@ import React, { useState } from "react";
 import { View, Text, ScrollView, StyleSheet, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useStore } from "../store/useStore";
-import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
+import {
+  Colors,
+  Spacing,
+  Radius,
+  Typography,
+  MacroColor,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 
 type Range = "7d" | "30d";
 
@@ -342,7 +350,8 @@ function MacroChip({
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   safe: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -368,7 +377,7 @@ const styles = StyleSheet.create({
   rangePicker: {
     flexDirection: "row",
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: 3,
@@ -376,7 +385,7 @@ const styles = StyleSheet.create({
   rangeBtn: {
     paddingVertical: 6,
     paddingHorizontal: Spacing.md,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     alignItems: "center",
   },
   rangeBtnOn: {
@@ -395,7 +404,7 @@ const styles = StyleSheet.create({
   // Average card
   avgCard: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.md,
@@ -422,7 +431,7 @@ const styles = StyleSheet.create({
   adherenceBadge: {
     alignItems: "center",
     backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: `${Colors.green}30`,
     paddingHorizontal: Spacing.sm,
@@ -432,6 +441,7 @@ const styles = StyleSheet.create({
   adherencePct: {
     fontSize: Typography.md,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     color: Colors.green,
     letterSpacing: -0.5,
   },
@@ -471,7 +481,7 @@ const styles = StyleSheet.create({
   // Empty card
   emptyCard: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.xl,
@@ -506,7 +516,7 @@ const styles = StyleSheet.create({
   // Day rows
   dayRow: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.md,
@@ -533,6 +543,7 @@ const styles = StyleSheet.create({
   dayCals: {
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     color: Colors.text,
   },
   dayCalsOver: {
@@ -546,14 +557,14 @@ const styles = StyleSheet.create({
   barTrack: {
     height: 5,
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     overflow: "hidden",
     marginBottom: 8,
     position: "relative",
   },
   barFill: {
     height: 5,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
   },
   goalMarker: {
     position: "absolute",
@@ -574,77 +585,85 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     fontWeight: Typography.medium,
   },
-});
+  }),
+);
 
-const avgStyles = StyleSheet.create({
-  stat: {
-    flex: 1,
-    alignItems: "center",
-    gap: 1,
-  },
-  value: {
-    fontSize: Typography.md,
-    fontWeight: Typography.bold,
-    letterSpacing: -0.5,
-  },
-  valueLarge: {
-    fontSize: Typography.lg,
-  },
-  unit: {
-    fontSize: Typography.xs,
-    color: Colors.textMuted,
-    fontWeight: Typography.medium,
-  },
-  label: {
-    fontSize: Typography.xs,
-    color: Colors.textMuted,
-    fontWeight: Typography.medium,
-    marginTop: 1,
-  },
-  secondary: {
-    flexBasis: "47%",
-    flexGrow: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 6,
-  },
-  secondaryDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-  },
-  secondaryLabel: {
-    fontSize: Typography.xs,
-    color: Colors.textMuted,
-    fontWeight: Typography.medium,
-    flex: 1,
-  },
-  secondaryValue: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.bold,
-  },
-});
+const avgStyles = StyleSheet.create(
+  withDefaultFont({
+    stat: {
+      flex: 1,
+      alignItems: "center",
+      gap: 1,
+    },
+    value: {
+      fontSize: Typography.md,
+      fontWeight: Typography.bold,
+      fontFamily: Fonts.mono.bold,
+      letterSpacing: -0.5,
+    },
+    valueLarge: {
+      fontSize: Typography.lg,
+    },
+    unit: {
+      fontSize: Typography.xs,
+      color: Colors.textMuted,
+      fontWeight: Typography.medium,
+    },
+    label: {
+      fontSize: Typography.xs,
+      color: Colors.textMuted,
+      fontWeight: Typography.medium,
+      marginTop: 1,
+    },
+    secondary: {
+      flexBasis: "47%",
+      flexGrow: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 5,
+      backgroundColor: Colors.surface2,
+      borderRadius: Radius.control,
+      paddingHorizontal: Spacing.sm,
+      paddingVertical: 6,
+    },
+    secondaryDot: {
+      width: 5,
+      height: 5,
+      borderRadius: 3,
+    },
+    secondaryLabel: {
+      fontSize: Typography.xs,
+      color: Colors.textMuted,
+      fontWeight: Typography.medium,
+      flex: 1,
+    },
+    secondaryValue: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.bold,
+      fontFamily: Fonts.mono.bold,
+    },
+  }),
+);
 
-const chipStyles = StyleSheet.create({
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 3,
-    borderRadius: Radius.sm,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-  },
-  label: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.bold,
-    letterSpacing: 0.2,
-  },
-  value: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.semibold,
-  },
-});
+const chipStyles = StyleSheet.create(
+  withDefaultFont({
+    chip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 3,
+      borderRadius: Radius.control,
+      paddingHorizontal: 7,
+      paddingVertical: 3,
+    },
+    label: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.bold,
+      letterSpacing: 0.2,
+    },
+    value: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.semibold,
+      fontFamily: Fonts.mono.semibold,
+    },
+  }),
+);

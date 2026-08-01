@@ -32,7 +32,7 @@ import { FriendsScreen } from "../screens/FriendsScreen";
 import { ConnectedUserLogScreen } from "../screens/ConnectedUserLogScreen";
 import { CopyConfirmScreen } from "../screens/CopyConfirmScreen";
 import { TabBar } from "../components/TabBar";
-import { NavTheme } from "../theme";
+import { Colors, Fonts, NavTheme } from "../theme/tokens";
 import { RootStackParamList, BottomTabParamList } from "../types";
 import { CreateFoodScreen } from "../screens/CreateFoodScreen";
 
@@ -60,7 +60,7 @@ function TabIcon({
       style={{
         fontSize: 22,
         opacity: focused ? 1 : 0.45,
-        color: focused ? "#00D97E" : "#F2F2F7",
+        color: focused ? Colors.green : Colors.text,
       }}
     >
       {TAB_ICONS[name]}
@@ -127,11 +127,15 @@ export function AppNavigator() {
     <NavigationContainer theme={NavTheme}>
       <Stack.Navigator
         screenOptions={{
-          headerStyle: { backgroundColor: "#161616" },
-          headerTintColor: "#F2F2F7",
-          headerTitleStyle: { fontWeight: "600", fontSize: 17 },
+          headerStyle: { backgroundColor: Colors.surface },
+          headerTintColor: Colors.text,
+          headerTitleStyle: {
+            fontWeight: "600",
+            fontFamily: Fonts.sans.semibold,
+            fontSize: 17,
+          },
           headerShadowVisible: false,
-          contentStyle: { backgroundColor: "#0D0D0D" },
+          contentStyle: { backgroundColor: Colors.bg },
         }}
       >
         {/* Tabs — no header */}

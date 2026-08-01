@@ -12,7 +12,15 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useStore } from "../store/useStore";
 import { exportCSV, last30Days } from "../lib/csv";
-import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
+import {
+  Colors,
+  Spacing,
+  Radius,
+  Typography,
+  MacroColor,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 import {
   getMyProfile,
   upsertProfile,
@@ -746,37 +754,42 @@ function SectionLabel({ title, count }: { title: string; count?: number }) {
   );
 }
 
-const sectionStyles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.xs,
-    marginTop: Spacing.sm,
-    marginBottom: Spacing.sm,
-  },
-  label: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.semibold,
-    color: Colors.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 0.7,
-  },
-  badge: {
-    backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
-    paddingHorizontal: 7,
-    paddingVertical: 1,
-  },
-  badgeText: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.bold,
-    color: Colors.textSub,
-  },
-});
+const sectionStyles = StyleSheet.create(
+  withDefaultFont({
+    row: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: Spacing.xs,
+      marginTop: Spacing.sm,
+      marginBottom: Spacing.sm,
+    },
+    label: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.semibold,
+      color: Colors.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 0.7,
+    },
+    badge: {
+      backgroundColor: Colors.surface2,
+      borderRadius: Radius.pill,
+      paddingHorizontal: 7,
+      paddingVertical: 1,
+    },
+    // A count — mono, matches the numeric-readout convention elsewhere.
+    badgeText: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.bold,
+      fontFamily: Fonts.mono.bold,
+      color: Colors.textSub,
+    },
+  }),
+);
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   safe: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -794,7 +807,7 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.md,
@@ -826,7 +839,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 6,
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
   },
@@ -863,7 +876,7 @@ const styles = StyleSheet.create({
   usernameInput: {
     flex: 1,
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.md,
@@ -893,7 +906,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: 11,
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     alignItems: "center",
@@ -906,7 +919,7 @@ const styles = StyleSheet.create({
   saveUsernameBtn: {
     paddingVertical: 11,
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     alignItems: "center",
     paddingHorizontal: Spacing.lg,
   },
@@ -952,7 +965,7 @@ const styles = StyleSheet.create({
   },
   whoopConnectBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 13,
     alignItems: "center",
   },
@@ -963,7 +976,7 @@ const styles = StyleSheet.create({
   },
   whoopDisconnectBtn: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: `${Colors.danger}40`,
     paddingVertical: 13,
@@ -983,7 +996,7 @@ const styles = StyleSheet.create({
   },
   whoopSyncBtn: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: `${Colors.green}40`,
     paddingVertical: 13,
@@ -1002,7 +1015,7 @@ const styles = StyleSheet.create({
   },
   signOutBtn: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingVertical: 13,
@@ -1047,12 +1060,13 @@ const styles = StyleSheet.create({
   },
   goalInput: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     borderWidth: 1,
     paddingHorizontal: Spacing.md,
     paddingVertical: 7,
     fontSize: Typography.base,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     color: Colors.text,
     minWidth: 76,
     textAlign: "center",
@@ -1065,7 +1079,7 @@ const styles = StyleSheet.create({
   },
   saveBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 13,
     alignItems: "center",
     marginTop: Spacing.md,
@@ -1090,7 +1104,7 @@ const styles = StyleSheet.create({
   },
   colsBox: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     padding: Spacing.sm,
     marginBottom: Spacing.md,
     gap: 4,
@@ -1122,7 +1136,7 @@ const styles = StyleSheet.create({
   },
   exportBtn: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingVertical: 13,
@@ -1140,7 +1154,7 @@ const styles = StyleSheet.create({
   // ── Ingredient library ─────────────────────────────────────
   emptyLibCard: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.lg,
@@ -1157,7 +1171,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 11,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     marginHorizontal: -4,
     paddingHorizontal: 4,
   },
@@ -1186,4 +1200,5 @@ const styles = StyleSheet.create({
     textAlign: "center",
     fontWeight: Typography.medium,
   },
-});
+  }),
+);

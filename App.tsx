@@ -12,10 +12,18 @@ import {
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
+import { useFonts } from "expo-font";
 import { AppNavigator } from "./src/navigation/AppNavigator";
 import { supabase, signIn, signUp } from "./src/lib/supabase";
 import { useStore } from "./src/store/useStore";
-import { Colors, Spacing, Radius, Typography } from "./src/theme";
+import {
+  Colors,
+  Spacing,
+  Radius,
+  Typography,
+  FontsToLoad,
+  withDefaultFont,
+} from "./src/theme/tokens";
 import { syncWhoop } from "./src/lib/whoop";
 
 export default function App() {
@@ -23,6 +31,7 @@ export default function App() {
     useStore();
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [fontsLoaded] = useFonts(FontsToLoad);
 
   // ── Auth ────────────────────────────────────────────────────
   useEffect(() => {
@@ -81,7 +90,7 @@ export default function App() {
     return () => sub.remove();
   }, [session]);
 
-  if (loading) {
+  if (loading || !fontsLoaded) {
     return (
       <View style={styles.splash}>
         <StatusBar style="light" />
@@ -194,7 +203,8 @@ function AuthScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   splash: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -223,7 +233,7 @@ const styles = StyleSheet.create({
   },
   authCard: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     padding: Spacing.lg,
   },
   authTitle: {
@@ -234,7 +244,7 @@ const styles = StyleSheet.create({
   },
   input: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     padding: Spacing.md,
     fontSize: Typography.base,
     color: Colors.text,
@@ -242,7 +252,7 @@ const styles = StyleSheet.create({
   },
   submitBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 14,
     alignItems: "center",
     marginTop: Spacing.sm,
@@ -254,4 +264,5 @@ const styles = StyleSheet.create({
   },
   switchBtn: { paddingVertical: Spacing.md, alignItems: "center" },
   switchText: { fontSize: Typography.sm, color: Colors.textMuted },
-});
+  }),
+);

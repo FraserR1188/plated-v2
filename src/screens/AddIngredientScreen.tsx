@@ -31,7 +31,15 @@ import { searchFood } from "../lib/openfoodfacts";
 import { useStore } from "../store/useStore";
 import { prepareImage } from "../lib/imagePrep";
 import { scanMealPhoto, mealScanToFoodProduct } from "../lib/mealRecognition";
-import { Colors, Spacing, Radius, Typography, MacroColor } from "../theme";
+import {
+  Colors,
+  Spacing,
+  Radius,
+  Typography,
+  MacroColor,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 import {
   FoodProduct,
   RootStackParamList,
@@ -505,33 +513,38 @@ function MacroPill({
   );
 }
 
-const pillStyles = StyleSheet.create({
-  pill: {
-    flexDirection: "row",
-    alignItems: "baseline",
-    borderRadius: Radius.full,
-    paddingHorizontal: 7,
-    paddingVertical: 3,
-  },
-  label: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.bold,
-    letterSpacing: 0.2,
-  },
-  value: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.semibold,
-  },
-  unit: {
-    fontSize: 9,
-    fontWeight: Typography.medium,
-    marginLeft: 1,
-  },
-});
+const pillStyles = StyleSheet.create(
+  withDefaultFont({
+    pill: {
+      flexDirection: "row",
+      alignItems: "baseline",
+      borderRadius: Radius.pill,
+      paddingHorizontal: 7,
+      paddingVertical: 3,
+    },
+    label: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.bold,
+      letterSpacing: 0.2,
+    },
+    // A macro pill's value is a number — mono, for tabular alignment.
+    value: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.semibold,
+      fontFamily: Fonts.mono.semibold,
+    },
+    unit: {
+      fontSize: 9,
+      fontWeight: Typography.medium,
+      marginLeft: 1,
+    },
+  }),
+);
 
 // ─── Main styles ─────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   safe: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -554,7 +567,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
   },
@@ -577,7 +590,7 @@ const styles = StyleSheet.create({
   },
   mealPill: {
     backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: 9,
     paddingVertical: 2,
     borderWidth: 1,
@@ -597,7 +610,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.sm,
@@ -619,7 +632,7 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.md,
     marginBottom: Spacing.md,
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: 3,
@@ -627,7 +640,7 @@ const styles = StyleSheet.create({
   tabBtn: {
     flex: 1,
     paddingVertical: 8,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     alignItems: "center",
   },
   tabBtnActive: {
@@ -648,7 +661,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: Colors.surface,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.md,
@@ -674,7 +687,7 @@ const styles = StyleSheet.create({
   // Results list
   resultsList: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     marginBottom: Spacing.md,
@@ -726,7 +739,7 @@ const styles = StyleSheet.create({
   rowThumb: {
     width: 44,
     height: 44,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     backgroundColor: Colors.surface2,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -747,7 +760,7 @@ const styles = StyleSheet.create({
   // Not-found → create card
   notFoundCard: {
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     padding: Spacing.lg,
@@ -774,7 +787,7 @@ const styles = StyleSheet.create({
   },
   primaryBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingVertical: 13,
     paddingHorizontal: Spacing.xl,
     alignSelf: "stretch",
@@ -793,7 +806,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     borderStyle: "dashed",
@@ -804,7 +817,7 @@ const styles = StyleSheet.create({
   createIconTile: {
     width: 44,
     height: 44,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     backgroundColor: Colors.greenSoft,
     borderWidth: 1,
     borderColor: `${Colors.green}35`,
@@ -854,4 +867,5 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     maxWidth: 260,
   },
-});
+  }),
+);

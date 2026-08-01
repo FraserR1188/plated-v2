@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { Colors, Radius, Spacing, Typography } from "../theme";
+import { Colors, Radius, Spacing, Typography, Fonts } from "../theme/tokens";
 
 // Tab icon map — emoji/unicode placeholders.
 // Swap these for your SVG icon components if you have them.
@@ -180,7 +180,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: 6,
     paddingHorizontal: 14,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     gap: 2,
   },
   tabInnerActive: {
@@ -194,6 +194,7 @@ const styles = StyleSheet.create({
   tabLabel: {
     fontSize: Typography.xs,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
     letterSpacing: 0.2,
   },
 });

@@ -24,7 +24,7 @@
 import React from "react";
 import { StyleSheet, View, ViewStyle } from "react-native";
 import { SafeAreaView, Edge } from "react-native-safe-area-context";
-import { Colors, Spacing } from "../theme";
+import { Colors, Spacing } from "../theme/tokens";
 
 type Props = {
   children: React.ReactNode;

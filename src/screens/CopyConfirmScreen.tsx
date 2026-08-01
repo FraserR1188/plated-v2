@@ -20,7 +20,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
-import { Colors, Spacing, Typography, Radius } from "../theme";
+import {
+  Colors,
+  Spacing,
+  Typography,
+  Radius,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 import { copyEntriesToMyLog } from "../lib/social";
 import { MealEntry, RootStackParamList } from "../types";
 
@@ -183,7 +190,8 @@ export function CopyConfirmScreen() {
 
 // ─── Styles ──────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(
+  withDefaultFont({
   root: {
     flex: 1,
     backgroundColor: Colors.bg,
@@ -197,7 +205,7 @@ const styles = StyleSheet.create({
     margin: Spacing.md,
     padding: Spacing.md,
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     gap: Spacing.sm,
@@ -229,6 +237,7 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: Typography.md,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     color: Colors.text,
   },
   statLabel: {
@@ -244,7 +253,7 @@ const styles = StyleSheet.create({
   // Destination indicator
   destinationRow: {
     backgroundColor: Colors.surface2,
-    borderRadius: Radius.sm,
+    borderRadius: Radius.control,
     padding: Spacing.sm,
   },
   destinationText: {
@@ -272,7 +281,7 @@ const styles = StyleSheet.create({
   card: {
     marginHorizontal: Spacing.md,
     backgroundColor: Colors.surface,
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
     overflow: "hidden",
@@ -303,6 +312,7 @@ const styles = StyleSheet.create({
   entryCalories: {
     fontSize: Typography.base,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
     color: Colors.textSub,
     marginLeft: Spacing.sm,
   },
@@ -318,7 +328,7 @@ const styles = StyleSheet.create({
   },
   confirmBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.md,
+    borderRadius: Radius.control,
     padding: Spacing.md,
     alignItems: "center",
   },
@@ -330,4 +340,5 @@ const styles = StyleSheet.create({
     fontWeight: Typography.semibold,
     color: Colors.bg,
   },
-});
+  }),
+);

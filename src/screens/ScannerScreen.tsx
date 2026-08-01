@@ -13,7 +13,15 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { lookupFood } from "../lib/foodLookup";
-import { Colors, Spacing, Radius, Typography } from "../theme";
+import {
+  Colors,
+  Spacing,
+  Radius,
+  Typography,
+  Overlay,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 import { RootStackParamList } from "../types";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Scanner">;
@@ -352,8 +360,9 @@ function Corner({ position }: { position: CornerPos }) {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#000" },
+const styles = StyleSheet.create(
+  withDefaultFont({
+  root: { flex: 1, backgroundColor: Overlay.black },
 
   // ── Permission screens ───────────────────────────────────────────────────
   permSafe: { flex: 1, backgroundColor: Colors.bg },
@@ -381,7 +390,7 @@ const styles = StyleSheet.create({
   permBtn: {
     marginTop: Spacing.sm,
     backgroundColor: Colors.surface,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: Colors.border,
     paddingHorizontal: Spacing.xl,
@@ -422,12 +431,12 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   closeTxt: {
-    color: "#fff",
+    color: Overlay.white,
     fontSize: Typography.sm,
     fontWeight: Typography.bold,
   },
   topTitle: {
-    color: "#fff",
+    color: Overlay.white,
     fontSize: Typography.base,
     fontWeight: Typography.semibold,
     letterSpacing: 0.1,
@@ -473,7 +482,7 @@ const styles = StyleSheet.create({
   },
   hintCard: {
     backgroundColor: "rgba(0,0,0,0.6)",
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
     paddingHorizontal: Spacing.lg,
@@ -491,7 +500,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: Spacing.sm,
     backgroundColor: "rgba(0,0,0,0.75)",
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: `${Colors.green}30`,
     paddingHorizontal: Spacing.lg,
@@ -499,13 +508,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   statusText: {
-    color: "#fff",
+    color: Overlay.white,
     fontSize: Typography.base,
     fontWeight: Typography.medium,
   },
   errorCard: {
     backgroundColor: "rgba(0,0,0,0.88)",
-    borderRadius: Radius.lg,
+    borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.1)",
     padding: Spacing.lg,
@@ -518,6 +527,7 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.45)",
     fontSize: Typography.xs,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
     letterSpacing: 1.5,
     fontVariant: ["tabular-nums"],
   },
@@ -536,7 +546,7 @@ const styles = StyleSheet.create({
 
   primaryBtn: {
     backgroundColor: Colors.green,
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     paddingHorizontal: Spacing.xl,
     paddingVertical: 12,
     alignSelf: "stretch",
@@ -552,7 +562,7 @@ const styles = StyleSheet.create({
   secondaryBtn: {
     flex: 1,
     backgroundColor: "rgba(255,255,255,0.1)",
-    borderRadius: Radius.full,
+    borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.15)",
     paddingVertical: 10,
@@ -563,4 +573,5 @@ const styles = StyleSheet.create({
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
   },
-});
+  }),
+);

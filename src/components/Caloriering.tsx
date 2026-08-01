@@ -25,7 +25,7 @@
 import React, { useEffect, useRef } from "react";
 import { Animated, StyleSheet, Text, View } from "react-native";
 import Svg, { Circle, Defs, LinearGradient, Stop } from "react-native-svg";
-import { Colors, Typography, Spacing } from "../theme";
+import { Colors, Typography, Spacing, Fonts } from "../theme/tokens";
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
@@ -174,9 +174,10 @@ export function CalorieRing({
         <View style={styles.remainingRow}>
           <View style={[styles.remainingDot, { backgroundColor: arcColor }]} />
           <Text style={styles.remainingText}>
-            {isOver
-              ? `${(total - goal).toLocaleString()} over`
-              : `${remaining.toLocaleString()} remaining`}
+            <Text style={{ fontFamily: Fonts.mono.medium }}>
+              {(isOver ? total - goal : remaining).toLocaleString()}
+            </Text>
+            {isOver ? " over" : " remaining"}
           </Text>
         </View>
 
@@ -184,7 +185,10 @@ export function CalorieRing({
             number IS the plan, so repeating it here would be noise. */}
         {planned > 0 && !isPlanOnly && (
           <Text style={styles.plannedNote}>
-            +{planned.toLocaleString()} planned
+            <Text style={{ fontFamily: Fonts.mono.semibold }}>
+              +{planned.toLocaleString()}
+            </Text>{" "}
+            planned
           </Text>
         )}
       </View>
@@ -205,6 +209,7 @@ const styles = StyleSheet.create({
   heroNumber: {
     fontSize: Typography.hero,
     fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
     color: Colors.text,
     letterSpacing: -2,
     lineHeight: Typography.hero * 1.0,
@@ -218,6 +223,7 @@ const styles = StyleSheet.create({
   heroLabel: {
     fontSize: Typography.sm,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
     color: Colors.textSub,
     marginTop: 2,
     letterSpacing: 0.3,
@@ -237,11 +243,13 @@ const styles = StyleSheet.create({
   remainingText: {
     fontSize: Typography.xs,
     fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
     color: Colors.textMuted,
   },
   plannedNote: {
     fontSize: Typography.xs,
     fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
     color: Colors.textMuted,
     marginTop: 3,
     opacity: 0.8,

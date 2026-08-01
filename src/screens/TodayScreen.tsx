@@ -1,8 +1,16 @@
-import React, { useCallback, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   View,
   Text,
   ScrollView,
+  Animated,
   StyleSheet,
   Alert,
   RefreshControl,
@@ -21,6 +29,7 @@ import { useStore, todayKey } from "../store/useStore";
 import { mealEntryToProduct } from "../lib/foodLookup";
 import { previewBundle } from "../lib/bundles";
 import { roundSalt } from "../lib/macros";
+import { dayHeaderInfo } from "../lib/dayHeader";
 import {
   formatTime,
   formatDayLabel,
@@ -31,7 +40,14 @@ import {
   dateKey,
   addDays,
 } from "../lib/time";
-import { Colors, Spacing, Radius, Typography, Fonts } from "../theme/tokens";
+import {
+  Colors,
+  MacroColor,
+  Spacing,
+  Radius,
+  Typography,
+  Fonts,
+} from "../theme/tokens";
 import {
   RootStackParamList,
   MealEntry,
@@ -58,6 +74,15 @@ const isOverduePending = (e: MealEntry): boolean =>
 const servingLabel = (g: number | null): string =>
   g != null && g > 0 ? `${Math.round(g)}g` : "—";
 
+/** Consumed/goal, clamped to a fillable [0,1] fraction. A zero or unset goal
+ *  reads as empty rather than Infinity/NaN — the sticky strip's a proportion,
+ *  not a warning light. */
+const frac = (consumed: number, goal: number): number =>
+  goal > 0 ? Math.min(consumed / goal, 1) : 0;
+
+/** How far the sticky bar's crossfade runs, in px of scroll. */
+const STICKY_FADE_RANGE = 40;
+
 /** The rail only covers sections a single time can honestly represent. Snacks
  *  has no such time, so it's excluded here and rendered as a plain card below
  *  the rail — this is a fixed slice of MEAL_TYPES, not a re-derived order. */
@@ -81,11 +106,7 @@ export function TodayScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const {
-    goals,
     bundles,
-    getSplitTotalsForDate,
-    getEntriesForMeal,
-    getEntriesForDate,
     getDuePendingEntries,
     confirmEntries,
     skipEntries,
@@ -106,6 +127,55 @@ export function TodayScreen() {
   const [selected, setSelected] = useState(todayKey());
   const [showJump, setShowJump] = useState(false);
 
+  // Ticks once a minute purely so "today" gets RE-EVALUATED across a midnight
+  // boundary even if the screen is left open and untouched — without this,
+  // nothing would ever force a re-render to notice the day changed underneath
+  // it. `now` is never read once and cached; every consumer below re-derives
+  // from this each time it changes.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // ── Day pager ────────────────────────────────────────────────
+  //
+  // A 3-page sliding window — [yesterday, selected, tomorrow] — rather than a
+  // library pager: nothing in this repo already depends on gesture-handler or
+  // reanimated, and adding either means a new dev-client build. Each page is
+  // its own DayPage, keyed on its date, so paging to a new day always mounts
+  // fresh (scroll position and the sticky bar both reset for free — nothing
+  // to manually rewind).
+  //
+  // On landing (onMomentumScrollEnd), `selected` moves to whichever page the
+  // swipe landed on, which shifts the window, and the effect below snaps the
+  // ScrollView straight back to the centre slot — same visual day, new centre
+  // index — so the next swipe always has a page in reserve on both sides.
+  const pagerRef = useRef<ScrollView>(null);
+  const [pagerWidth, setPagerWidth] = useState(0);
+  const pageDates = useMemo(
+    () => [addDays(selected, -1), selected, addDays(selected, 1)],
+    [selected],
+  );
+
+  useLayoutEffect(() => {
+    if (pagerWidth > 0) {
+      pagerRef.current?.scrollTo({ x: pagerWidth, animated: false });
+    }
+  }, [selected, pagerWidth]);
+
+  const handlePagerLayout = (e: any) => {
+    const w = e.nativeEvent.layout.width;
+    if (w > 0 && w !== pagerWidth) setPagerWidth(w);
+  };
+
+  const handlePagerScrollEnd = (e: any) => {
+    if (pagerWidth === 0) return;
+    const page = Math.round(e.nativeEvent.contentOffset.x / pagerWidth);
+    if (page === 1) return; // bounced back to the centre — no day change
+    setSelected(addDays(selected, page - 1));
+  };
+
   // ── Selection mode ──────────────────────────────────────────
   //
   // Long-press USED to fire an immediate delete confirm. It now enters selection
@@ -121,11 +191,8 @@ export function TodayScreen() {
   >(null);
   const [busy, setBusy] = useState(false);
 
-  const today = todayKey();
-  const isToday = selected === today;
-  const isFuture = isFutureDay(selected);
+  const today = dateKey(now);
 
-  const totals = getSplitTotalsForDate(selected);
   const duePending = getDuePendingEntries();
 
   useFocusEffect(
@@ -321,33 +388,276 @@ export function TodayScreen() {
     if (error) Alert.alert("Couldn't set the time", error);
   };
 
-  // Greeting only makes sense on the day you're actually living through.
-  const hour = new Date().getHours();
-  const greeting =
-    hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  return (
+    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+      {showJump && (
+        <DateTimePicker
+          value={parseDateKey(selected)}
+          mode="date"
+          display="default"
+          onChange={onJump}
+        />
+      )}
 
-  const dayLabel = formatDayLabel(selected);
-  const dateStr = parseDateKey(selected).toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  });
+      {sheet === "copy" && (
+        <DateTimePicker
+          value={parseDateKey(selected)}
+          mode="date"
+          display="default"
+          onChange={onCopyDayPicked}
+        />
+      )}
+
+      {sheet === "time" && (
+        <DateTimePicker
+          value={new Date(selectedEntries[0]?.eaten_at ?? Date.now())}
+          mode="time"
+          is24Hour
+          display="default"
+          onChange={onSetTimePicked}
+        />
+      )}
+
+      {/* ── Day pager ──────────────────────────────────────────────
+          A 3-page sliding window, each page its own vertical scroll — see
+          the comment by pageDates above for how the re-centering works. */}
+      <View style={styles.pager} onLayout={handlePagerLayout}>
+        {pagerWidth > 0 && (
+          <ScrollView
+            ref={pagerRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onMomentumScrollEnd={handlePagerScrollEnd}
+          >
+            {pageDates.map((date) => (
+              <DayPage
+                key={date}
+                date={date}
+                today={today}
+                now={now}
+                width={pagerWidth}
+                selecting={selecting}
+                selection={selection}
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                onPress={handlePress}
+                onConfirm={handleConfirmOne}
+                onLongPress={selecting ? toggle : beginSelection}
+                onToggleSelectAll={(entries) => {
+                  const all = entries.map((e) => e.id);
+                  const allSelected = all.every((id) => selection?.has(id));
+                  setSelection(allSelected ? null : new Set(all));
+                }}
+                duePending={duePending}
+                onConfirmAllDue={() =>
+                  confirmEntries(duePending.map((e) => e.id))
+                }
+                onConfirmDue={(id) => confirmEntries([id])}
+                onSkipDue={(id) => skipEntries([id])}
+                hasBundles={bundles.length > 0}
+                onOpenBundles={() => setSheet("apply")}
+                onOpenCalendarJump={() => setShowJump(true)}
+                onReturnToToday={() => setSelected(today)}
+              />
+            ))}
+          </ScrollView>
+        )}
+      </View>
+
+      {/* ── Selection action bar ─────────────────────────── */}
+      {selecting && (
+        <SelectionActionBar
+          count={selectedEntries.length}
+          busy={busy}
+          hasOverduePending={hasOverduePending}
+          onMarkEaten={handleMarkEatenSelected}
+          onSetTime={handleSetTimeSelected}
+          onCopy={() => setSheet("copy")}
+          onBundle={() => setSheet("save")}
+          onDelete={handleDeleteSelected}
+          onCancel={exitSelection}
+        />
+      )}
+
+      {/* ── Apply a bundle ───────────────────────────────── */}
+      <ApplyBundleSheet
+        visible={sheet === "apply"}
+        bundles={bundles}
+        dayKey={selected}
+        onClose={() => setSheet(null)}
+        onApply={async (bundle) => {
+          setBusy(true);
+          const { error } = await applyBundleToDay(bundle, selected);
+          setBusy(false);
+          setSheet(null);
+          if (error) Alert.alert("Couldn't apply that bundle", error);
+        }}
+      />
+
+      {/* ── Save a bundle ────────────────────────────────── */}
+      <SaveBundleSheet
+        visible={sheet === "save"}
+        entries={selectedEntries}
+        bundles={bundles}
+        onClose={() => setSheet(null)}
+        onCreate={async (name) => {
+          setBusy(true);
+          const { error } = await saveBundleFromEntries(name, selectedEntries);
+          setBusy(false);
+          setSheet(null);
+          if (error) Alert.alert("Couldn't save the bundle", error);
+          else exitSelection();
+        }}
+        onAppend={async (bundle) => {
+          setBusy(true);
+          const { error } = await addEntriesToBundle(bundle, selectedEntries);
+          setBusy(false);
+          setSheet(null);
+          if (error) Alert.alert("Couldn't add to that bundle", error);
+          else exitSelection();
+        }}
+      />
+    </SafeAreaView>
+  );
+}
+
+// ─── Day page ───────────────────────────────────────────────────────────────
+//
+// One day's worth of content — banner, ring, macros, rail, snacks — plus its
+// own scroll and its own sticky condensed bar. Three of these are mounted at
+// once (the pager's sliding window) but only the centred one is visible, so
+// each page owning its own scroll/animation state is what makes swiping to a
+// new day "just work": a page is KEYED on its date in the pager above, so a
+// fresh date is a fresh mount — scroll position and the sticky bar's
+// Animated.Value both start over for free, with no manual reset to write.
+//
+// `date` is the page's own day — never `selected`. Every read (totals,
+// entries, isFuture) and every write (AddIngredient's target day) goes
+// through it, so the currently-centred page is the only one that happens to
+// match `selected`; the neighbours are honestly showing a different day.
+
+function DayPage({
+  date,
+  today,
+  now,
+  width,
+  selecting,
+  selection,
+  refreshing,
+  onRefresh,
+  onPress,
+  onConfirm,
+  onLongPress,
+  onToggleSelectAll,
+  duePending,
+  onConfirmAllDue,
+  onConfirmDue,
+  onSkipDue,
+  hasBundles,
+  onOpenBundles,
+  onOpenCalendarJump,
+  onReturnToToday,
+}: {
+  date: string;
+  today: string;
+  now: Date;
+  width: number;
+  selecting: boolean;
+  selection: Set<string> | null;
+  refreshing: boolean;
+  onRefresh: () => void;
+  onPress: (e: MealEntry) => void;
+  onConfirm: (e: MealEntry) => void;
+  onLongPress: (e: MealEntry) => void;
+  onToggleSelectAll: (entries: MealEntry[]) => void;
+  duePending: MealEntry[];
+  onConfirmAllDue: () => void;
+  onConfirmDue: (id: string) => void;
+  onSkipDue: (id: string) => void;
+  hasBundles: boolean;
+  onOpenBundles: () => void;
+  onOpenCalendarJump: () => void;
+  onReturnToToday: () => void;
+}) {
+  const navigation =
+    useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const { goals, getSplitTotalsForDate, getEntriesForMeal, getEntriesForDate } =
+    useStore();
+
+  const isPageToday = date === today;
+  const isFuture = isFutureDay(date);
+  const dayLabel = formatDayLabel(date);
+  const pageHeader = dayHeaderInfo(date, now);
+  // The anchor already carries the weekday when off-today ("Wednesday"), so
+  // this sub-line drops it there to avoid saying it twice; on today the
+  // anchor just says "Today", so the weekday still earns its place here.
+  const dateStr = parseDateKey(date).toLocaleDateString(
+    "en-GB",
+    isPageToday
+      ? { weekday: "long", day: "numeric", month: "long" }
+      : { day: "numeric", month: "long" },
+  );
+
+  const totals = getSplitTotalsForDate(date);
+  const dayEntries = getEntriesForDate(date);
 
   const kcalEaten = Math.round(totals.eaten.calories);
   const kcalPlanned = Math.round(totals.planned.calories);
   const kcalTotal = Math.round(totals.total.calories);
   const over = kcalTotal > goals.calories;
+  const kcalRemaining = Math.abs(goals.calories - kcalTotal);
 
-  const dayEntries = getEntriesForDate(selected);
+  // ── Sticky condensed bar — driven by THIS page's own scroll only ───
+  //
+  // The bar should replace the header+hero stack once BOTH have scrolled out
+  // — the header now lives in-flow above the hero, so the threshold is their
+  // combined height, not the hero's alone. Both default absurdly large (not
+  // 0) so the crossfade's input range is nonsense-high until onLayout
+  // reports the real numbers — otherwise the bar would flash visible for a
+  // frame at scrollY=0 before either is measured.
+  const scrollY = useRef(new Animated.Value(0)).current;
+  const [headerHeight, setHeaderHeight] = useState(9999);
+  const [heroHeight, setHeroHeight] = useState(9999);
+  const stickyThreshold = Math.max(
+    headerHeight + heroHeight - STICKY_FADE_RANGE,
+    0,
+  );
+  const stickyOpacity = scrollY.interpolate({
+    inputRange: [stickyThreshold, stickyThreshold + STICKY_FADE_RANGE],
+    outputRange: [0, 1],
+    extrapolate: "clamp",
+  });
+  const stickyTranslateY = scrollY.interpolate({
+    inputRange: [stickyThreshold, stickyThreshold + STICKY_FADE_RANGE],
+    outputRange: [-8, 0],
+    extrapolate: "clamp",
+  });
+
+  const stripSegments = [
+    { color: MacroColor.protein, fraction: frac(totals.total.protein, goals.protein) },
+    { color: MacroColor.carbs, fraction: frac(totals.total.carbs, goals.carbs) },
+    { color: MacroColor.fat, fraction: frac(totals.total.fat, goals.fat) },
+    { color: MacroColor.satFat, fraction: frac(totals.total.satFat, goals.satFat) },
+    { color: MacroColor.salt, fraction: frac(totals.total.salt, goals.salt) },
+    { color: MacroColor.fibre, fraction: frac(totals.total.fibre, goals.fibre) },
+    { color: MacroColor.sugar, fraction: frac(totals.total.sugar, goals.sugar) },
+  ];
 
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <ScrollView
+    <View style={{ width }}>
+      <Animated.ScrollView
         contentContainerStyle={[
           styles.scroll,
           selecting && { paddingBottom: 160 },
         ]}
         showsVerticalScrollIndicator={false}
+        nestedScrollEnabled
+        scrollEventThrottle={16}
+        onScroll={Animated.event(
+          [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+          { useNativeDriver: true },
+        )}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -357,26 +667,41 @@ export function TodayScreen() {
           />
         }
       >
-        {/* ── Header ─────────────────────────────────────── */}
-        <View style={styles.header}>
-          <Pressable
-            onPress={() => setShowJump(true)}
-            style={({ pressed }) => [
-              styles.headerText,
-              pressed && { opacity: 0.7 },
-            ]}
-            disabled={selecting}
-          >
-            <Text style={styles.greeting}>{isToday ? greeting : dayLabel}</Text>
-            <Text style={styles.date}>
-              {dateStr} <Text style={styles.dateCaret}>▾</Text>
-            </Text>
-          </Pressable>
+        {/* ── Header — scrolls away with the rest of the day's content;
+              the sticky bar below replaces it once it's gone. ─────── */}
+        <View
+          style={styles.header}
+          onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
+        >
+          <View style={styles.headerText}>
+            <Text style={styles.eyebrow}>{pageHeader.eyebrow}</Text>
+            <Text style={styles.anchor}>{pageHeader.anchor}</Text>
+            <View style={styles.dateRow}>
+              <View
+                style={[
+                  styles.statusDot,
+                  isPageToday ? styles.statusDotLive : styles.statusDotMuted,
+                ]}
+              />
+              <Text style={styles.date}>{dateStr}</Text>
+            </View>
+          </View>
 
           <View style={styles.nav}>
-            {bundles.length > 0 && !selecting && (
+            {!isPageToday && (
               <Pressable
-                onPress={() => setSheet("apply")}
+                onPress={onReturnToToday}
+                style={({ pressed }) => [
+                  styles.returnChip,
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={styles.returnChipText}>Return to today</Text>
+              </Pressable>
+            )}
+            {hasBundles && !selecting && (
+              <Pressable
+                onPress={onOpenBundles}
                 hitSlop={8}
                 style={({ pressed }) => [
                   styles.bundleBtn,
@@ -386,69 +711,35 @@ export function TodayScreen() {
                 <Text style={styles.bundleBtnText}>Bundles</Text>
               </Pressable>
             )}
-            <NavBtn
-              label="‹"
-              onPress={() => setSelected(addDays(selected, -1))}
-            />
-            <NavBtn
-              label="›"
-              onPress={() => setSelected(addDays(selected, 1))}
-            />
+            <Pressable
+              onPress={onOpenCalendarJump}
+              hitSlop={8}
+              disabled={selecting}
+              style={({ pressed }) => [
+                styles.calendarBtn,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={styles.calendarBtnText}>📅</Text>
+            </Pressable>
           </View>
         </View>
 
-        {!isToday && (
-          <Pressable
-            style={({ pressed }) => [
-              styles.backToToday,
-              pressed && { opacity: 0.7 },
-            ]}
-            onPress={() => setSelected(today)}
-          >
-            <Text style={styles.backToTodayText}>Back to today</Text>
-          </Pressable>
-        )}
-
-        {showJump && (
-          <DateTimePicker
-            value={parseDateKey(selected)}
-            mode="date"
-            display="default"
-            onChange={onJump}
-          />
-        )}
-
-        {sheet === "copy" && (
-          <DateTimePicker
-            value={parseDateKey(selected)}
-            mode="date"
-            display="default"
-            onChange={onCopyDayPicked}
-          />
-        )}
-
-        {sheet === "time" && (
-          <DateTimePicker
-            value={new Date(selectedEntries[0]?.eaten_at ?? Date.now())}
-            mode="time"
-            is24Hour
-            display="default"
-            onChange={onSetTimePicked}
-          />
-        )}
-
         {/* ── Confirmation banner ─────────────────────────── */}
-        {isToday && !selecting && duePending.length > 0 && (
+        {isPageToday && !selecting && duePending.length > 0 && (
           <ConfirmBanner
             entries={duePending}
-            onConfirmAll={() => confirmEntries(duePending.map((e) => e.id))}
-            onConfirm={(id) => confirmEntries([id])}
-            onSkip={(id) => skipEntries([id])}
+            onConfirmAll={onConfirmAllDue}
+            onConfirm={onConfirmDue}
+            onSkip={onSkipDue}
           />
         )}
 
         {/* ── Calorie ring card ───────────────────────────── */}
-        <View style={styles.ringCard}>
+        <View
+          style={styles.ringCard}
+          onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
+        >
           <CalorieRing
             consumed={kcalEaten}
             planned={kcalPlanned}
@@ -573,11 +864,7 @@ export function TodayScreen() {
               styles.selectAll,
               pressed && { opacity: 0.7 },
             ]}
-            onPress={() => {
-              const all = dayEntries.map((e) => e.id);
-              const allSelected = all.every((id) => selection?.has(id));
-              setSelection(allSelected ? null : new Set(all));
-            }}
+            onPress={() => onToggleSelectAll(dayEntries)}
           >
             <Text style={styles.selectAllText}>
               {dayEntries.every((e) => selection?.has(e.id))
@@ -593,7 +880,7 @@ export function TodayScreen() {
             earliest logged entry, or a blank dash when nothing's logged yet —
             never a fabricated time. */}
         {RAIL_MEAL_TYPES.map((mealType, i) => {
-          const entries = getEntriesForMeal(selected, mealType);
+          const entries = getEntriesForMeal(date, mealType);
           const earliest = earliestEatenAt(entries);
           return (
             <View key={mealType} style={railStyles.item}>
@@ -613,15 +900,15 @@ export function TodayScreen() {
                   isFuture={isFuture}
                   selection={selection}
                   onAdd={() =>
-                    // The SELECTED date, not today. This is the whole feature.
+                    // The page's OWN date, not today. This is the whole feature.
                     navigation.navigate("AddIngredient", {
-                      date: selected,
+                      date,
                       mealType,
                     })
                   }
-                  onPress={handlePress}
-                  onConfirm={handleConfirmOne}
-                  onLongPress={selecting ? toggle : beginSelection}
+                  onPress={onPress}
+                  onConfirm={onConfirm}
+                  onLongPress={onLongPress}
                 />
               </View>
             </View>
@@ -634,91 +921,63 @@ export function TodayScreen() {
             wiring, same loggability. */}
         <MealSection
           mealType="snacks"
-          entries={getEntriesForMeal(selected, "snacks")}
+          entries={getEntriesForMeal(date, "snacks")}
           isFuture={isFuture}
           selection={selection}
           onAdd={() =>
             navigation.navigate("AddIngredient", {
-              date: selected,
+              date,
               mealType: "snacks",
             })
           }
-          onPress={handlePress}
-          onConfirm={handleConfirmOne}
-          onLongPress={selecting ? toggle : beginSelection}
+          onPress={onPress}
+          onConfirm={onConfirm}
+          onLongPress={onLongPress}
         />
 
         <View style={{ height: Spacing.xxl }} />
-      </ScrollView>
+      </Animated.ScrollView>
 
-      {/* ── Selection action bar ─────────────────────────── */}
-      {selecting && (
-        <SelectionActionBar
-          count={selectedEntries.length}
-          busy={busy}
-          hasOverduePending={hasOverduePending}
-          onMarkEaten={handleMarkEatenSelected}
-          onSetTime={handleSetTimeSelected}
-          onCopy={() => setSheet("copy")}
-          onBundle={() => setSheet("save")}
-          onDelete={handleDeleteSelected}
-          onCancel={exitSelection}
-        />
-      )}
+      {/* ── Sticky condensed bar ─────────────────────────── */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.stickyBar,
+          {
+            opacity: stickyOpacity,
+            transform: [{ translateY: stickyTranslateY }],
+          },
+        ]}
+      >
+        <View style={styles.stickyIdentity}>
+          <View
+            style={[
+              styles.statusDot,
+              pageHeader.isToday ? styles.statusDotLive : styles.statusDotMuted,
+            ]}
+          />
+          <Text style={styles.stickyAnchor}>{pageHeader.anchor}</Text>
+        </View>
 
-      {/* ── Apply a bundle ───────────────────────────────── */}
-      <ApplyBundleSheet
-        visible={sheet === "apply"}
-        bundles={bundles}
-        dayKey={selected}
-        onClose={() => setSheet(null)}
-        onApply={async (bundle) => {
-          setBusy(true);
-          const { error } = await applyBundleToDay(bundle, selected);
-          setBusy(false);
-          setSheet(null);
-          if (error) Alert.alert("Couldn't apply that bundle", error);
-        }}
-      />
+        <View style={styles.stickyMacroStrip}>
+          {stripSegments.map(({ color, fraction }, i) => (
+            <View key={i} style={styles.stickyMacroTrack}>
+              <View
+                style={[
+                  styles.stickyMacroFill,
+                  { width: `${fraction * 100}%`, backgroundColor: color },
+                ]}
+              />
+            </View>
+          ))}
+        </View>
 
-      {/* ── Save a bundle ────────────────────────────────── */}
-      <SaveBundleSheet
-        visible={sheet === "save"}
-        entries={selectedEntries}
-        bundles={bundles}
-        onClose={() => setSheet(null)}
-        onCreate={async (name) => {
-          setBusy(true);
-          const { error } = await saveBundleFromEntries(name, selectedEntries);
-          setBusy(false);
-          setSheet(null);
-          if (error) Alert.alert("Couldn't save the bundle", error);
-          else exitSelection();
-        }}
-        onAppend={async (bundle) => {
-          setBusy(true);
-          const { error } = await addEntriesToBundle(bundle, selectedEntries);
-          setBusy(false);
-          setSheet(null);
-          if (error) Alert.alert("Couldn't add to that bundle", error);
-          else exitSelection();
-        }}
-      />
-    </SafeAreaView>
-  );
-}
-
-// ─── Date nav ───────────────────────────────────────────────────────────────
-
-function NavBtn({ label, onPress }: { label: string; onPress: () => void }) {
-  return (
-    <Pressable
-      onPress={onPress}
-      hitSlop={10}
-      style={({ pressed }) => [styles.navBtn, pressed && { opacity: 0.6 }]}
-    >
-      <Text style={styles.navBtnText}>{label}</Text>
-    </Pressable>
+        <Text style={[styles.stickyKcal, over && styles.stickyKcalOver]}>
+          {over ? "-" : ""}
+          {kcalRemaining.toLocaleString()} kcal
+        </Text>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -1958,22 +2217,42 @@ const styles = StyleSheet.create({
   headerText: {
     flex: 1,
   },
-  greeting: {
+  eyebrow: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
+    marginBottom: 2,
+  },
+  anchor: {
     fontSize: Typography.xl,
     fontWeight: Typography.bold,
     fontFamily: Fonts.sans.bold,
     color: Colors.text,
     letterSpacing: -0.5,
   },
+  dateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 5,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  statusDotLive: {
+    backgroundColor: Colors.green,
+  },
+  statusDotMuted: {
+    backgroundColor: Colors.textMuted,
+  },
   date: {
     fontSize: Typography.sm,
     color: Colors.textSub,
-    marginTop: 3,
     fontWeight: Typography.medium,
-    fontFamily: Fonts.sans.medium,
-  },
-  dateCaret: {
-    color: Colors.textMuted,
+    fontFamily: Fonts.mono.medium,
   },
 
   nav: {
@@ -1981,7 +2260,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  navBtn: {
+  calendarBtn: {
     width: 36,
     height: 36,
     alignItems: "center",
@@ -1991,13 +2270,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  navBtnText: {
-    fontSize: 20,
-    lineHeight: 24,
-    marginTop: -2,
-    color: Colors.textSub,
-    fontWeight: Typography.bold,
-    fontFamily: Fonts.sans.bold,
+  calendarBtnText: {
+    fontSize: 16,
   },
   bundleBtn: {
     backgroundColor: Colors.surface,
@@ -2014,23 +2288,76 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans.bold,
     color: Colors.textSub,
   },
-
-  backToToday: {
-    alignSelf: "flex-start",
+  returnChip: {
     backgroundColor: Colors.greenSoft,
     borderRadius: Radius.pill,
     borderWidth: 1,
     borderColor: `${Colors.green}40`,
     paddingHorizontal: 12,
-    paddingVertical: 5,
-    marginBottom: Spacing.md,
-    marginTop: -Spacing.xs,
+    height: 36,
+    justifyContent: "center",
   },
-  backToTodayText: {
+  returnChipText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
     fontFamily: Fonts.sans.bold,
     color: Colors.green,
+  },
+
+  pager: {
+    flex: 1,
+  },
+
+  stickyBar: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    backgroundColor: Colors.surface2,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.borderSub,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+  },
+  stickyIdentity: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  stickyAnchor: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
+    color: Colors.text,
+  },
+  stickyMacroStrip: {
+    flex: 1,
+    flexDirection: "row",
+    gap: 2,
+  },
+  stickyMacroTrack: {
+    flex: 1,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.surface2,
+    overflow: "hidden",
+  },
+  stickyMacroFill: {
+    height: "100%",
+    borderRadius: 2,
+  },
+  stickyKcal: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
+    color: Colors.text,
+    fontVariant: ["tabular-nums"],
+  },
+  stickyKcalOver: {
+    color: Colors.coral,
   },
 
   selectAll: {

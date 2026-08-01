@@ -27,7 +27,7 @@ import { CalorieRing } from "../components/CalorieRing";
 import { MacroBar } from "../components/MacroBar";
 import { useStore, todayKey } from "../store/useStore";
 import { mealEntryToProduct } from "../lib/foodLookup";
-import { previewBundle } from "../lib/bundles";
+import { previewComposition } from "../lib/compositions";
 import { roundSalt } from "../lib/macros";
 import { dayHeaderInfo } from "../lib/dayHeader";
 import {
@@ -39,6 +39,10 @@ import {
   parseDateKey,
   dateKey,
   addDays,
+  parseTimeOfDay,
+  earliestTimeOfDay,
+  TimeOfDay,
+  DEFAULT_HOUR,
 } from "../lib/time";
 import {
   Colors,
@@ -51,7 +55,7 @@ import {
 import {
   RootStackParamList,
   MealEntry,
-  MealBundleWithItems,
+  MealCompositionWithItems,
   MealType,
   MEAL_TYPES,
   MEAL_LABELS,
@@ -106,7 +110,7 @@ export function TodayScreen() {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const {
-    bundles,
+    compositions,
     getDuePendingEntries,
     confirmEntries,
     skipEntries,
@@ -116,9 +120,9 @@ export function TodayScreen() {
     copyEntriesToDay,
     saveBundleFromEntries,
     addEntriesToBundle,
-    applyBundleToDay,
+    applyCompositionToDay,
     fetchEntries,
-    fetchBundles,
+    fetchCompositions,
   } = useStore();
 
   const [refreshing, setRefreshing] = useState(false);
@@ -198,13 +202,13 @@ export function TodayScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchEntries();
-      fetchBundles();
+      fetchCompositions();
     }, []),
   );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([fetchEntries(), fetchBundles()]);
+    await Promise.all([fetchEntries(), fetchCompositions()]);
     setRefreshing(false);
   };
 
@@ -455,7 +459,7 @@ export function TodayScreen() {
                 }
                 onConfirmDue={(id) => confirmEntries([id])}
                 onSkipDue={(id) => skipEntries([id])}
-                hasBundles={bundles.length > 0}
+                hasBundles={compositions.length > 0}
                 onOpenBundles={() => setSheet("apply")}
                 onOpenCalendarJump={() => setShowJump(true)}
                 onReturnToToday={() => setSelected(today)}
@@ -483,12 +487,12 @@ export function TodayScreen() {
       {/* ── Apply a bundle ───────────────────────────────── */}
       <ApplyBundleSheet
         visible={sheet === "apply"}
-        bundles={bundles}
+        bundles={compositions}
         dayKey={selected}
         onClose={() => setSheet(null)}
-        onApply={async (bundle) => {
+        onApply={async (bundle, anchor) => {
           setBusy(true);
-          const { error } = await applyBundleToDay(bundle, selected);
+          const { error } = await applyCompositionToDay(bundle, selected, anchor);
           setBusy(false);
           setSheet(null);
           if (error) Alert.alert("Couldn't apply that bundle", error);
@@ -499,7 +503,7 @@ export function TodayScreen() {
       <SaveBundleSheet
         visible={sheet === "save"}
         entries={selectedEntries}
-        bundles={bundles}
+        bundles={compositions}
         onClose={() => setSheet(null)}
         onCreate={async (name) => {
           setBusy(true);
@@ -1204,15 +1208,38 @@ function ApplyBundleSheet({
   onApply,
 }: {
   visible: boolean;
-  bundles: MealBundleWithItems[];
+  bundles: MealCompositionWithItems[];
   dayKey: string;
   onClose: () => void;
-  onApply: (bundle: MealBundleWithItems) => void;
+  onApply: (bundle: MealCompositionWithItems, anchor: TimeOfDay) => void;
 }) {
-  const { renameBundle, removeBundle, removeBundleItem } = useStore();
+  const { renameComposition, removeComposition, removeCompositionItem } =
+    useStore();
   const [expanded, setExpanded] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
+
+  // ── Apply-time picker ───────────────────────────────────────
+  //
+  // Tapping Add doesn't apply immediately — it opens a native time picker,
+  // defaulted to the bundle's own saved earliest item time (so "apply at the
+  // usual time" is one confirmation, not a full time entry). The picked time
+  // becomes the anchor every item shifts against; see anchorTimesOfDay in
+  // lib/time.ts and draftsFromComposition in lib/compositions.ts for the
+  // offset math and why it stays DST-safe / same-day.
+  const [pickingTimeFor, setPickingTimeFor] =
+    useState<MealCompositionWithItems | null>(null);
+  const [pickerSeed, setPickerSeed] = useState(new Date());
+
+  const openTimePicker = (bundle: MealCompositionWithItems) => {
+    const earliest =
+      earliestTimeOfDay(bundle.items.map((i) => parseTimeOfDay(i.eaten_time))) ??
+      { hours: DEFAULT_HOUR.breakfast, minutes: 0 };
+    const seed = new Date();
+    seed.setHours(earliest.hours, earliest.minutes, 0, 0);
+    setPickerSeed(seed);
+    setPickingTimeFor(bundle);
+  };
 
   const dayLabel = formatDayLabel(dayKey);
 
@@ -1220,18 +1247,18 @@ function ApplyBundleSheet({
     const name = draftName.trim();
     setRenaming(null);
     if (!name) return;
-    const { error } = await renameBundle(bundleId, name);
+    const { error } = await renameComposition(bundleId, name);
     if (error) Alert.alert("Couldn't rename that", error);
   };
 
-  const confirmDeleteBundle = (bundle: MealBundleWithItems) => {
+  const confirmDeleteBundle = (bundle: MealCompositionWithItems) => {
     Alert.alert("Delete bundle", `Delete "${bundle.name}"?`, [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
-          const { error } = await removeBundle(bundle.id);
+          const { error } = await removeComposition(bundle.id);
           if (error) Alert.alert("Couldn't delete that", error);
         },
       },
@@ -1261,7 +1288,7 @@ function ApplyBundleSheet({
           )}
 
           {bundles.map((bundle) => {
-            const preview = previewBundle(bundle, dayKey);
+            const preview = previewComposition(bundle, dayKey);
             const kcal = Math.round(
               bundle.items.reduce((s, i) => s + i.calories, 0),
             );
@@ -1304,7 +1331,7 @@ function ApplyBundleSheet({
                       sheetStyles.applyBtn,
                       pressed && { opacity: 0.8 },
                     ]}
-                    onPress={() => onApply(bundle)}
+                    onPress={() => openTimePicker(bundle)}
                   >
                     <Text style={sheetStyles.applyBtnText}>Add</Text>
                   </Pressable>
@@ -1348,7 +1375,7 @@ function ApplyBundleSheet({
                         <Pressable
                           hitSlop={8}
                           onPress={async () => {
-                            const { error } = await removeBundleItem(
+                            const { error } = await removeCompositionItem(
                               bundle.id,
                               item.id,
                             );
@@ -1389,6 +1416,24 @@ function ApplyBundleSheet({
           <Text style={sheetStyles.closeText}>Close</Text>
         </Pressable>
       </View>
+
+      {pickingTimeFor && (
+        <DateTimePicker
+          value={pickerSeed}
+          mode="time"
+          is24Hour
+          display="default"
+          onChange={(event: any, picked?: Date) => {
+            const bundle = pickingTimeFor;
+            setPickingTimeFor(null);
+            if (event?.type === "dismissed" || !picked || !bundle) return;
+            onApply(bundle, {
+              hours: picked.getHours(),
+              minutes: picked.getMinutes(),
+            });
+          }}
+        />
+      )}
     </Modal>
   );
 }
@@ -1405,10 +1450,10 @@ function SaveBundleSheet({
 }: {
   visible: boolean;
   entries: MealEntry[];
-  bundles: MealBundleWithItems[];
+  bundles: MealCompositionWithItems[];
   onClose: () => void;
   onCreate: (name: string) => void;
-  onAppend: (bundle: MealBundleWithItems) => void;
+  onAppend: (bundle: MealCompositionWithItems) => void;
 }) {
   const [name, setName] = useState("");
   const n = entries.length;

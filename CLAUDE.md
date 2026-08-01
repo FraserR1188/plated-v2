@@ -78,3 +78,5 @@ These are the source of most historical bugs. Each one is an invariant, not a pr
 ## Local identifiers (do NOT commit real values here if this repo is public)
 
 Keep the test auth user ID, WHOOP user ID, Supabase project ref, and EAS project ID in a gitignored local notes file rather than in this committed file if the repo is or may become public. Reference them from there.
+
+Dev-client startup order (Windows + USB): plug in Pixel → adb devices must read device (not unauthorized/offline) → adb reverse tcp:8081 tcp:8081 → npx expo start --dev-client --localhost → then open the app. The adb reverse resets on every replug and every Metro restart — rerun it. --localhost forces Metro to advertise localhost so the dev client uses the cable rather than a Wi-Fi IP (a SocketTimeoutException to a 192.168.x.x address means this wasn't set). A native/Kotlin crash stack (DevLauncher, okhttp, MainActivity) is a connection/build problem, not a JS error — JS errors show a red-screen with a component stack instead.

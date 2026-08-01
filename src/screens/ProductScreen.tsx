@@ -245,7 +245,7 @@ export function ProductScreen() {
     // that this is here.
     //
     // (This is also why createBundleFromEntries snapshots MealEntry →
-    // meal_bundle_items directly and never routes through FoodProduct.)
+    // meal_composition_items directly and never routes through FoodProduct.)
     const macros = {
       serving_g: g,
       calories: product.cal_per100 * f,

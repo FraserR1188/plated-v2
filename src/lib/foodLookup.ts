@@ -74,7 +74,7 @@ export function customFoodToProduct(cf: CustomFood): FoodProduct {
  * every edit, and ProductScreen.handleSubmit rebuilds ALL macros from the
  * product even when only the time changed.
  *
- * Which is why bundles snapshot MealEntry → meal_bundle_items DIRECTLY and
+ * Which is why bundles snapshot MealEntry → meal_composition_items DIRECTLY and
  * never come through here. If you find yourself routing a bundle through
  * FoodProduct, stop.
  */

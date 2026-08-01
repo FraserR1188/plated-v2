@@ -2,16 +2,16 @@ import { create } from "zustand";
 import { supabase } from "../lib/supabase";
 import {
   MealEntry,
-  MealBundleWithItems,
+  MealCompositionWithItems,
   SavedIngredient,
   Goals,
   DayTotals,
   MealType,
   FoodProduct,
 } from "../types";
-import { dateKey } from "../lib/time";
+import { dateKey, TimeOfDay } from "../lib/time";
 import { applyEntries, draftsFromDay } from "../lib/entries";
-import * as bundleApi from "../lib/bundles";
+import * as compositionApi from "../lib/compositions";
 
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
@@ -79,7 +79,7 @@ export interface WriteResult {
 interface AppState {
   userId: string | null;
   entries: MealEntry[];
-  bundles: MealBundleWithItems[];
+  compositions: MealCompositionWithItems[];
   savedIngredients: SavedIngredient[];
   goals: Goals;
   loading: boolean;
@@ -89,7 +89,7 @@ interface AppState {
   fetchEntries: () => Promise<void>;
   fetchGoals: () => Promise<void>;
   fetchSavedIngredients: () => Promise<void>;
-  fetchBundles: () => Promise<void>;
+  fetchCompositions: () => Promise<void>;
 
   /**
    * `planned`, `confirmed_at` and `skipped_at` are omitted on purpose: the DB
@@ -148,16 +148,21 @@ interface AppState {
   ) => Promise<WriteResult>;
   /** "Add these to an existing bundle." Why there is no bundle editor screen. */
   addEntriesToBundle: (
-    bundle: MealBundleWithItems,
+    composition: MealCompositionWithItems,
     entries: MealEntry[],
   ) => Promise<WriteResult>;
-  applyBundleToDay: (
-    bundle: MealBundleWithItems,
+  /** `anchor`, if given, re-times the whole bundle — see draftsFromComposition. */
+  applyCompositionToDay: (
+    composition: MealCompositionWithItems,
     targetDayKey: string,
+    anchor?: TimeOfDay,
   ) => Promise<WriteResult>;
-  renameBundle: (bundleId: string, name: string) => Promise<WriteResult>;
-  removeBundleItem: (bundleId: string, itemId: string) => Promise<WriteResult>;
-  removeBundle: (bundleId: string) => Promise<WriteResult>;
+  renameComposition: (compositionId: string, name: string) => Promise<WriteResult>;
+  removeCompositionItem: (
+    compositionId: string,
+    itemId: string,
+  ) => Promise<WriteResult>;
+  removeComposition: (compositionId: string) => Promise<WriteResult>;
 
   saveIngredient: (product: FoodProduct) => Promise<SavedIngredient | null>;
   deleteIngredient: (id: string) => Promise<void>;
@@ -242,7 +247,7 @@ const msg = (e: unknown, fallback: string): string =>
 export const useStore = create<AppState>((set, get) => ({
   userId: null,
   entries: [],
-  bundles: [],
+  compositions: [],
   savedIngredients: [],
   goals: DEFAULT_GOALS,
   loading: false,
@@ -254,7 +259,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       userId: null,
       entries: [],
-      bundles: [],
+      compositions: [],
       savedIngredients: [],
       goals: DEFAULT_GOALS,
       loading: false,
@@ -285,13 +290,13 @@ export const useStore = create<AppState>((set, get) => ({
     set({ loading: false });
   },
 
-  fetchBundles: async () => {
+  fetchCompositions: async () => {
     const { userId } = get();
     if (!userId) return;
     try {
-      set({ bundles: await bundleApi.getBundles() });
+      set({ compositions: await compositionApi.getCompositions() });
     } catch (e) {
-      console.warn("fetchBundles:", msg(e, "unknown"));
+      console.warn("fetchCompositions:", msg(e, "unknown"));
     }
   },
 
@@ -625,27 +630,33 @@ export const useStore = create<AppState>((set, get) => ({
 
   saveBundleFromEntries: async (name, entries) => {
     try {
-      const bundle = await bundleApi.createBundleFromEntries(name, entries);
-      set((s) => ({ bundles: [bundle, ...s.bundles] }));
+      const composition = await compositionApi.createBundleFromEntries(
+        name,
+        entries,
+      );
+      set((s) => ({ compositions: [composition, ...s.compositions] }));
       return { error: null };
     } catch (e) {
       return { error: msg(e, "Couldn't save the bundle.") };
     }
   },
 
-  addEntriesToBundle: async (bundle, entries) => {
+  addEntriesToBundle: async (composition, entries) => {
     try {
-      const items = await bundleApi.appendEntriesToBundle(bundle, entries);
+      const items = await compositionApi.appendEntriesToBundle(
+        composition,
+        entries,
+      );
       set((s) => ({
-        bundles: s.bundles.map((b) =>
-          b.id === bundle.id
+        compositions: s.compositions.map((c) =>
+          c.id === composition.id
             ? {
-                ...b,
-                items: [...b.items, ...items].sort(
+                ...c,
+                items: [...c.items, ...items].sort(
                   (a, z) => a.position - z.position,
                 ),
               }
-            : b,
+            : c,
         ),
       }));
       return { error: null };
@@ -654,22 +665,26 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  applyBundleToDay: async (bundle, targetDayKey) => {
+  applyCompositionToDay: async (composition, targetDayKey, anchor) => {
     try {
-      const inserted = await bundleApi.applyBundle(bundle, targetDayKey);
+      const inserted = await compositionApi.applyComposition(
+        composition,
+        targetDayKey,
+        anchor,
+      );
       set((s) => ({
         entries: [...inserted, ...s.entries],
         // Mirror the RPC's effect locally so the list re-sorts immediately,
         // rather than jumping around on the next fetch.
-        bundles: s.bundles
-          .map((b) =>
-            b.id === bundle.id
+        compositions: s.compositions
+          .map((c) =>
+            c.id === composition.id
               ? {
-                  ...b,
-                  use_count: b.use_count + 1,
+                  ...c,
+                  use_count: c.use_count + 1,
                   last_used_at: new Date().toISOString(),
                 }
-              : b,
+              : c,
           )
           .sort((a, z) => {
             const al = a.last_used_at ?? "";
@@ -684,12 +699,15 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  renameBundle: async (bundleId, name) => {
+  renameComposition: async (compositionId, name) => {
     try {
-      const updated = await bundleApi.renameBundle(bundleId, name);
+      const updated = await compositionApi.renameComposition(
+        compositionId,
+        name,
+      );
       set((s) => ({
-        bundles: s.bundles.map((b) =>
-          b.id === bundleId ? { ...b, name: updated.name } : b,
+        compositions: s.compositions.map((c) =>
+          c.id === compositionId ? { ...c, name: updated.name } : c,
         ),
       }));
       return { error: null };
@@ -698,14 +716,14 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  removeBundleItem: async (bundleId, itemId) => {
+  removeCompositionItem: async (compositionId, itemId) => {
     try {
-      await bundleApi.deleteBundleItem(itemId);
+      await compositionApi.deleteCompositionItem(itemId);
       set((s) => ({
-        bundles: s.bundles.map((b) =>
-          b.id === bundleId
-            ? { ...b, items: b.items.filter((i) => i.id !== itemId) }
-            : b,
+        compositions: s.compositions.map((c) =>
+          c.id === compositionId
+            ? { ...c, items: c.items.filter((i) => i.id !== itemId) }
+            : c,
         ),
       }));
       return { error: null };
@@ -714,10 +732,12 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  removeBundle: async (bundleId) => {
+  removeComposition: async (compositionId) => {
     try {
-      await bundleApi.deleteBundle(bundleId);
-      set((s) => ({ bundles: s.bundles.filter((b) => b.id !== bundleId) }));
+      await compositionApi.deleteComposition(compositionId);
+      set((s) => ({
+        compositions: s.compositions.filter((c) => c.id !== compositionId),
+      }));
       return { error: null };
     } catch (e) {
       return { error: msg(e, "Couldn't delete that bundle.") };
@@ -757,9 +777,9 @@ export const useStore = create<AppState>((set, get) => ({
     if (existing) {
       // ⚠ READ-MODIFY-WRITE off LOCAL state. Two devices logging the same food
       // in the same minute lose an increment. Left as-is because it only affects
-      // list ORDER, but note that meal_bundles deliberately does NOT do this —
-      // it calls the atomic bump_bundle_use() RPC instead. If saved_ingredients
-      // ever gets an RPC of its own, use it.
+      // list ORDER, but note that meal_compositions deliberately does NOT do
+      // this — it calls the atomic bump_composition_use() RPC instead. If
+      // saved_ingredients ever gets an RPC of its own, use it.
       await supabase
         .from("saved_ingredients")
         .update({ use_count: existing.use_count + 1 })

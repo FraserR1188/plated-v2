@@ -258,7 +258,7 @@ export interface EntryDraft {
 
   /**
    * ⚠ image_path and custom_food_id are CARRIED by draftsFromDay and
-   * draftsFromBundle, and DROPPED by draftsFromFeedEntry.
+   * draftsFromComposition, and DROPPED by draftsFromFeedEntry.
    *
    * This is not an inconsistency to clean up. It falls out of storage RLS:
    * a bundle is YOUR food, so the private-bucket path is under YOUR folder and
@@ -273,10 +273,14 @@ export interface EntryDraft {
   custom_food_id: string | null;
 }
 
-// ─── D4: bundles ─────────────────────────────────────────────
+// ─── D4: compositions (bundles today; bundle OR batch from migration 2) ──
 
-/** Mirrors public.meal_bundles (migration 5). */
-export interface MealBundle {
+/**
+ * Mirrors public.meal_compositions (migration 5, renamed from meal_bundles by
+ * the Batches feature's migration 1 — see that migration's comment for why
+ * the rename is split from adding `kind`/batch columns).
+ */
+export interface MealComposition {
   id: string;
   user_id: string;
   name: string;
@@ -284,9 +288,9 @@ export interface MealBundle {
   /**
    * Ordering. use_count ALONE ossifies — January's bundle sits at the top
    * forever — so the list sorts by last_used_at first. Both are bumped
-   * atomically by the bump_bundle_use() RPC, never read-modify-written from
-   * local state the way saved_ingredients does it (that pattern silently loses
-   * increments across two devices).
+   * atomically by the bump_composition_use() RPC, never read-modify-written
+   * from local state the way saved_ingredients does it (that pattern silently
+   * loses increments across two devices).
    */
   use_count: number;
   last_used_at: string | null;
@@ -298,16 +302,17 @@ export interface MealBundle {
 }
 
 /**
- * Mirrors public.meal_bundle_items (migration 5).
+ * Mirrors public.meal_composition_items (migration 5, renamed from
+ * meal_bundle_items — see meal_compositions above).
  *
  * SNAPSHOT, not a reference. Consistent with meal_entries. An OFF product's
  * values change under you; a custom food gets edited or deleted. A reference
  * rots; a snapshot cannot. Accepted cost: editing your "usual porridge" custom
  * food does NOT update the bundle that contains it.
  */
-export interface MealBundleItem {
+export interface MealCompositionItem {
   id: string;
-  bundle_id: string;
+  composition_id: string;
   user_id: string; // denormalised for RLS
   position: number;
 
@@ -347,15 +352,15 @@ export interface MealBundleItem {
   custom_food_id: string | null;
 }
 
-/** What getBundles() returns: the bundle with its items, ordered by position. */
-export interface MealBundleWithItems extends MealBundle {
-  items: MealBundleItem[];
+/** What getCompositions() returns: the composition with its items, ordered by position. */
+export interface MealCompositionWithItems extends MealComposition {
+  items: MealCompositionItem[];
 }
 
 /** A new item, before the DB has given it an id or a parent. */
-export type MealBundleItemDraft = Omit<
-  MealBundleItem,
-  "id" | "bundle_id" | "user_id"
+export type MealCompositionItemDraft = Omit<
+  MealCompositionItem,
+  "id" | "composition_id" | "user_id"
 >;
 
 // ─── Saved ingredients ───────────────────────────────────────

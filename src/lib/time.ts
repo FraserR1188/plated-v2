@@ -224,7 +224,7 @@ export const DEFAULT_HOUR: Record<MealType, number> = {
   snacks: 15,
 };
 
-/** A local wall clock with no day attached. What meal_bundle_items.eaten_time is. */
+/** A local wall clock with no day attached. What meal_composition_items.eaten_time is. */
 export interface TimeOfDay {
   hours: number;
   minutes: number;
@@ -240,6 +240,35 @@ export interface TimeOfDay {
 export function localHM(iso: string): TimeOfDay {
   const d = new Date(iso);
   return { hours: d.getHours(), minutes: d.getMinutes() };
+}
+
+/**
+ * The inverse of DEFAULT_HOUR: given a real time, which section does it
+ * belong in by default?
+ *
+ *   00:00–12:00  Breakfast   (noon exactly is Breakfast, not Lunch)
+ *   12:01–17:00  Lunch
+ *   17:01–23:59  Dinner
+ *
+ * NEVER returns Snacks — there is no time-of-day signal for "this was a
+ * snack", and guessing one would be a worse default than not defaulting at
+ * all. Snacks is only ever set manually.
+ *
+ * ⚠ A DEFAULT AT CREATION, NOT A RE-DERIVATION. This is called ONLY at the
+ * moment a NEW meal_entries row is about to be created and no section was
+ * otherwise chosen for it. It must never run on an existing row's update path
+ * (retimeEntries, ProductScreen's edit flow) — moving an already-logged
+ * meal's time must not silently relabel its section, and a manually-chosen
+ * section (including Snacks) must never be overridden by this. There is
+ * exactly one call site that matters: a creation path with no explicit
+ * section falls through to this; a path WITH one never calls it at all.
+ */
+export function sectionForTime(eatenAtIso: string): MealType {
+  const { hours, minutes } = localHM(eatenAtIso);
+  const m = hours * 60 + minutes;
+  if (m <= 12 * 60) return "breakfast";
+  if (m <= 17 * 60) return "lunch";
+  return "dinner";
 }
 
 /**
@@ -285,4 +314,63 @@ export function formatTimeOfDay({ hours, minutes }: TimeOfDay): string {
  */
 export function sameTimeOnDay(t: TimeOfDay, dayKey: string): string {
   return resolveEatenAt(t.hours, t.minutes, parseDateKey(dayKey));
+}
+
+// ============================================================
+// Bundle-apply anchor — re-time a whole bundle at once, preserving spacing
+// ============================================================
+
+/**
+ * The earliest of a set of wall-clock times, or null for an empty set.
+ *
+ * Used to seed the apply-time picker with "the bundle's usual start time",
+ * so applying at the usual time is one confirmation, not a full time entry.
+ */
+export function earliestTimeOfDay(times: TimeOfDay[]): TimeOfDay | null {
+  if (times.length === 0) return null;
+  const toMinutes = (t: TimeOfDay) => t.hours * 60 + t.minutes;
+  return times.reduce((min, t) => (toMinutes(t) < toMinutes(min) ? t : min));
+}
+
+/**
+ * Shift every time by the same offset from the EARLIEST one, so the earliest
+ * lands on `anchor` and the rest keep their spacing relative to it.
+ *
+ * [08:00, 08:05, 08:20] anchored at 07:00 → [07:00, 07:05, 07:20]. Offsets are
+ * computed as whole minutes-of-day (hours*60+minutes) — never a Date, never
+ * milliseconds. There is nothing here for DST to get wrong, because nothing
+ * here touches a calendar day at all; that only happens later, when the
+ * caller resolves each shifted time via sameTimeOnDay() onto an explicit
+ * target day (which is also where resolveEatenAt's roll-back heuristic gets
+ * bypassed, automatically, by that call already passing a day).
+ *
+ * ⚠ WRAPS AT 24H, ON PURPOSE, RATHER THAN ROLLING INTO A NEW DAY.
+ *
+ * This function has no day to roll into — it only ever returns an
+ * {hours, minutes} in [0, 1440) minutes. If shifting pushes a time past
+ * midnight, it wraps around to early the SAME day rather than "spilling"
+ * onto a next-day date the caller never asked for. This is a deliberate
+ * design decision, not an accident of the modulo: every item in a bundle is
+ * pinned to the SAME explicit target day by draftsFromComposition, and a
+ * midnight-crossing bundle (e.g. a very late anchor pushing a late item past
+ * 24:00) is not preserved across that boundary. It lands early on the same
+ * target day instead. Bundles are a same-day feature; if that stops being
+ * true, this is the function that needs to change, not the caller working
+ * around it.
+ */
+export function anchorTimesOfDay(
+  times: TimeOfDay[],
+  anchor: TimeOfDay,
+): TimeOfDay[] {
+  if (times.length === 0) return [];
+
+  const toMinutes = (t: TimeOfDay) => t.hours * 60 + t.minutes;
+  const earliest = Math.min(...times.map(toMinutes));
+  const anchorMinutes = toMinutes(anchor);
+
+  return times.map((t) => {
+    const offset = toMinutes(t) - earliest;
+    const shifted = (((anchorMinutes + offset) % 1440) + 1440) % 1440;
+    return { hours: Math.floor(shifted / 60), minutes: shifted % 60 };
+  });
 }

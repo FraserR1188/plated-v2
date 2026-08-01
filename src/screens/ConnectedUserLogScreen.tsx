@@ -4,9 +4,12 @@
 // Shows a connected user's log for a given date.
 // Viewer can copy individual ingredients, full meal sections,
 // or the entire day into their own log.
+//
+// ⚠ todayKey() below is the VIEWER's own local "today" — the target day for
+// a copy — and must not be confused with `date` from route params, which is
+// the FRIEND's log date being viewed (see the `route.params` destructure
+// further down). Two different days, same screen.
 // ============================================================
-
-const todayKey = () => new Date().toISOString().split("T")[0];
 
 import React, {
   useState,
@@ -39,6 +42,8 @@ import {
   withDefaultFont,
 } from "../theme/tokens";
 import { getEntriesForUser, followUser, unfollowUser } from "../lib/social";
+import { sectionForTime } from "../lib/time";
+import { todayKey } from "../store/useStore";
 import {
   RootStackParamList,
   MealEntry,
@@ -300,10 +305,19 @@ export function ConnectedUserLogScreen() {
   const handleCopyIngredient = useCallback(
     (entry: MealEntry) => {
       const product = entryToProduct(entry);
+      // ⚠ NOT entry.meal_type. That was inheriting the FRIEND's section as
+      // this copy's target — exactly the bug class CLAUDE.md's architecture
+      // invariants call out ("never inherit date or section from a source
+      // entry"). ProductScreen has no meal-type control (checked — the old
+      // comment here claiming "user can change on Product screen" was false),
+      // so whatever is passed here is final. This screen lands the copy at
+      // eaten_at = now (ProductScreen seeds "now" for date: todayKey()), so
+      // sectionForTime(now) is the correct default: a fresh section derived
+      // from THIS copy's own time, not borrowed from the source.
       navigation.navigate("Product", {
         product,
         date: todayKey(),
-        mealType: entry.meal_type, // default to same meal — user can change on Product screen
+        mealType: sectionForTime(new Date().toISOString()),
       });
     },
     [navigation],

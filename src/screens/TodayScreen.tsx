@@ -24,6 +24,8 @@ import { roundSalt } from "../lib/macros";
 import {
   formatTime,
   formatDayLabel,
+  formatTimeOfDay,
+  localHM,
   isFutureDay,
   parseDateKey,
   dateKey,
@@ -55,6 +57,25 @@ const isOverduePending = (e: MealEntry): boolean =>
 /** serving_g is nullable in the DB. Math.round(null) is 0, which renders "0g". */
 const servingLabel = (g: number | null): string =>
   g != null && g > 0 ? `${Math.round(g)}g` : "—";
+
+/** The rail only covers sections a single time can honestly represent. Snacks
+ *  has no such time, so it's excluded here and rendered as a plain card below
+ *  the rail — this is a fixed slice of MEAL_TYPES, not a re-derived order. */
+const RAIL_MEAL_TYPES = MEAL_TYPES.filter((t) => t !== "snacks");
+
+/** Earliest logged entry in a section, or null when the section is empty.
+ *  Compared by getTime(), not by string, since eaten_at's string formatting
+ *  isn't guaranteed uniform across rows. This is the rail's time label — never
+ *  a fabricated anchor. Purely presentational; does not affect entry order
+ *  within the section. */
+const earliestEatenAt = (entries: MealEntry[]): string | null =>
+  entries.length === 0
+    ? null
+    : entries.reduce((min, e) =>
+        new Date(e.eaten_at).getTime() < new Date(min.eaten_at).getTime()
+          ? e
+          : min,
+      ).eaten_at;
 
 export function TodayScreen() {
   const navigation =
@@ -474,49 +495,74 @@ export function TodayScreen() {
         {/* Macro bars measure against GOALS, and a plan counts toward a goal —
             dropping tomorrow's protein off tomorrow's screen makes planning
             pointless. So these use `total`, not `eaten`. The correlation is the
-            one place a plan is not evidence, and it has its own gate. */}
+            one place a plan is not evidence, and it has its own gate.
+
+            Compact 2-column grid: same MacroBar component, its existing
+            `compact` prop (previously unused). Salt is alone on the last row —
+            given full width rather than stranded next to empty space. */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Macronutrients</Text>
-          <View style={styles.macroList}>
-            <MacroBar
-              macro="protein"
-              consumed={Math.round(totals.total.protein)}
-              goal={goals.protein}
-            />
-            <MacroBar
-              macro="carbs"
-              consumed={Math.round(totals.total.carbs)}
-              goal={goals.carbs}
-            />
-            <MacroBar
-              macro="fat"
-              consumed={Math.round(totals.total.fat)}
-              goal={goals.fat}
-            />
-            <MacroBar
-              macro="satFat"
-              label="Sat fat"
-              consumed={Math.round(totals.total.satFat)}
-              goal={goals.satFat}
-            />
-            <MacroBar
-              macro="fibre"
-              consumed={Math.round(totals.total.fibre)}
-              goal={goals.fibre}
-            />
-            <MacroBar
-              macro="sugar"
-              consumed={Math.round(totals.total.sugar)}
-              goal={goals.sugar}
-            />
+          <View style={styles.macroGrid}>
+            <View style={styles.macroCol}>
+              <MacroBar
+                compact
+                macro="protein"
+                consumed={Math.round(totals.total.protein)}
+                goal={goals.protein}
+              />
+            </View>
+            <View style={styles.macroCol}>
+              <MacroBar
+                compact
+                macro="carbs"
+                consumed={Math.round(totals.total.carbs)}
+                goal={goals.carbs}
+              />
+            </View>
+            <View style={styles.macroCol}>
+              <MacroBar
+                compact
+                macro="fat"
+                consumed={Math.round(totals.total.fat)}
+                goal={goals.fat}
+              />
+            </View>
+            <View style={styles.macroCol}>
+              <MacroBar
+                compact
+                macro="satFat"
+                label="Sat fat"
+                consumed={Math.round(totals.total.satFat)}
+                goal={goals.satFat}
+              />
+            </View>
+            <View style={styles.macroCol}>
+              <MacroBar
+                compact
+                macro="fibre"
+                consumed={Math.round(totals.total.fibre)}
+                goal={goals.fibre}
+              />
+            </View>
+            <View style={styles.macroCol}>
+              <MacroBar
+                compact
+                macro="sugar"
+                consumed={Math.round(totals.total.sugar)}
+                goal={goals.sugar}
+              />
+            </View>
             {/* Salt is the one sub-gram macro: rounded to 2dp, not to a whole
                 number, or a real 0.47g day would read as "0g". */}
-            <MacroBar
-              macro="salt"
-              consumed={roundSalt(totals.total.salt)}
-              goal={goals.salt}
-              unit="g"
-            />
+            <View style={styles.macroColFull}>
+              <MacroBar
+                compact
+                macro="salt"
+                consumed={roundSalt(totals.total.salt)}
+                goal={goals.salt}
+                unit="g"
+              />
+            </View>
           </View>
         </View>
 
@@ -541,23 +587,66 @@ export function TodayScreen() {
           </Pressable>
         )}
 
-        {/* ── Meal sections ───────────────────────────────── */}
-        {MEAL_TYPES.map((mealType) => (
-          <MealSection
-            key={mealType}
-            mealType={mealType}
-            entries={getEntriesForMeal(selected, mealType)}
-            isFuture={isFuture}
-            selection={selection}
-            onAdd={() =>
-              // The SELECTED date, not today. This is the whole feature.
-              navigation.navigate("AddIngredient", { date: selected, mealType })
-            }
-            onPress={handlePress}
-            onConfirm={handleConfirmOne}
-            onLongPress={selecting ? toggle : beginSelection}
-          />
-        ))}
+        {/* ── Meal time-rail ───────────────────────────────── */}
+        {/* Breakfast/Lunch/Dinner only — fixed order (RAIL_MEAL_TYPES above),
+            never sorted by entry time. Each label is that section's own
+            earliest logged entry, or a blank dash when nothing's logged yet —
+            never a fabricated time. */}
+        {RAIL_MEAL_TYPES.map((mealType, i) => {
+          const entries = getEntriesForMeal(selected, mealType);
+          const earliest = earliestEatenAt(entries);
+          return (
+            <View key={mealType} style={railStyles.item}>
+              <View style={railStyles.gutter}>
+                <Text style={railStyles.time}>
+                  {earliest ? formatTimeOfDay(localHM(earliest)) : "–"}
+                </Text>
+                <View style={railStyles.dot} />
+                {i < RAIL_MEAL_TYPES.length - 1 && (
+                  <View style={railStyles.line} />
+                )}
+              </View>
+              <View style={railStyles.cardWrap}>
+                <MealSection
+                  mealType={mealType}
+                  entries={entries}
+                  isFuture={isFuture}
+                  selection={selection}
+                  onAdd={() =>
+                    // The SELECTED date, not today. This is the whole feature.
+                    navigation.navigate("AddIngredient", {
+                      date: selected,
+                      mealType,
+                    })
+                  }
+                  onPress={handlePress}
+                  onConfirm={handleConfirmOne}
+                  onLongPress={selecting ? toggle : beginSelection}
+                />
+              </View>
+            </View>
+          );
+        })}
+
+        {/* ── Snacks ───────────────────────────────────────── */}
+        {/* No single time represents "snacks", so it sits below the rail as a
+            plain card — no gutter, no dot — but is otherwise identical: same
+            wiring, same loggability. */}
+        <MealSection
+          mealType="snacks"
+          entries={getEntriesForMeal(selected, "snacks")}
+          isFuture={isFuture}
+          selection={selection}
+          onAdd={() =>
+            navigation.navigate("AddIngredient", {
+              date: selected,
+              mealType: "snacks",
+            })
+          }
+          onPress={handlePress}
+          onConfirm={handleConfirmOne}
+          onLongPress={selecting ? toggle : beginSelection}
+        />
 
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
@@ -1827,8 +1916,8 @@ function MealSection({
       {entries.length === 0 && !selecting && (
         <Pressable onPress={onAdd} style={mealStyles.empty}>
           <Text style={mealStyles.emptyText}>
-            Tap to {isFuture ? "plan" : "log"}{" "}
-            {MEAL_LABELS[mealType].toLowerCase()}
+            {isFuture ? "Not planned yet" : "Not logged yet"} · tap to{" "}
+            {isFuture ? "plan" : "log"} {MEAL_LABELS[mealType].toLowerCase()}
           </Text>
         </Pressable>
       )}
@@ -1966,11 +2055,11 @@ const styles = StyleSheet.create({
     borderRadius: Radius.card,
     borderWidth: 1,
     borderColor: Colors.border,
-    paddingVertical: Spacing.lg,
+    paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.md,
     marginBottom: Spacing.md,
     alignItems: "center",
-    gap: Spacing.lg,
+    gap: Spacing.md,
   },
   ringStatsRow: {
     flexDirection: "row",
@@ -2013,8 +2102,56 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
     marginBottom: Spacing.md,
   },
-  macroList: {
+  macroGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
     gap: Spacing.md,
+  },
+  macroCol: {
+    flexBasis: "47%",
+    flexGrow: 1,
+  },
+  macroColFull: {
+    flexBasis: "100%",
+  },
+});
+
+const railStyles = StyleSheet.create({
+  item: {
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
+  gutter: {
+    width: 44,
+    alignItems: "center",
+    paddingTop: Spacing.md,
+  },
+  time: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    fontFamily: Fonts.mono.semibold,
+    color: Colors.textMuted,
+    fontVariant: ["tabular-nums"],
+    marginBottom: 6,
+  },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.green,
+  },
+  // Fills the rest of the gutter's height, connecting this dot down toward
+  // the next one. Approximate, not pixel-anchored to the next dot's centre —
+  // acceptable for this presentation-only pass.
+  line: {
+    flex: 1,
+    width: 1,
+    backgroundColor: Colors.border,
+    marginTop: 4,
+  },
+  cardWrap: {
+    flex: 1,
+    marginLeft: Spacing.sm,
   },
 });
 

@@ -1,16 +1,28 @@
 // ============================================================
 // src/lib/__tests__/compositions.test.ts
 //
-// draftsFromComposition is pure (no Supabase calls) — it just resolves a
-// composition's items onto a target day. This file covers the meal_type
-// defaulting added alongside time-based section defaulting: each item's
-// section must come from its (possibly anchor-shifted) eaten_at, never from
-// the item's saved meal_type. See lib/time.ts's sectionForTime.
+// draftsFromComposition/draftsFromBatch are pure (no Supabase calls) — they
+// just resolve a composition's items onto a target day/time. This file
+// covers:
+//   - meal_type defaulting: each item's/batch's section must come from the
+//     resolved eaten_at, never inherited from a saved meal_type. See
+//     lib/time.ts's sectionForTime.
+//   - the batch per-portion macro derivation and the null-poisons-total rule.
 // ============================================================
 
 import { describe, it, expect } from "vitest";
-import { draftsFromComposition } from "../compositions";
-import { MealCompositionItem, MealCompositionWithItems, MealType } from "../../types";
+import {
+  draftsFromComposition,
+  draftsFromBatch,
+  previewComposition,
+  bundlesOnly,
+} from "../compositions";
+import {
+  MealComposition,
+  MealCompositionItem,
+  MealCompositionWithItems,
+  MealType,
+} from "../../types";
 
 function makeItem(
   overrides: Partial<MealCompositionItem> & {
@@ -43,7 +55,40 @@ function makeItem(
   };
 }
 
-function makeComposition(items: MealCompositionItem[]): MealCompositionWithItems {
+/** A batch ingredient: meal_type/eaten_time NULL, per the DB trigger. */
+function makeBatchIngredient(
+  overrides: Partial<MealCompositionItem> & { id: string },
+): MealCompositionItem {
+  return {
+    composition_id: "comp-1",
+    user_id: "user-1",
+    position: 0,
+    name: "Test ingredient",
+    brand: null,
+    serving_g: 100,
+    calories: 200,
+    protein: 10,
+    carbs: 20,
+    fat: 5,
+    sat_fat: 1,
+    salt: 0.5,
+    fibre: 2,
+    sugar: 3,
+    meal_type: null,
+    eaten_time: null,
+    barcode: null,
+    off_id: null,
+    image_url: null,
+    image_path: null,
+    custom_food_id: null,
+    ...overrides,
+  };
+}
+
+function makeComposition(
+  items: MealCompositionItem[],
+  overrides: Partial<MealComposition> = {},
+): MealCompositionWithItems {
   return {
     id: "comp-1",
     user_id: "user-1",
@@ -51,6 +96,11 @@ function makeComposition(items: MealCompositionItem[]): MealCompositionWithItems
     use_count: 0,
     last_used_at: null,
     created_at: "2026-01-01T00:00:00.000Z",
+    kind: "bundle",
+    yield_g: null,
+    portion_g: null,
+    portion_label: null,
+    ...overrides,
     items,
   };
 }
@@ -104,5 +154,226 @@ describe("draftsFromComposition — section derived from the resolved time", () 
     const drafts = draftsFromComposition(composition, "2026-07-27");
 
     expect(drafts[0].meal_type).toBe("lunch"); // 15:00 falls in the lunch window
+  });
+});
+
+describe("draftsFromBatch", () => {
+  it("scales the summed ingredients by portion_g / yield_g, rounded once", () => {
+    // Ingredients: 200+300 = 500 kcal, 10+20 = 30g protein, 20+10 = 30g
+    // carbs, 5+15 = 20g fat, 2+4 = 6g sat_fat, 0.4+0.6 = 1.0g salt,
+    // 3+5 = 8g fibre, 1+2 = 3g sugar. yield_g=500, portion_g=100 → scale=0.2.
+    const composition = makeComposition(
+      [
+        makeBatchIngredient({
+          id: "1",
+          calories: 200,
+          protein: 10,
+          carbs: 20,
+          fat: 5,
+          sat_fat: 2,
+          salt: 0.4,
+          fibre: 3,
+          sugar: 1,
+        }),
+        makeBatchIngredient({
+          id: "2",
+          calories: 300,
+          protein: 20,
+          carbs: 10,
+          fat: 15,
+          sat_fat: 4,
+          salt: 0.6,
+          fibre: 5,
+          sugar: 2,
+        }),
+      ],
+      { kind: "batch", yield_g: 500, portion_g: 100 },
+    );
+
+    const draft = draftsFromBatch(
+      composition,
+      { date: "2026-07-27" },
+      new Date(2026, 6, 27, 8, 0),
+    );
+
+    expect(draft.calories).toBe(100); // 500 * 0.2
+    expect(draft.protein).toBe(6);
+    expect(draft.carbs).toBe(6);
+    expect(draft.fat).toBe(4);
+    expect(draft.sat_fat).toBe(1.2);
+    expect(draft.salt).toBe(0.2);
+    expect(draft.fibre).toBe(1.6);
+    expect(draft.sugar).toBe(0.6);
+    expect(draft.serving_g).toBe(100); // portion_g
+  });
+
+  it("sums a real 0 normally but poisons on null — they look alike, behave oppositely", () => {
+    // scale = 1 (yield_g === portion_g) so the totals ARE the draft values —
+    // no rounding arithmetic to second-guess while checking this rule.
+    const composition = makeComposition(
+      [
+        makeBatchIngredient({
+          id: "1",
+          fibre: 3, // real value
+          sugar: 0, // REAL ZERO — must sum normally, must NOT poison
+        }),
+        makeBatchIngredient({
+          id: "2",
+          fibre: null, // UNKNOWN — must poison the batch total
+          sugar: 5,
+        }),
+      ],
+      { kind: "batch", yield_g: 100, portion_g: 100 },
+    );
+
+    const draft = draftsFromBatch(
+      composition,
+      { date: "2026-07-27" },
+      new Date(2026, 6, 27, 8, 0),
+    );
+
+    expect(draft.sugar).toBe(5); // 0 + 5 = 5 — the 0 summed, it didn't poison
+    expect(draft.fibre).toBeNull(); // one null among the ingredients poisons the total
+  });
+
+  it("produces exactly one draft, with meal_type derived from THIS apply's own eaten_at — never inherited", () => {
+    const composition = makeComposition(
+      [makeBatchIngredient({ id: "1" }), makeBatchIngredient({ id: "2" })],
+      { kind: "batch", yield_g: 200, portion_g: 100 },
+    );
+
+    const draft = draftsFromBatch(
+      composition,
+      { date: "2026-07-27" },
+      new Date(2026, 6, 27, 18, 30), // 18:30 — dinner window
+    );
+
+    expect(Array.isArray(draft)).toBe(false); // exactly ONE draft, not an array
+    expect(draft.meal_type).toBe("dinner");
+    expect(draft.source).toBe("batch");
+    expect(draft.eaten_at_estimated).toBe(false); // a fact ("now"), not a forecast
+
+    const d = new Date(draft.eaten_at);
+    expect(d.getFullYear()).toBe(2026);
+    expect(d.getMonth()).toBe(6);
+    expect(d.getDate()).toBe(27);
+    expect(d.getHours()).toBe(18);
+    expect(d.getMinutes()).toBe(30);
+  });
+
+  it("throws if the composition isn't kind='batch' — refuses rather than silently misreading a bundle", () => {
+    const composition = makeComposition(
+      [makeItem({ id: "1", eaten_time: "08:00", meal_type: "breakfast" })],
+      { kind: "bundle" },
+    );
+
+    expect(() => draftsFromBatch(composition, { date: "2026-07-27" })).toThrow();
+  });
+
+  it("throws if yield_g/portion_g are missing — unreachable past the DB CHECK, guarded anyway", () => {
+    const composition = makeComposition([], {
+      kind: "batch",
+      yield_g: null,
+      portion_g: null,
+    });
+
+    expect(() => draftsFromBatch(composition, { date: "2026-07-27" })).toThrow();
+  });
+
+  it("throws for a batch with no ingredients", () => {
+    const composition = makeComposition([], {
+      kind: "batch",
+      yield_g: 100,
+      portion_g: 50,
+    });
+
+    expect(() => draftsFromBatch(composition, { date: "2026-07-27" })).toThrow();
+  });
+});
+
+// ============================================================
+// REGRESSION — crash-on-launch loop, 2026-08-02.
+//
+// A correctly-saved batch (kind='batch', valid yield_g/portion_g,
+// ingredients with correctly-NULL eaten_time) was loaded by TodayScreen's
+// Bundles sheet, which rendered ALL compositions regardless of kind.
+// previewComposition → bundleItemTime threw on the batch item's NULL
+// eaten_time, crashing every launch. The batch data, the CHECK, and the
+// trigger were all correct — the bug was purely that the bundle-apply UI
+// never filtered by kind. Two fixes, both covered below: bundlesOnly() is
+// the actual fix (nothing batch-shaped should ever reach previewComposition
+// in the first place); previewComposition degrading instead of throwing is
+// the second line of defence, for whatever the next unfiltered call site is.
+// ============================================================
+
+describe("bundlesOnly — the actual fix: batches never reach the Bundles sheet", () => {
+  it("excludes kind='batch' and keeps kind='bundle'", () => {
+    const bundle = makeComposition(
+      [makeItem({ id: "1", eaten_time: "08:00", meal_type: "breakfast" })],
+      { id: "comp-bundle", kind: "bundle" },
+    );
+    const batch = makeComposition(
+      [makeBatchIngredient({ id: "2" })],
+      { id: "comp-batch", kind: "batch", yield_g: 100, portion_g: 50 },
+    );
+
+    const result = bundlesOnly([bundle, batch]);
+
+    expect(result).toEqual([bundle]);
+    expect(result.some((c) => c.kind === "batch")).toBe(false);
+  });
+
+  it("returns an empty list when there are no bundles at all", () => {
+    const batch = makeComposition([makeBatchIngredient({ id: "1" })], {
+      kind: "batch",
+      yield_g: 100,
+      portion_g: 50,
+    });
+    expect(bundlesOnly([batch])).toEqual([]);
+  });
+});
+
+describe("previewComposition — degrades, never throws (the crash itself)", () => {
+  it("returns an empty preview for a batch composition, instead of throwing", () => {
+    const batch = makeComposition(
+      [makeBatchIngredient({ id: "1" }), makeBatchIngredient({ id: "2" })],
+      { kind: "batch", yield_g: 200, portion_g: 100 },
+    );
+
+    // This is the exact call that crashed: previewComposition on a batch,
+    // whose items correctly have NULL eaten_time.
+    expect(() => previewComposition(batch, "2026-07-27")).not.toThrow();
+    expect(previewComposition(batch, "2026-07-27")).toEqual([]);
+  });
+
+  it("skips a malformed bundle item (NULL eaten_time) rather than throwing on the whole preview", () => {
+    const malformed = makeComposition(
+      [
+        makeItem({ id: "1", eaten_time: "08:00", meal_type: "breakfast" }),
+        { ...makeItem({ id: "2", eaten_time: "12:00", meal_type: "lunch" }), eaten_time: null },
+      ],
+      { kind: "bundle" },
+    );
+
+    const preview = previewComposition(malformed, "2026-07-27");
+
+    expect(preview.map((p) => p.item.id)).toEqual(["1"]); // item 2 skipped, not thrown on
+  });
+
+  it("still previews a genuine bundle normally — the fix didn't break the working case", () => {
+    const bundle = makeComposition([
+      makeItem({ id: "1", eaten_time: "08:00", meal_type: "breakfast" }),
+      makeItem({ id: "2", eaten_time: "13:00", meal_type: "lunch" }),
+    ]);
+
+    const preview = previewComposition(bundle, "2026-07-27");
+
+    expect(preview).toHaveLength(2);
+    preview.forEach((p) => {
+      const d = new Date(p.eaten_at);
+      expect(d.getFullYear()).toBe(2026);
+      expect(d.getMonth()).toBe(6);
+      expect(d.getDate()).toBe(27);
+    });
   });
 });

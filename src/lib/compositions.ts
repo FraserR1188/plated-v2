@@ -20,6 +20,7 @@
 import { supabase } from "./supabase";
 import {
   EntryDraft,
+  FoodProduct,
   MealComposition,
   MealCompositionItem,
   MealCompositionItemDraft,
@@ -75,6 +76,28 @@ export async function getCompositions(): Promise<MealCompositionWithItems[]> {
     ...c,
     items: [...(c.items ?? [])].sort((a, z) => a.position - z.position),
   }));
+}
+
+/**
+ * Bundle-only view of a composition list. getCompositions() deliberately
+ * returns BOTH kinds — it's the one shared fetch behind both the Bundles
+ * sheet (TodayScreen) and the Batches tab, and narrowing it there would
+ * break the other consumer. Every bundle-apply/preview UI must filter
+ * through this (or bundlesOnly) before handing compositions to
+ * previewComposition/draftsFromComposition, which assume bundle-shaped items.
+ *
+ * Pulled out to a named, exported function rather than left as an inline
+ * `.filter()` in TodayScreen specifically so it's unit-testable without
+ * rendering a screen — this IS the fix for a real incident: an unfiltered
+ * list reached previewComposition with a batch composition in it, and
+ * bundleItemTime threw on the batch item's (correctly) NULL eaten_time,
+ * during render, crashing every launch. "There is exactly one place this
+ * filter needs to happen" only holds if that place has a name.
+ */
+export function bundlesOnly(
+  compositions: MealCompositionWithItems[],
+): MealCompositionWithItems[] {
+  return compositions.filter((c) => c.kind === "bundle");
 }
 
 // ─── Snapshotting an entry into an item ──────────────────────
@@ -328,6 +351,26 @@ export async function deleteComposition(compositionId: string): Promise<void> {
 // ─── Apply ───────────────────────────────────────────────────
 
 /**
+ * `eaten_time` is typed `string | null` because a BATCH item's is genuinely
+ * NULL — but every function below this point only ever deals in BUNDLE
+ * items, where the DB trigger (meal_composition_items_validate_kind_biu)
+ * guarantees it's NOT NULL. Rather than thread a discriminated union through
+ * MealComposition/MealCompositionItem for that one guarantee, this turns a
+ * violation into a loud, specific error instead of a silent NaN out of
+ * parseTimeOfDay(null) — same shape as mealEntryToProduct's null-serving_g
+ * refusal.
+ */
+function bundleItemTime(item: MealCompositionItem): TimeOfDay {
+  if (item.eaten_time == null) {
+    throw new Error(
+      `Composition item ${item.id} has no eaten_time — not a valid bundle item ` +
+        `(the DB trigger should have prevented this).`,
+    );
+  }
+  return parseTimeOfDay(item.eaten_time);
+}
+
+/**
  * A composition item, resolved against a target day. What the UI previews
  * BEFORE it commits, and what applyComposition actually inserts.
  */
@@ -362,18 +405,41 @@ export interface CompositionItemPreview {
  * anchor" step in the apply flow. The anchor (see draftsFromComposition,
  * applyComposition) only exists between tapping Add and the picker resolving;
  * it never becomes UI state this function could read.
+ *
+ * ⚠ RENDER PATH — DEGRADES, NEVER THROWS.
+ *
+ * TodayScreen's Bundles sheet now filters to kind === 'bundle' before this is
+ * ever called (see the `bundles` filter there) — that filter is the actual
+ * fix for a real incident: an unfiltered composition list let a batch reach
+ * this function, bundleItemTime threw on the batch item's (correctly) NULL
+ * eaten_time, and the throw happened during RENDER, crashing the app on
+ * every launch. "The caller filters first" is exactly the assumption that
+ * broke that time, so this function no longer trusts it: a non-bundle
+ * composition returns an empty preview, and a malformed item (NULL
+ * eaten_time on what claims to be a bundle) is skipped, not thrown on.
+ *
+ * Contrast with draftsFromComposition below, which stays on bundleItemTime
+ * and keeps its throw — that path only runs from an explicit user action
+ * (tapping Add), never from render, so refusing loudly there is correct:
+ * better to fail the write than silently apply nothing.
  */
 export function previewComposition(
   composition: MealCompositionWithItems,
   targetDayKey: string,
   now: Date = new Date(),
 ): CompositionItemPreview[] {
-  return composition.items.map((item) => {
-    const eaten_at = sameTimeOnDay(
-      parseTimeOfDay(item.eaten_time),
-      targetDayKey,
-    );
-    return { item, eaten_at, planned: willBePlanned(eaten_at, now) };
+  if (composition.kind !== "bundle") return [];
+
+  return composition.items.flatMap((item) => {
+    if (item.eaten_time == null) {
+      console.warn(
+        `previewComposition: composition ${composition.id} item ${item.id} ` +
+          `has no eaten_time — skipping rather than crashing the render.`,
+      );
+      return [];
+    }
+    const eaten_at = sameTimeOnDay(parseTimeOfDay(item.eaten_time), targetDayKey);
+    return [{ item, eaten_at, planned: willBePlanned(eaten_at, now) }];
   });
 }
 
@@ -392,10 +458,7 @@ export function draftsFromComposition(
   anchor?: TimeOfDay,
 ): EntryDraft[] {
   const shifted = anchor
-    ? anchorTimesOfDay(
-        composition.items.map((item) => parseTimeOfDay(item.eaten_time)),
-        anchor,
-      )
+    ? anchorTimesOfDay(composition.items.map(bundleItemTime), anchor)
     : null;
 
   return composition.items.map((item, i) => {
@@ -405,7 +468,7 @@ export function draftsFromComposition(
     // by passing that day through explicitly. Same call either way; only the
     // TimeOfDay fed into it differs.
     const eaten_at = sameTimeOnDay(
-      shifted ? shifted[i] : parseTimeOfDay(item.eaten_time),
+      shifted ? shifted[i] : bundleItemTime(item),
       targetDayKey,
     );
 
@@ -486,4 +549,451 @@ export async function applyComposition(
   if (error) console.warn("bump_composition_use:", error.message);
 
   return inserted;
+}
+
+// ─── Batches ─────────────────────────────────────────────────
+//
+// A batch's ingredients are created through createBatchFromIngredients (a
+// future step, alongside the Batches tab UI) — deliberately NOT through
+// itemFromEntry/createBundleFromEntries above. A bundle item snapshots an
+// EXISTING meal_entries row (it already has real macros); a batch ingredient
+// comes from a search result plus a chosen quantity (a per-100g rate that
+// needs multiplying out). Different input shapes, different builders, same
+// table — not merged, and this comment is the reason not to.
+
+interface BatchMacroTotals {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  sat_fat: number | null;
+  salt: number | null;
+  fibre: number | null;
+  sugar: number | null;
+}
+
+/**
+ * Raw (unrounded, unscaled) sums across a batch's ingredients.
+ *
+ * NULL-POISONS-TOTAL: the moment ANY ingredient's value for an optional
+ * macro is null ("we don't know how much of this it had"), the batch's total
+ * for that macro is null too — never coalesced to 0. Checked with `== null`,
+ * not truthiness: a real 0 (this ingredient genuinely has zero grams of it)
+ * sums normally: only null poisons. Required macros (calories/protein/carbs/
+ * fat) are NOT NULL by schema, so they just sum — no null handling needed or
+ * possible.
+ */
+function sumBatchMacros(items: MealCompositionItem[]): BatchMacroTotals {
+  const calories = items.reduce((s, i) => s + i.calories, 0);
+  const protein = items.reduce((s, i) => s + i.protein, 0);
+  const carbs = items.reduce((s, i) => s + i.carbs, 0);
+  const fat = items.reduce((s, i) => s + i.fat, 0);
+
+  const sumOrPoison = (
+    pick: (i: MealCompositionItem) => number | null,
+  ): number | null => {
+    let total = 0;
+    for (const item of items) {
+      const v = pick(item);
+      if (v == null) return null; // short-circuit: unknown poisons the total
+      total += v;
+    }
+    return total;
+  };
+
+  return {
+    calories,
+    protein,
+    carbs,
+    fat,
+    sat_fat: sumOrPoison((i) => i.sat_fat),
+    salt: sumOrPoison((i) => i.salt),
+    fibre: sumOrPoison((i) => i.fibre),
+    sugar: sumOrPoison((i) => i.sugar),
+  };
+}
+
+/**
+ * A batch, resolved into exactly ONE EntryDraft — the merged output at
+ * portion_g grams. Ingredients are summed and scaled FRESH every call;
+ * nothing about this is ever stored or round-tripped (see the comment on
+ * MealComposition.yield_g in types/index.ts) — the round-trip-erodes-numbers
+ * trap that itemFromEntry's doc comment warns about for bundles doesn't even
+ * have a place to hide here, because there is no snapshot of a snapshot: the
+ * ingredients are the only source of truth, every time.
+ *
+ * `target.date` is explicit, never assumed "today" internally — same
+ * discipline as every other apply path in this file, even though v1's only
+ * real caller always passes todayKey() (log-now only, no scheduling; the
+ * bundle-style time picker is for a future batch-scheduling step, on these
+ * same yield_g/portion_g columns).
+ *
+ * meal_type is derived from THIS apply's own eaten_at via sectionForTime,
+ * exactly like draftsFromComposition's bundle items — never inherited from
+ * any ingredient. There is nothing to inherit from: batch items have no
+ * meal_type at all, by the DB trigger.
+ */
+export function draftsFromBatch(
+  composition: MealCompositionWithItems,
+  target: { date: string },
+  now: Date = new Date(),
+): EntryDraft {
+  if (
+    composition.kind !== "batch" ||
+    composition.yield_g == null ||
+    composition.portion_g == null
+  ) {
+    throw new Error(
+      `draftsFromBatch: composition ${composition.id} is not a valid batch ` +
+        `(kind=${composition.kind}, yield_g=${composition.yield_g}, ` +
+        `portion_g=${composition.portion_g}) — meal_compositions_batch_shape ` +
+        `should have made this unreachable.`,
+    );
+  }
+  if (composition.items.length === 0) {
+    throw new Error("A batch needs at least one ingredient.");
+  }
+
+  const totals = sumBatchMacros(composition.items); // raw, unrounded
+  const scale = composition.portion_g / composition.yield_g;
+
+  const eaten_at = sameTimeOnDay(
+    { hours: now.getHours(), minutes: now.getMinutes() },
+    target.date,
+  );
+
+  // Scaled AND rounded ONCE, here — never round the sum and round again after
+  // scaling. Same granularity as mealEntryToProduct/ProductScreen's preview:
+  // whole kcal, 1dp for protein/carbs/fat/sat_fat/fibre/sugar, 2dp for salt.
+  const scaled = (v: number, dp: number): number => +(v * scale).toFixed(dp);
+  const scaledNullable = (v: number | null, dp: number): number | null =>
+    v == null ? null : scaled(v, dp);
+
+  return {
+    name: composition.name,
+    brand: null,
+    serving_g: composition.portion_g,
+
+    calories: Math.round(totals.calories * scale),
+    protein: scaled(totals.protein, 1),
+    carbs: scaled(totals.carbs, 1),
+    fat: scaled(totals.fat, 1),
+
+    sat_fat: scaledNullable(totals.sat_fat, 1),
+    salt: scaledNullable(totals.salt, 2),
+    fibre: scaledNullable(totals.fibre, 1),
+    sugar: scaledNullable(totals.sugar, 1),
+
+    meal_type: sectionForTime(eaten_at),
+    eaten_at,
+
+    // FALSE, unlike a bundle's always-true. "You are eating this now" is a
+    // fact, not a forecast — log-now only for v1, no scheduling, so nothing
+    // here is a prediction. Matches the social copy path's semantics, not
+    // bundle-apply's.
+    eaten_at_estimated: false,
+
+    source: "batch",
+    barcode: null,
+    off_id: null,
+
+    // A batch's merged output isn't any one ingredient's identity — no
+    // photo, no barcode, no OFF id, no custom-food link.
+    image_url: null,
+    image_path: null,
+    custom_food_id: null,
+  };
+}
+
+/**
+ * Apply a batch: exactly one meal_entries row, through the SAME applyEntries
+ * path as everything else in this file — no new insert site. Log-now only
+ * for v1 (see draftsFromBatch): there is no day/time argument to thread
+ * through here because there is nothing to pick.
+ */
+export async function applyBatch(
+  composition: MealCompositionWithItems,
+  target: { date: string },
+  now: Date = new Date(),
+): Promise<MealEntry> {
+  const draft = draftsFromBatch(composition, target, now);
+  const [inserted] = await applyEntries([draft]);
+
+  // Same atomic RPC bundles use — generic across kind since migration 1.
+  const { error } = await supabase.rpc("bump_composition_use", {
+    p_composition_id: composition.id,
+  });
+  if (error) console.warn("bump_composition_use:", error.message);
+
+  return inserted;
+}
+
+/** kcal for ONE portion, for display (the Batches list row) — the EXACT same
+ *  formula draftsFromBatch uses for `calories`, so the number shown never
+ *  disagrees with the number that gets logged. Returns null for anything
+ *  that isn't a fully-formed batch (not a batch, no yield/portion, no
+ *  ingredients) rather than throwing — this is a display helper, not an
+ *  apply-time invariant check. */
+export function batchPortionCalories(
+  composition: MealCompositionWithItems,
+): number | null {
+  if (
+    composition.kind !== "batch" ||
+    composition.yield_g == null ||
+    composition.portion_g == null ||
+    composition.items.length === 0
+  ) {
+    return null;
+  }
+  const totalCalories = composition.items.reduce((s, i) => s + i.calories, 0);
+  return Math.round((totalCalories * composition.portion_g) / composition.yield_g);
+}
+
+// ─── Batch create / edit ───────────────────────────────────────
+
+/** One ingredient going into a batch: a food (with per-100g rates) plus how
+ *  much of it, grams. Distinct from a bundle's source (an already-logged
+ *  MealEntry with real totals) — see the file-level comment above. */
+export interface BatchIngredientInput {
+  product: FoodProduct;
+  quantityG: number;
+}
+
+export interface BatchFormInput {
+  name: string;
+  yieldG: number;
+  portionG: number;
+  portionLabel: string | null;
+  ingredients: BatchIngredientInput[];
+}
+
+/**
+ * FoodProduct (a per-100g RATE) + a chosen quantity → an absolute-macro item
+ * draft, meal_type/eaten_time NULL (the DB trigger requires this for a batch
+ * item — an ingredient has no independent section or time).
+ *
+ * `!= null ? v * f : null` throughout, NEVER `(v ?? 0) * f`: a product with
+ * no salt_per100 on record means "we don't know", not "zero salt", and
+ * multiplying an assumed zero through is exactly the write-side coalesce
+ * this codebase's null=unknown/0=known-zero rule exists to prevent.
+ */
+function itemFromIngredient(
+  input: BatchIngredientInput,
+  position: number,
+): MealCompositionItemDraft {
+  const { product, quantityG } = input;
+  const f = quantityG / 100;
+
+  return {
+    position,
+
+    name: product.name,
+    brand: product.brand || null,
+    serving_g: quantityG,
+
+    calories: product.cal_per100 * f,
+    protein: product.protein_per100 * f,
+    carbs: product.carbs_per100 * f,
+    fat: product.fat_per100 * f,
+
+    sat_fat: product.sat_fat_per100 != null ? product.sat_fat_per100 * f : null,
+    salt: product.salt_per100 != null ? product.salt_per100 * f : null,
+    fibre: product.fibre_per100 != null ? product.fibre_per100 * f : null,
+    sugar: product.sugar_per100 != null ? product.sugar_per100 * f : null,
+
+    meal_type: null,
+    eaten_time: null,
+
+    barcode: product.barcode ?? null,
+    off_id: product.off_id ?? null,
+
+    image_url: product.image_url ?? null,
+    image_path: product.image_path ?? null,
+    custom_food_id: product.custom_food_id ?? null,
+  };
+}
+
+function validateBatchForm(input: BatchFormInput): string {
+  const trimmed = input.name.trim();
+  if (!trimmed) throw new Error("A batch needs a name.");
+  if (input.ingredients.length === 0)
+    throw new Error("A batch needs at least one ingredient.");
+  if (!(input.yieldG > 0)) throw new Error("Yield must be greater than zero.");
+  if (!(input.portionG > 0))
+    throw new Error("Portion size must be greater than zero.");
+  if (input.portionG > input.yieldG)
+    throw new Error("Portion size can't be more than the total yield.");
+  return trimmed;
+}
+
+/** Explicit snake_case row builder shared by create and update below — the
+ *  same "list every column, never spread" discipline as every insert in this
+ *  file, just factored out because create/update both need it verbatim. */
+function batchItemRow(
+  it: MealCompositionItemDraft,
+  compositionId: string,
+  userId: string,
+) {
+  return {
+    composition_id: compositionId,
+    user_id: userId,
+    position: it.position,
+    name: it.name,
+    brand: it.brand,
+    serving_g: it.serving_g,
+    calories: it.calories,
+    protein: it.protein,
+    carbs: it.carbs,
+    fat: it.fat,
+    sat_fat: it.sat_fat,
+    salt: it.salt,
+    fibre: it.fibre,
+    sugar: it.sugar,
+    meal_type: it.meal_type, // null — the trigger requires this for kind='batch'
+    eaten_time: it.eaten_time, // null
+    barcode: it.barcode,
+    off_id: it.off_id,
+    image_url: it.image_url,
+    image_path: it.image_path,
+    custom_food_id: it.custom_food_id,
+  };
+}
+
+/**
+ * "Save these ingredients as a batch." Two round-trips, not one — same shape
+ * as createBundleFromEntries and the custom-food image upload: the items
+ * need a composition_id that doesn't exist until the composition does.
+ *
+ * NOT createBundleFromEntries with a different input mapped in. Deliberately
+ * a separate function feeding the same two tables — see the file-level
+ * comment above "Batches" for why they aren't merged.
+ */
+export async function createBatchFromIngredients(
+  input: BatchFormInput,
+): Promise<MealCompositionWithItems> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const trimmed = validateBatchForm(input);
+
+  const { data: composition, error: compositionErr } = await supabase
+    .from("meal_compositions")
+    .insert({
+      user_id: user.id,
+      name: trimmed,
+      kind: "batch",
+      yield_g: input.yieldG,
+      portion_g: input.portionG,
+      portion_label: input.portionLabel,
+    })
+    .select()
+    .single();
+
+  if (compositionErr || !composition) {
+    console.warn(
+      "createBatchFromIngredients (composition):",
+      compositionErr?.message,
+    );
+    throw compositionErr ?? new Error("Couldn't save the batch.");
+  }
+
+  const items = input.ingredients.map((ing, i) => itemFromIngredient(ing, i));
+
+  const { data: saved, error: itemsErr } = await supabase
+    .from("meal_composition_items")
+    .insert(
+      items.map((it) =>
+        batchItemRow(it, (composition as MealComposition).id, user.id),
+      ),
+    )
+    .select();
+
+  if (itemsErr) {
+    console.warn("createBatchFromIngredients (items):", itemsErr.message);
+    // Don't strand an empty composition in the user's list.
+    await supabase
+      .from("meal_compositions")
+      .delete()
+      .eq("id", (composition as MealComposition).id);
+    throw itemsErr;
+  }
+
+  return {
+    ...(composition as MealComposition),
+    items: ((saved ?? []) as MealCompositionItem[]).sort(
+      (a, z) => a.position - z.position,
+    ),
+  };
+}
+
+/**
+ * Edit an existing batch: update the composition row, then WHOLESALE REPLACE
+ * its items — delete every existing meal_composition_items row for it and
+ * insert the current draft fresh, rather than diffing add/remove/reorder.
+ *
+ * Safe, not just convenient: a composition item is pure bookkeeping input to
+ * draftsFromBatch, and NOTHING else references one (no FK from meal_entries
+ * back to a composition or its items — applies are full, independent
+ * snapshots). There is no id/ordering continuity an in-place diff would be
+ * protecting. This is also WHY an edit can never touch anything already
+ * logged: past applies already have their own meal_entries rows, computed
+ * and inserted at apply time, with no live link back here to be disturbed.
+ */
+export async function updateBatch(
+  compositionId: string,
+  input: BatchFormInput,
+): Promise<MealCompositionWithItems> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const trimmed = validateBatchForm(input);
+
+  const { data: composition, error: compositionErr } = await supabase
+    .from("meal_compositions")
+    .update({
+      name: trimmed,
+      yield_g: input.yieldG,
+      portion_g: input.portionG,
+      portion_label: input.portionLabel,
+    })
+    .eq("id", compositionId)
+    .select()
+    .single();
+
+  if (compositionErr || !composition) {
+    console.warn("updateBatch (composition):", compositionErr?.message);
+    throw compositionErr ?? new Error("Couldn't save the batch.");
+  }
+
+  const { error: deleteErr } = await supabase
+    .from("meal_composition_items")
+    .delete()
+    .eq("composition_id", compositionId);
+  if (deleteErr) {
+    console.warn("updateBatch (delete old items):", deleteErr.message);
+    throw deleteErr;
+  }
+
+  const items = input.ingredients.map((ing, i) => itemFromIngredient(ing, i));
+
+  const { data: saved, error: itemsErr } = await supabase
+    .from("meal_composition_items")
+    .insert(items.map((it) => batchItemRow(it, compositionId, user.id)))
+    .select();
+
+  if (itemsErr) {
+    console.warn("updateBatch (items):", itemsErr.message);
+    throw itemsErr;
+  }
+
+  return {
+    ...(composition as MealComposition),
+    items: ((saved ?? []) as MealCompositionItem[]).sort(
+      (a, z) => a.position - z.position,
+    ),
+  };
 }

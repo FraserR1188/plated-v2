@@ -3,7 +3,11 @@
 // ============================================================
 // Custom bottom tab bar — green pill active indicator,
 // dark surface background, safe-area aware.
-// Supports 3 or 4 tabs without any hardcoded tab count.
+// No hardcoded tab count — each tabItem is flex:1, so it divides evenly at
+// 3, 4, or (as of Batches) 5 tabs. At 5, each tab's share shrinks by about a
+// fifth versus 4 — labels use numberOfLines/adjustsFontSizeToFit as a
+// defensive floor, but the actual fit on a real device hasn't been screen-
+// checked from here (no device access in this environment) — eyeball it.
 // ============================================================
 
 import React, { useEffect, useRef } from "react";
@@ -25,6 +29,7 @@ const TAB_ICONS: Record<string, { default: string; active: string }> = {
   Today: { default: "⊕", active: "⊕" },
   History: { default: "◫", active: "◫" },
   Friends: { default: "◎", active: "◎" },
+  Batches: { default: "⊞", active: "⊞" },
   Settings: { default: "⊙", active: "⊙" },
 };
 
@@ -89,6 +94,9 @@ function TabItem({ label, focused, onPress, onLongPress }: TabItemProps) {
             styles.tabLabel,
             { color: focused ? Colors.green : Colors.textMuted },
           ]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.8}
         >
           {label}
         </Text>

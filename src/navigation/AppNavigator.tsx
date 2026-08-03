@@ -29,6 +29,9 @@ import { AddIngredientScreen } from "../screens/AddIngredientScreen";
 import { ScannerScreen } from "../screens/ScannerScreen";
 import { ProductScreen } from "../screens/ProductScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
+import { BatchesScreen } from "../screens/BatchesScreen";
+import { BatchEditorScreen } from "../screens/BatchEditorScreen";
+import { BatchIngredientPickerScreen } from "../screens/BatchIngredientPickerScreen";
 import { ConnectedUserLogScreen } from "../screens/ConnectedUserLogScreen";
 import { CopyConfirmScreen } from "../screens/CopyConfirmScreen";
 import { TabBar } from "../components/TabBar";
@@ -40,11 +43,21 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<BottomTabParamList>();
 
 // ─── Tab icons ───────────────────────────────────────────────
+//
+// ⚠ THIS MAP DOESN'T ACTUALLY RENDER ANYTHING. MainTabs uses a fully custom
+// `tabBar` prop (TabBar, below), and TabBar.tsx keys its OWN icon lookup off
+// the route LABEL, never reading `options.tabBarIcon` from here. This map
+// (and TabIcon below) only exists to satisfy React Navigation's typed
+// `tabBarIcon` option — pre-existing before Batches, not introduced by it.
+// The icon that actually shows up is TabBar.tsx's TAB_ICONS. Kept both in
+// sync below so this doesn't quietly rot further, but if you're trying to
+// change what's on screen, that file is the one to edit.
 
 const TAB_ICONS: Record<keyof BottomTabParamList, string> = {
   Today: "○", // replace with your SVG icon components
   History: "◫",
   Friends: "◎", // ← people / friends icon
+  Batches: "⊞",
   Settings: "⊙",
 };
 
@@ -104,6 +117,16 @@ function MainTabs() {
             <TabIcon name="Friends" focused={focused} />
           ),
           tabBarLabel: "Friends",
+        }}
+      />
+      <Tab.Screen
+        name="Batches"
+        component={BatchesScreen}
+        options={{
+          tabBarIcon: ({ focused }) => (
+            <TabIcon name="Batches" focused={focused} />
+          ),
+          tabBarLabel: "Batches",
         }}
       />
       <Tab.Screen
@@ -173,6 +196,24 @@ export function AppNavigator() {
         <Stack.Screen
           name="CreateFood"
           component={CreateFoodScreen}
+          options={{
+            presentation: "modal",
+            headerShown: false, // screen draws its own header
+          }}
+        />
+
+        {/* Batches */}
+        <Stack.Screen
+          name="BatchEditor"
+          component={BatchEditorScreen}
+          options={{
+            presentation: "modal",
+            headerShown: false, // screen draws its own header
+          }}
+        />
+        <Stack.Screen
+          name="BatchIngredientPicker"
+          component={BatchIngredientPickerScreen}
           options={{
             presentation: "modal",
             headerShown: false, // screen draws its own header

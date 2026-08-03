@@ -27,7 +27,7 @@ import { CalorieRing } from "../components/CalorieRing";
 import { MacroBar } from "../components/MacroBar";
 import { useStore, todayKey } from "../store/useStore";
 import { mealEntryToProduct } from "../lib/foodLookup";
-import { previewComposition } from "../lib/compositions";
+import { previewComposition, bundlesOnly } from "../lib/compositions";
 import { roundSalt } from "../lib/macros";
 import { dayHeaderInfo } from "../lib/dayHeader";
 import {
@@ -124,6 +124,11 @@ export function TodayScreen() {
     fetchEntries,
     fetchCompositions,
   } = useStore();
+
+  // Bundles-only view — see bundlesOnly() in lib/compositions.ts for why
+  // this filter exists and why it's a named, tested function rather than an
+  // inline `.filter()`.
+  const bundles = bundlesOnly(compositions);
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -459,7 +464,7 @@ export function TodayScreen() {
                 }
                 onConfirmDue={(id) => confirmEntries([id])}
                 onSkipDue={(id) => skipEntries([id])}
-                hasBundles={compositions.length > 0}
+                hasBundles={bundles.length > 0}
                 onOpenBundles={() => setSheet("apply")}
                 onOpenCalendarJump={() => setShowJump(true)}
                 onReturnToToday={() => setSelected(today)}
@@ -487,7 +492,7 @@ export function TodayScreen() {
       {/* ── Apply a bundle ───────────────────────────────── */}
       <ApplyBundleSheet
         visible={sheet === "apply"}
-        bundles={compositions}
+        bundles={bundles}
         dayKey={selected}
         onClose={() => setSheet(null)}
         onApply={async (bundle, anchor) => {
@@ -503,7 +508,7 @@ export function TodayScreen() {
       <SaveBundleSheet
         visible={sheet === "save"}
         entries={selectedEntries}
-        bundles={compositions}
+        bundles={bundles}
         onClose={() => setSheet(null)}
         onCreate={async (name) => {
           setBusy(true);
@@ -1232,9 +1237,21 @@ function ApplyBundleSheet({
   const [pickerSeed, setPickerSeed] = useState(new Date());
 
   const openTimePicker = (bundle: MealCompositionWithItems) => {
-    const earliest =
-      earliestTimeOfDay(bundle.items.map((i) => parseTimeOfDay(i.eaten_time))) ??
-      { hours: DEFAULT_HOUR.breakfast, minutes: 0 };
+    // The `bundles` filter in TodayScreen (kind === 'bundle') is what
+    // actually keeps a batch out of this sheet — this null-filter is a
+    // second, redundant line of defence for the picker's SEED value only:
+    // if a batch ever slipped past that filter, it gets skipped here rather
+    // than crashing. Was, briefly, the ONLY defence, before the batch-in-
+    // Bundles-sheet crash made clear that "shouldn't happen" needs an actual
+    // filter upstream, not just a null-safe read down here.
+    const bundleTimes = bundle.items
+      .map((i) => i.eaten_time)
+      .filter((t): t is string => t != null)
+      .map(parseTimeOfDay);
+    const earliest = earliestTimeOfDay(bundleTimes) ?? {
+      hours: DEFAULT_HOUR.breakfast,
+      minutes: 0,
+    };
     const seed = new Date();
     seed.setHours(earliest.hours, earliest.minutes, 0, 0);
     setPickerSeed(seed);
@@ -1346,9 +1363,15 @@ function ApplyBundleSheet({
                             {item.name}
                           </Text>
                           <Text style={sheetStyles.itemMeta}>
-                            {item.eaten_time.slice(0, 5)} ·{" "}
-                            {MEAL_LABELS[item.meal_type]} ·{" "}
-                            {Math.round(item.calories)} kcal
+                            {/* This sheet only ever shows bundle items, whose
+                                eaten_time/meal_type are guaranteed non-null by
+                                previewComposition's own bundleItemTime guard
+                                (it would have thrown before this array ever
+                                existed) — the "—" fallback is belt-and-braces
+                                display safety, not an expected case. */}
+                            {item.eaten_time?.slice(0, 5) ?? "—"} ·{" "}
+                            {item.meal_type ? MEAL_LABELS[item.meal_type] : "—"}{" "}
+                            · {Math.round(item.calories)} kcal
                           </Text>
                         </View>
 

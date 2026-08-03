@@ -164,6 +164,18 @@ interface AppState {
   ) => Promise<WriteResult>;
   removeComposition: (compositionId: string) => Promise<WriteResult>;
 
+  // ── Batches ──
+  /** "Save these ingredients + yield/portion as a batch." */
+  saveBatch: (input: compositionApi.BatchFormInput) => Promise<WriteResult>;
+  /** Edit an existing batch — wholesale-replaces its ingredients. Never
+   *  touches already-logged meal_entries; see updateBatch's own comment. */
+  saveBatchEdits: (
+    compositionId: string,
+    input: compositionApi.BatchFormInput,
+  ) => Promise<WriteResult>;
+  /** Log-now only for v1: no day, no time — applies to right now. */
+  applyBatchNow: (composition: MealCompositionWithItems) => Promise<WriteResult>;
+
   saveIngredient: (product: FoodProduct) => Promise<SavedIngredient | null>;
   deleteIngredient: (id: string) => Promise<void>;
 
@@ -741,6 +753,63 @@ export const useStore = create<AppState>((set, get) => ({
       return { error: null };
     } catch (e) {
       return { error: msg(e, "Couldn't delete that bundle.") };
+    }
+  },
+
+  // ─── Batches ─────────────────────────────────────────────────
+
+  saveBatch: async (input) => {
+    try {
+      const composition = await compositionApi.createBatchFromIngredients(input);
+      set((s) => ({ compositions: [composition, ...s.compositions] }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't save the batch.") };
+    }
+  },
+
+  saveBatchEdits: async (compositionId, input) => {
+    try {
+      const updated = await compositionApi.updateBatch(compositionId, input);
+      set((s) => ({
+        compositions: s.compositions.map((c) =>
+          c.id === compositionId ? updated : c,
+        ),
+      }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't save those changes.") };
+    }
+  },
+
+  applyBatchNow: async (composition) => {
+    try {
+      const inserted = await compositionApi.applyBatch(composition, {
+        date: todayKey(),
+      });
+      set((s) => ({
+        entries: [inserted, ...s.entries],
+        // Mirror the RPC's effect locally, same as applyCompositionToDay.
+        compositions: s.compositions
+          .map((c) =>
+            c.id === composition.id
+              ? {
+                  ...c,
+                  use_count: c.use_count + 1,
+                  last_used_at: new Date().toISOString(),
+                }
+              : c,
+          )
+          .sort((a, z) => {
+            const al = a.last_used_at ?? "";
+            const zl = z.last_used_at ?? "";
+            if (al !== zl) return zl.localeCompare(al);
+            return z.use_count - a.use_count;
+          }),
+      }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't log that.") };
     }
   },
 

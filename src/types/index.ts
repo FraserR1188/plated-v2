@@ -35,6 +35,7 @@ export type EntrySource =
   | "custom"
   | "copied"
   | "bundle"
+  | "batch"
   | "ai_photo";
 
 // ─── Food & Logging ──────────────────────────────────────────
@@ -273,12 +274,16 @@ export interface EntryDraft {
   custom_food_id: string | null;
 }
 
-// ─── D4: compositions (bundles today; bundle OR batch from migration 2) ──
+// ─── D4: compositions (bundle OR batch, as of migration 2) ───────────────
+
+/** 'bundle': N independently loggable items. 'batch': N ingredients + a
+ *  yield/portion → ONE merged output at apply. See meal_compositions.kind. */
+export type CompositionKind = "bundle" | "batch";
 
 /**
  * Mirrors public.meal_compositions (migration 5, renamed from meal_bundles by
- * the Batches feature's migration 1 — see that migration's comment for why
- * the rename is split from adding `kind`/batch columns).
+ * the Batches feature's migration 1; kind/yield_g/portion_g/portion_label
+ * added by migration 2 — see both migrations' comments).
  */
 export interface MealComposition {
   id: string;
@@ -299,6 +304,23 @@ export interface MealComposition {
   // NOTE: no updated_at. The DB has two competing touch functions
   // (handle_updated_at, set_updated_at) and no trigger wired to either. A
   // column nothing maintains is a column that lies. last_used_at earns its keep.
+
+  kind: CompositionKind;
+
+  /**
+   * BATCH ONLY — NULL for a bundle, enforced by meal_compositions_batch_shape,
+   * not just convention. yield_g: total finished weight, grams. portion_g:
+   * average single-portion weight, grams, always <= yield_g. portion_label:
+   * display convenience ("1 pancake"), optional even for a batch — never used
+   * in the macro math.
+   *
+   * Per-portion macro = (sum of ingredient macros) * portion_g / yield_g,
+   * computed FRESH at apply time by draftsFromBatch — never stored, never
+   * round-tripped.
+   */
+  yield_g: number | null;
+  portion_g: number | null;
+  portion_label: string | null;
 }
 
 /**
@@ -331,7 +353,16 @@ export interface MealCompositionItem {
   fibre: number | null;
   sugar: number | null;
 
-  meal_type: MealType;
+  /**
+   * REQUIRED for a bundle item (each independently loggable), NULL for a
+   * batch item (only the merged output gets a section, chosen at apply) —
+   * enforced by meal_composition_items_validate_kind_biu (migration 2), not a
+   * CHECK, because the rule depends on the PARENT composition's kind. See
+   * lib/compositions.ts's bundleItemTime() before reading this for a bundle
+   * item — it's guaranteed non-null there, but the type can't say so without
+   * a discriminated union this file deliberately doesn't use.
+   */
+  meal_type: MealType | null;
 
   /**
    * A LOCAL WALL CLOCK, with no day attached. PostgREST hands it back as
@@ -342,8 +373,11 @@ export interface MealCompositionItem {
    * an offset would shift "07:30 porridge" by an hour across a clock change.
    * A `time` has no such opinion — the client rebuilds the instant on the target
    * day, and the platform handles the rest.
+   *
+   * REQUIRED for a bundle item, NULL for a batch item — same trigger, same
+   * reason as meal_type above.
    */
-  eaten_time: string;
+  eaten_time: string | null;
 
   barcode: string | null;
   off_id: string | null;
@@ -517,12 +551,32 @@ export type RootStackParamList = {
     barcode?: string;
     initialName?: string;
   };
+
+  /** Create when compositionId is omitted; edit that batch when given. */
+  BatchEditor: { compositionId?: string };
+
+  /**
+   * ⚠ THE ONE ROUTE PARAM IN THIS LIST THAT ISN'T PLAIN DATA.
+   *
+   * A batch ingredient has no {date, mealType} target to navigate onward
+   * with — unlike every food-adding flow above, it isn't going into a day at
+   * all, just a draft ingredient list still being built on BatchEditorScreen.
+   * Passing a callback closure back through the param is the standard React
+   * Navigation pattern for "this picker screen hands a value back to
+   * whoever opened it" when there's no shared store state to write into
+   * instead — deliberately NOT threading a global batch-draft slice through
+   * useStore for what is purely one screen's transient, unsaved form state.
+   */
+  BatchIngredientPicker: {
+    onPick: (product: FoodProduct, quantityG: number) => void;
+  };
 };
 
 export type BottomTabParamList = {
   Today: undefined;
   History: undefined;
   Friends: undefined;
+  Batches: undefined;
   Settings: undefined;
 };
 

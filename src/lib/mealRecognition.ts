@@ -50,6 +50,11 @@ export type MealScanSuccess = {
   per100g: MacroTotals;
   confidence: Confidence;
   notes: string[];
+  /** Only present on a labelled re-estimate — see the server's comment on
+   *  the same field. true means the model's own raw guess shared no words
+   *  with the user's correction, so the macros below deserve extra
+   *  scrutiny even though the name is now guaranteed right. */
+  identityDivergence?: boolean;
 };
 
 export type MealScanErrorCode =
@@ -84,11 +89,22 @@ const GENERIC_FAILURE: MealScanFailure = {
  * @param base64 JPEG bytes as base64, no data: URI prefix.
  *               MUST have been through prepareImage() — the function
  *               trusts the declared media type.
+ * @param userDishLabel Optional. Present on a corrected re-estimate: the
+ *               user has looked at the photo and said what it actually is.
+ *               Omit (or pass undefined) for a first scan — the request
+ *               body then matches the original contract exactly.
  */
-export async function scanMealPhoto(base64: string): Promise<MealScanResponse> {
+export async function scanMealPhoto(
+  base64: string,
+  userDishLabel?: string,
+): Promise<MealScanResponse> {
   try {
     const { data, error } = await supabase.functions.invoke(FUNCTION_NAME, {
-      body: { imageBase64: base64, mediaType: "image/jpeg" },
+      body: {
+        imageBase64: base64,
+        mediaType: "image/jpeg",
+        ...(userDishLabel ? { user_dish_label: userDishLabel } : {}),
+      },
     });
 
     if (error) {
@@ -137,18 +153,33 @@ async function readErrorBody(error: unknown): Promise<MealScanFailure | null> {
 /**
  * Turn a successful scan into an editable ProductScreen draft.
  *
- * No image: the captured photo is used for recognition only and is never
- * uploaded or stored (same statelessness as extract-nutrition-label), so
- * image_url / image_path are deliberately left unset — ProductThumb falls
- * back to its placeholder tile, same as any product with no picture.
+ * No STORED image: the photo is never uploaded to Supabase Storage or
+ * written to any row — same statelessness as extract-nutrition-label, and
+ * image_url / image_path are deliberately left unset here, so ProductThumb
+ * falls back to its placeholder tile. `sourceImageBase64` is NOT one of
+ * those fields: it's the bytes that produced this estimate, retained
+ * client-side (in the draft, in memory) so a corrected re-estimate can
+ * resend them without reopening the camera. It rides on `aiEstimate`,
+ * which is never spread into a Supabase insert (both meal_entries and
+ * saved_ingredients writes list columns explicitly), so it never leaks.
  *
  * serving_g / serving_label carry the model's stated portion assumption
  * through to the existing "Suggested serving" line on ProductScreen — that
  * is what satisfies "must state its portion assumption" without any new
  * UI for the number itself. aiEstimate carries the rest (confidence,
  * alternatives, disclaimer notes) for the banner that IS new.
+ *
+ * @param corrected true when `result` came from a labelled re-estimate.
+ *   Rebuilds the FoodProduct from scratch — the correct behaviour for "the
+ *   user asked for a fresh draft, discard prior hand-edits" — and forces
+ *   `alternatives` empty even if the caller is holding a stale/malformed
+ *   result, as a second guarantee alongside the server's own override.
  */
-export function mealScanToFoodProduct(result: MealScanSuccess): FoodProduct {
+export function mealScanToFoodProduct(
+  result: MealScanSuccess,
+  sourceImageBase64: string,
+  corrected = false,
+): FoodProduct {
   return {
     name: result.dish.name,
     brand: "",
@@ -163,9 +194,12 @@ export function mealScanToFoodProduct(result: MealScanSuccess): FoodProduct {
     serving_g: result.portion.grams,
     serving_label: result.portion.description,
     aiEstimate: {
-      alternatives: result.dish.alternatives,
+      alternatives: corrected ? [] : result.dish.alternatives,
       confidence: result.confidence,
       notes: result.notes,
+      identityDivergence: result.identityDivergence,
+      sourceImageBase64,
+      userCorrected: corrected,
     },
   };
 }
@@ -202,6 +236,10 @@ function isMealScanSuccessShape(data: unknown): data is MealScanSuccess {
 
   if (!["high", "medium", "low"].includes(d.confidence as string)) return false;
   if (!Array.isArray(d.notes)) return false;
+
+  if (d.identityDivergence !== undefined && typeof d.identityDivergence !== "boolean") {
+    return false;
+  }
 
   return true;
 }

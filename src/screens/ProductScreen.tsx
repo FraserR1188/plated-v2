@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -35,8 +35,10 @@ import {
   Fonts,
   withDefaultFont,
 } from "../theme/tokens";
-import { RootStackParamList, MEAL_LABELS } from "../types";
+import { FoodProduct, RootStackParamList, MEAL_LABELS } from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
+import { scanMealPhoto, mealScanToFoodProduct, MacroKey } from "../lib/mealRecognition";
+import { computeServingTotals } from "../lib/macros";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Product">;
 type Route = RouteProp<RootStackParamList, "Product">;
@@ -60,6 +62,92 @@ const AI_CONFIDENCE_LABEL: Record<"high" | "medium" | "low", string> = {
 // src/lib/time.ts, because it is a policy about TIME, not about this screen —
 // bundles need the same answer, and two definitions would drift. It is imported
 // above. Do not re-add it here.
+
+// ─── Per-100g macro grid — data-driven so it can render as either static
+// Text (every non-AI product) or an editable TextInput (an AI draft, before
+// it's logged). get/set close over FoodProduct's actual field names so the
+// rest of the file never does a computed-key lookup. ──────────────────────
+type MacroMeta = {
+  key: MacroKey;
+  label: string;
+  unit: string;
+  color: string;
+  get: (p: FoodProduct) => number;
+  set: (p: FoodProduct, v: number) => FoodProduct;
+};
+
+const MACRO_META: MacroMeta[] = [
+  {
+    key: "cal",
+    label: "Calories",
+    unit: "kcal",
+    color: Colors.green,
+    get: (p) => p.cal_per100,
+    set: (p, v) => ({ ...p, cal_per100: v }),
+  },
+  {
+    key: "protein",
+    label: "Protein",
+    unit: "g",
+    color: MacroColor.protein,
+    get: (p) => p.protein_per100,
+    set: (p, v) => ({ ...p, protein_per100: v }),
+  },
+  {
+    key: "carbs",
+    label: "Carbs",
+    unit: "g",
+    color: MacroColor.carbs,
+    get: (p) => p.carbs_per100,
+    set: (p, v) => ({ ...p, carbs_per100: v }),
+  },
+  {
+    key: "fat",
+    label: "Fat",
+    unit: "g",
+    color: MacroColor.fat,
+    get: (p) => p.fat_per100,
+    set: (p, v) => ({ ...p, fat_per100: v }),
+  },
+  {
+    key: "satFat",
+    label: "Sat fat",
+    unit: "g",
+    color: MacroColor.satFat,
+    get: (p) => p.sat_fat_per100 ?? 0,
+    set: (p, v) => ({ ...p, sat_fat_per100: v }),
+  },
+  {
+    key: "salt",
+    label: "Salt",
+    unit: "g",
+    color: MacroColor.salt,
+    get: (p) => p.salt_per100 ?? 0,
+    set: (p, v) => ({ ...p, salt_per100: v }),
+  },
+  {
+    key: "fibre",
+    label: "Fibre",
+    unit: "g",
+    color: MacroColor.fibre,
+    get: (p) => p.fibre_per100 ?? 0,
+    set: (p, v) => ({ ...p, fibre_per100: v }),
+  },
+  {
+    key: "sugar",
+    label: "Sugar",
+    unit: "g",
+    color: MacroColor.sugar,
+    get: (p) => p.sugar_per100 ?? 0,
+    set: (p, v) => ({ ...p, sugar_per100: v }),
+  },
+];
+
+function initMacroText(product: FoodProduct): Record<MacroKey, string> {
+  const out = {} as Record<MacroKey, string>;
+  for (const m of MACRO_META) out[m.key] = String(m.get(product));
+  return out;
+}
 
 // Product identity thumbnail.
 //   • OFF products arrive with image_url — a directly renderable URL.
@@ -114,14 +202,80 @@ export function ProductScreen() {
   } = useRoute<Route>().params;
   const { addEntry, updateEntry, deleteEntry, saveIngredient } = useStore();
   const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
 
   const isEditing = !!editEntryId;
 
+  // ── Editable draft ──────────────────────────────────────────
+  //
+  // `product` (the route param) is the ORIGINAL, untouched result — never
+  // mutated. Every render and the final submit read from `draft`, which
+  // starts equal to `product` and is only ever replaced wholesale (a
+  // corrected re-estimate) or field-by-field (a hand-edited per-100g
+  // macro). Only an AI draft (draft.aiEstimate present) is editable at
+  // all — a looked-up OFF/custom/library product renders exactly as
+  // before.
+  const [draft, setDraft] = useState<FoodProduct>(product);
+  const [macroText, setMacroText] = useState<Record<MacroKey, string>>(() =>
+    initMacroText(product),
+  );
+
+  // ── Correction flow state ───────────────────────────────────
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(product.name);
+  const [reestimating, setReestimating] = useState(false);
+  const [reestimateError, setReestimateError] = useState<string | null>(null);
+
+  const openCorrection = (prefill?: string) => {
+    setTitleDraft(prefill ?? draft.name);
+    setReestimateError(null);
+    setTitleEditing(true);
+    // The affordance that opens this can live on the identity card, well
+    // below the AI card where the edit surface actually renders — without
+    // this, "fix it" would silently do nothing visible until the user
+    // scrolled up themselves.
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
+  };
+
+  // Re-estimate is an explicit, billed, rate-limited AI call — never fired
+  // on blur. It resends the SAME photo bytes the first scan used, plus the
+  // new label, and on success REPLACES the whole draft (title, per-100g
+  // macros, portion) — any hand-edited macros are discarded, because
+  // hand-tuning is meant to happen once identity is settled, not survive
+  // across a re-identification.
+  const runReestimate = async (label: string) => {
+    const trimmed = label.trim();
+    if (!trimmed || reestimating) return;
+    const sourceImageBase64 = draft.aiEstimate?.sourceImageBase64;
+    if (!sourceImageBase64) return; // not an AI draft — shouldn't be reachable
+
+    setReestimating(true);
+    setReestimateError(null);
+    try {
+      const result = await scanMealPhoto(sourceImageBase64, trimmed);
+      if (!result.ok) {
+        setReestimateError(result.message);
+        return;
+      }
+      const next = mealScanToFoodProduct(result, sourceImageBase64, true);
+      setDraft(next);
+      setMacroText(initMacroText(next));
+      setServing(String(Math.round(next.serving_g ?? 100)));
+      setTitleEditing(false);
+    } finally {
+      setReestimating(false);
+    }
+  };
+
+  const updateMacro = (meta: MacroMeta, text: string) => {
+    setMacroText((prev) => ({ ...prev, [meta.key]: text }));
+    const parsed = parseFloat(text.replace(",", "."));
+    setDraft((prev) => meta.set(prev, Number.isFinite(parsed) ? parsed : 0));
+  };
+
   // ── Serving portion ─────────────────────────────────────────
   const servingPreset =
-    product.serving_g && product.serving_g > 0
-      ? Math.round(product.serving_g)
-      : null;
+    draft.serving_g && draft.serving_g > 0 ? Math.round(draft.serving_g) : null;
 
   const presets = servingPreset
     ? [servingPreset, 50, 100, 150, 200].filter((v, i, a) => a.indexOf(v) === i)
@@ -171,7 +325,7 @@ export function ProductScreen() {
 
   const g = parseFloat(serving) || 0;
   const f = g / 100;
-  const satFat100 = product.sat_fat_per100 ?? 0;
+  const satFat100 = draft.sat_fat_per100 ?? 0;
 
   // What the DB trigger will decide. ADVISORY — the database is the authority;
   // this only lets the UI tell the truth about what it's about to do.
@@ -180,16 +334,11 @@ export function ProductScreen() {
   // the same copy. It is the same distinction; keep the language identical.
   const isPlanned = willBePlanned(eatenAt.toISOString());
 
-  const preview = {
-    calories: Math.round(product.cal_per100 * f),
-    protein: +(product.protein_per100 * f).toFixed(1),
-    carbs: +(product.carbs_per100 * f).toFixed(1),
-    fat: +(product.fat_per100 * f).toFixed(1),
-    satFat: +(satFat100 * f).toFixed(1),
-    salt: +((product.salt_per100 ?? 0) * f).toFixed(2),
-    fibre: +((product.fibre_per100 ?? 0) * f).toFixed(1),
-    sugar: +((product.sugar_per100 ?? 0) * f).toFixed(1),
-  };
+  // Serving-scaled preview. Pulled into lib/macros.ts so "edit a macro, see
+  // the total recompute" is testable without RNTL, and so salt goes through
+  // roundSalt here too — this card used to round it with .toFixed(2)
+  // instead, the exact float-noise problem roundSalt exists to fix.
+  const preview = computeServingTotals(draft, g);
 
   const onDateChange = (event: any, picked?: Date) => {
     setPickerMode(null);
@@ -233,7 +382,7 @@ export function ProductScreen() {
 
     // ⚠ KNOWN BUG, NOT FIXED IN D4 — flagged so nobody "discovers" it later.
     //
-    // On an EDIT, every macro below is recomputed from `product`, which
+    // On an EDIT, every macro below is recomputed from `draft`, which
     // mealEntryToProduct() reconstructed by DIVIDING the stored per-serving
     // values and rounding (Math.round / toFixed). The round-trip does not
     // commute: a 250g entry at 437 kcal comes back as 175 kcal/100g and
@@ -248,14 +397,14 @@ export function ProductScreen() {
     // meal_composition_items directly and never routes through FoodProduct.)
     const macros = {
       serving_g: g,
-      calories: product.cal_per100 * f,
-      protein: product.protein_per100 * f,
-      carbs: product.carbs_per100 * f,
-      fat: product.fat_per100 * f,
+      calories: draft.cal_per100 * f,
+      protein: draft.protein_per100 * f,
+      carbs: draft.carbs_per100 * f,
+      fat: draft.fat_per100 * f,
       sat_fat: satFat100 * f,
-      salt: (product.salt_per100 ?? 0) * f,
-      fibre: (product.fibre_per100 ?? 0) * f,
-      sugar: (product.sugar_per100 ?? 0) * f,
+      salt: (draft.salt_per100 ?? 0) * f,
+      fibre: (draft.fibre_per100 ?? 0) * f,
+      sugar: (draft.sugar_per100 ?? 0) * f,
       eaten_at,
     };
 
@@ -295,25 +444,27 @@ export function ProductScreen() {
         return; // ← DO NOT POP. The edit did not happen.
       }
     } else {
-      await saveIngredient(product);
+      await saveIngredient(draft);
       await addEntry({
         date,
         meal_type: mealType,
-        name: product.name,
-        brand: product.brand,
+        name: draft.name,
+        brand: draft.brand,
         ...macros,
         // AI-recognized drafts have no barcode and aren't source: "custom",
         // so without this check first they'd silently fall through to
-        // "search" and the estimate's provenance would be lost.
-        source: product.aiEstimate
+        // "search" and the estimate's provenance would be lost. A
+        // corrected draft is STILL "ai_photo" — the correction changes the
+        // identity, not the provenance of the estimate.
+        source: draft.aiEstimate
           ? "ai_photo"
-          : product.source === "custom"
+          : draft.source === "custom"
             ? "custom"
-            : product.barcode
+            : draft.barcode
               ? "barcode"
               : "search",
-        barcode: product.barcode,
-        off_id: product.off_id,
+        barcode: draft.barcode,
+        off_id: draft.off_id,
 
         // A PLANNED time is always an estimate, however deliberately you picked
         // it — you have not eaten this yet, so 19:00 is a forecast, not a fact.
@@ -323,9 +474,9 @@ export function ProductScreen() {
         // says "when I opened the app", not "when I ate".
         eaten_at_estimated: isPlanned ? true : !timeTouched,
 
-        image_url: product.image_url ?? null,
-        image_path: product.image_path ?? null,
-        custom_food_id: product.custom_food_id ?? null,
+        image_url: draft.image_url ?? null,
+        image_path: draft.image_path ?? null,
+        custom_food_id: draft.custom_food_id ?? null,
       });
       // NOTE: addEntry still swallows its errors into console.warn and returns
       // void, so an insert failure here pops as if it worked. Less urgent than
@@ -342,7 +493,7 @@ export function ProductScreen() {
     if (!editEntryId) return;
     Alert.alert(
       "Delete entry",
-      `Remove "${product.name}" from ${MEAL_LABELS[mealType]}?`,
+      `Remove "${draft.name}" from ${MEAL_LABELS[mealType]}?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -362,71 +513,6 @@ export function ProductScreen() {
   const mealLabel = MEAL_LABELS[mealType];
   const canSubmit = g > 0;
   const dayLabel = formatDayLabel(dateKey(eatenAt));
-
-  const macroRows: {
-    key: string;
-    label: string;
-    value: string;
-    unit: string;
-    color: string;
-  }[] = [
-    {
-      key: "cal",
-      label: "Calories",
-      value: String(product.cal_per100),
-      unit: "kcal",
-      color: Colors.green,
-    },
-    {
-      key: "protein",
-      label: "Protein",
-      value: `${product.protein_per100}`,
-      unit: "g",
-      color: MacroColor.protein,
-    },
-    {
-      key: "carbs",
-      label: "Carbs",
-      value: `${product.carbs_per100}`,
-      unit: "g",
-      color: MacroColor.carbs,
-    },
-    {
-      key: "fat",
-      label: "Fat",
-      value: `${product.fat_per100}`,
-      unit: "g",
-      color: MacroColor.fat,
-    },
-    {
-      key: "satFat",
-      label: "Sat fat",
-      value: `${satFat100}`,
-      unit: "g",
-      color: MacroColor.satFat,
-    },
-    {
-      key: "salt",
-      label: "Salt",
-      value: `${product.salt_per100}`,
-      unit: "g",
-      color: MacroColor.salt,
-    },
-    {
-      key: "fibre",
-      label: "Fibre",
-      value: `${product.fibre_per100}`,
-      unit: "g",
-      color: MacroColor.fibre,
-    },
-    {
-      key: "sugar",
-      label: "Sugar",
-      value: `${product.sugar_per100}`,
-      unit: "g",
-      color: MacroColor.sugar,
-    },
-  ];
 
   const previewRows: {
     label: string;
@@ -487,6 +573,7 @@ export function ProductScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
       <ScrollView
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scroll}
       >
@@ -517,68 +604,214 @@ export function ProductScreen() {
         </View>
 
         {/* ── AI estimate notice ──────────────────────── */}
-        {/* Only present on a draft built from scan-meal-photo. The macros
-            below are a photo-based guess, not a lookup — this says so
-            before the user sees a single number, states how confident the
-            guess is, and offers the model's other reads of the same photo
-            as plain information (not selectable — only the primary dish
-            got a macro estimate). */}
-        {product.aiEstimate ? (
+        {/* Only present on a draft built from scan-meal-photo. Two very
+            different states share this card:
+              - First pass: "AI estimate" header, confidence badge, the
+                model's alternatives as tappable chips, a "Something else…"
+                escape hatch.
+              - Corrected pass (userCorrected): the identity is now
+                user-asserted and guaranteed correct — but the MACROS still
+                came entirely from the model and still depend on it having
+                honoured the correction. That's a MORE deceptive failure
+                mode than an honest wrong guess (a confidently-wrong name
+                makes the whole card read as trustworthy), so this state
+                keeps a loud, high-contrast warning instead of the muted
+                first-pass notes, and escalates further if the server
+                flagged identityDivergence. */}
+        {draft.aiEstimate ? (
           <View style={styles.aiCard}>
             <View style={styles.aiHeaderRow}>
-              <Text style={styles.aiTitle}>🤖 AI estimate</Text>
+              <Text style={styles.aiTitle}>
+                {draft.aiEstimate.userCorrected
+                  ? "✏️ From your correction"
+                  : "🤖 AI estimate"}
+              </Text>
+              {!draft.aiEstimate.userCorrected && (
+                <View
+                  style={[
+                    styles.confidencePill,
+                    { backgroundColor: `${AI_CONFIDENCE_COLOR[draft.aiEstimate.confidence]}18` },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.confidencePillText,
+                      { color: AI_CONFIDENCE_COLOR[draft.aiEstimate.confidence] },
+                    ]}
+                  >
+                    {AI_CONFIDENCE_LABEL[draft.aiEstimate.confidence]} confidence
+                  </Text>
+                </View>
+              )}
+            </View>
+
+            {draft.aiEstimate.userCorrected ? (
               <View
                 style={[
-                  styles.confidencePill,
-                  { backgroundColor: `${AI_CONFIDENCE_COLOR[product.aiEstimate.confidence]}18` },
+                  styles.correctedWarningBox,
+                  draft.aiEstimate.identityDivergence &&
+                    styles.correctedWarningBoxDanger,
                 ]}
               >
                 <Text
                   style={[
-                    styles.confidencePillText,
-                    { color: AI_CONFIDENCE_COLOR[product.aiEstimate.confidence] },
+                    styles.correctedWarningText,
+                    draft.aiEstimate.identityDivergence &&
+                      styles.correctedWarningTextDanger,
                   ]}
                 >
-                  {AI_CONFIDENCE_LABEL[product.aiEstimate.confidence]} confidence
+                  Macros still estimated — check before logging.
+                  {draft.aiEstimate.identityDivergence
+                    ? " The AI's own read of this photo didn't match your correction — these numbers may still reflect the old guess."
+                    : ""}
                 </Text>
               </View>
-            </View>
-            {product.aiEstimate.alternatives.length > 0 ? (
-              <Text style={styles.aiAlternatives}>
-                Could also be: {product.aiEstimate.alternatives.join(", ")}
-              </Text>
+            ) : (
+              draft.aiEstimate.notes.map((note, i) => (
+                <Text key={i} style={styles.aiNote}>
+                  {note}
+                </Text>
+              ))
+            )}
+
+            {!titleEditing && (
+              <View style={styles.chipsRow}>
+                {!draft.aiEstimate.userCorrected &&
+                  draft.aiEstimate.alternatives.map((alt) => (
+                    <Pressable
+                      key={alt}
+                      style={({ pressed }) => [
+                        styles.chip,
+                        pressed && { opacity: 0.7 },
+                        reestimating && styles.chipDisabled,
+                      ]}
+                      onPress={() => runReestimate(alt)}
+                      disabled={reestimating}
+                    >
+                      <Text style={styles.chipText} numberOfLines={1}>
+                        {alt}
+                      </Text>
+                    </Pressable>
+                  ))}
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.chip,
+                    styles.chipGhost,
+                    pressed && { opacity: 0.7 },
+                    reestimating && styles.chipDisabled,
+                  ]}
+                  onPress={() => openCorrection()}
+                  disabled={reestimating}
+                >
+                  <Text style={styles.chipGhostText}>Something else…</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {titleEditing && (
+              <View style={styles.titleEditRow}>
+                <TextInput
+                  style={styles.titleEditInput}
+                  value={titleDraft}
+                  onChangeText={setTitleDraft}
+                  placeholder="What is this actually?"
+                  placeholderTextColor={Colors.textMuted}
+                  autoFocus
+                  returnKeyType="done"
+                  onSubmitEditing={() => runReestimate(titleDraft)}
+                  editable={!reestimating}
+                />
+                <View style={styles.titleEditActions}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.titleEditCancel,
+                      pressed && { opacity: 0.7 },
+                    ]}
+                    onPress={() => setTitleEditing(false)}
+                    disabled={reestimating}
+                  >
+                    <Text style={styles.titleEditCancelText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.titleEditSubmit,
+                      pressed && { opacity: 0.88 },
+                      (!titleDraft.trim() || reestimating) &&
+                        styles.titleEditSubmitDisabled,
+                    ]}
+                    onPress={() => runReestimate(titleDraft)}
+                    disabled={!titleDraft.trim() || reestimating}
+                  >
+                    {reestimating ? (
+                      <ActivityIndicator size="small" color={Colors.bg} />
+                    ) : (
+                      <Text style={styles.titleEditSubmitText}>
+                        Re-estimate macros
+                      </Text>
+                    )}
+                  </Pressable>
+                </View>
+              </View>
+            )}
+
+            {reestimateError ? (
+              <Text style={styles.aiErrorText}>{reestimateError}</Text>
             ) : null}
-            {product.aiEstimate.notes.map((note, i) => (
-              <Text key={i} style={styles.aiNote}>
-                {note}
-              </Text>
-            ))}
           </View>
         ) : null}
 
         {/* ── Product identity card ───────────────────── */}
         <View style={styles.productCard}>
           <View style={styles.identityRow}>
-            <ProductThumb uri={product.image_url} path={product.image_path} />
+            <ProductThumb uri={draft.image_url} path={draft.image_path} />
             <View style={styles.identityText}>
-              <Text style={styles.productName}>{product.name}</Text>
-              {product.brand ? (
-                <Text style={styles.productBrand}>{product.brand}</Text>
+              <Text style={styles.productName}>{draft.name}</Text>
+              {draft.brand ? (
+                <Text style={styles.productBrand}>{draft.brand}</Text>
+              ) : null}
+              {/* The correction MACHINERY lives in the AI card above, next
+                  to the guess it corrects — but the user's eye lands here
+                  first. Without this, the only door into that flow is a
+                  chip that may be a full screen-height away. */}
+              {draft.aiEstimate && !titleEditing ? (
+                <Pressable
+                  onPress={() => openCorrection()}
+                  disabled={reestimating}
+                  hitSlop={6}
+                >
+                  <Text style={styles.fixItLink}>Not the right dish? Fix it</Text>
+                </Pressable>
               ) : null}
             </View>
           </View>
           <View style={styles.cardDivider} />
           <Text style={styles.refLabel}>Per 100g</Text>
           <View style={styles.macroGrid}>
-            {macroRows.map((m) => (
+            {MACRO_META.map((m) => (
               <View
                 key={m.key}
                 style={[styles.macroCell, { backgroundColor: `${m.color}12` }]}
               >
-                <Text style={[styles.macroCellVal, { color: m.color }]}>
-                  {m.value}
-                  <Text style={styles.macroCellUnit}> {m.unit}</Text>
-                </Text>
+                {draft.aiEstimate ? (
+                  <View style={styles.macroCellValueRow}>
+                    <TextInput
+                      style={[styles.macroCellInput, { color: m.color }]}
+                      value={macroText[m.key]}
+                      onChangeText={(t) => updateMacro(m, t)}
+                      keyboardType="decimal-pad"
+                      selectTextOnFocus
+                    />
+                    <Text style={[styles.macroCellUnit, { color: m.color }]}>
+                      {" "}
+                      {m.unit}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={[styles.macroCellVal, { color: m.color }]}>
+                    {m.get(draft)}
+                    <Text style={styles.macroCellUnit}> {m.unit}</Text>
+                  </Text>
+                )}
                 <Text style={styles.macroCellLabel}>{m.label}</Text>
               </View>
             ))}
@@ -593,7 +826,7 @@ export function ProductScreen() {
             <Text style={styles.servingSuggestion}>
               Suggested serving:{" "}
               <Text style={styles.servingSuggestionValue}>
-                {product.serving_label ?? `${servingPreset}g`}
+                {draft.serving_label ?? `${servingPreset}g`}
               </Text>
             </Text>
           ) : null}
@@ -755,7 +988,7 @@ export function ProductScreen() {
             pressed && canSubmit && { opacity: 0.88 },
           ]}
           onPress={handleSubmit}
-          disabled={!canSubmit || saving}
+          disabled={!canSubmit || saving || reestimating}
         >
           {saving ? (
             <ActivityIndicator color={Colors.bg} />
@@ -888,15 +1121,135 @@ const styles = StyleSheet.create(
     fontSize: Typography.xs,
     fontWeight: Typography.semibold,
   },
-  aiAlternatives: {
-    fontSize: Typography.sm,
-    color: Colors.textSub,
-  },
   aiNote: {
     fontSize: Typography.xs,
     color: Colors.textMuted,
     lineHeight: 16,
   },
+  aiErrorText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+    color: Colors.danger,
+    lineHeight: 18,
+  },
+
+  // Corrected-pass warning — deliberately LOUDER than the first-pass aiNote
+  // styling above. The identity now looks certain (it's user-asserted), so
+  // the one thing left to distrust — the macros — needs to stay visible,
+  // not fade into muted disclaimer text.
+  correctedWarningBox: {
+    backgroundColor: `${Colors.warning}15`,
+    borderWidth: 1,
+    borderColor: `${Colors.warning}45`,
+    borderRadius: Radius.control,
+    padding: Spacing.sm,
+  },
+  correctedWarningBoxDanger: {
+    backgroundColor: `${Colors.danger}15`,
+    borderColor: `${Colors.danger}45`,
+  },
+  correctedWarningText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    color: Colors.warning,
+    lineHeight: 18,
+  },
+  correctedWarningTextDanger: {
+    color: Colors.danger,
+  },
+
+  // Chips — alternatives + "Something else…"
+  chipsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  chip: {
+    maxWidth: 200,
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 7,
+  },
+  chipDisabled: {
+    opacity: 0.5,
+  },
+  chipText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+  },
+  chipGhost: {
+    backgroundColor: "transparent",
+    borderStyle: "dashed",
+    borderColor: Colors.borderSub,
+  },
+  chipGhostText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.textSub,
+  },
+
+  // Free-text correction entry
+  titleEditRow: {
+    gap: Spacing.sm,
+  },
+  titleEditInput: {
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.control,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    fontSize: Typography.base,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+  },
+  titleEditActions: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+  },
+  titleEditCancel: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  titleEditCancelText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+    color: Colors.textSub,
+  },
+  titleEditSubmit: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.green,
+    borderRadius: Radius.pill,
+    paddingVertical: 10,
+  },
+  titleEditSubmitDisabled: {
+    backgroundColor: Colors.surface2,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  titleEditSubmitText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    color: Colors.bg,
+  },
+
+  fixItLink: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.green,
+    marginTop: 2,
+    marginBottom: Spacing.xs,
+  },
+
   productName: {
     fontSize: Typography.md,
     fontWeight: Typography.bold,
@@ -968,6 +1321,20 @@ const styles = StyleSheet.create(
     fontWeight: Typography.bold,
     fontFamily: Fonts.mono.bold,
     letterSpacing: -0.2,
+  },
+  macroCellValueRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    justifyContent: "center",
+  },
+  macroCellInput: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
+    letterSpacing: -0.2,
+    minWidth: 34,
+    padding: 0,
+    textAlign: "right",
   },
   macroCellUnit: {
     fontSize: Typography.xs,

@@ -1,17 +1,29 @@
 // ============================================================
 // src/screens/BatchIngredientPickerScreen.tsx
 // ============================================================
-// Search a food, say how much of it went into the batch, hand it back to
-// whoever opened this screen (route.params.onPick — see the type's comment
-// in types/index.ts for why a callback and not a store slice).
+// Search, scan, photograph, or pick from the library — however the food is
+// found, it funnels through the SAME two steps: land a FoodProduct (a
+// per-100g rate) via startPicking(), confirm a quantity, hand
+// {product, quantityG} back to whoever opened this screen (route.params.
+// onPick — see the type's comment in types/index.ts for why a callback and
+// not a store slice). Nothing here ever writes to meal_entries or the
+// composition — that only happens when BatchEditorScreen's Save is pressed.
 //
-// DELIBERATE SCOPE CUT for this pass: OFF search + My Library only — no
-// barcode scan, no AI meal photo, no inline "create a custom food". Those
-// all target a specific {date, mealType} entry, which a batch ingredient
-// doesn't have. A custom food you've used at least once already shows up in
-// My Library (ProductScreen upserts saved_ingredients on every save, custom
-// or not) — a brand-new one not yet used anywhere isn't reachable from here
-// yet. If that turns out to matter, it's an additive change, not a rework.
+// Barcode and AI-photo reuse the existing scanner/photo-recognition LOOKUPS
+// only (ScannerScreen in "pick mode" via its onScanned callback param, and
+// lib/mealPhotoCapture.ts's shared capture pipeline) — never their logging
+// behaviour, which targets a {date, mealType} meal entry a batch ingredient
+// doesn't have. A photo-scan result is exactly as "editable estimate, never
+// auto-added" here as it is in the logging flow: it lands on the same
+// quantity-confirm step as a search result (with the same AI banner
+// ProductScreen shows), and only joins the ingredient list once the user
+// taps "Add to batch".
+//
+// STILL a scope cut: no inline "create a custom food" — a custom food
+// you've used at least once already shows up in My Library (ProductScreen
+// upserts saved_ingredients on every save, custom or not); a brand-new one
+// not yet used anywhere isn't reachable from here. Additive, not a rework,
+// if that turns out to matter.
 // ============================================================
 
 import React, { useState, useRef } from "react";
@@ -31,6 +43,7 @@ import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { searchFood } from "../lib/openfoodfacts";
+import { captureAndScanMealPhoto } from "../lib/mealPhotoCapture";
 import { useStore } from "../store/useStore";
 import {
   Colors,
@@ -42,6 +55,20 @@ import {
   withDefaultFont,
 } from "../theme/tokens";
 import { FoodProduct, RootStackParamList, SavedIngredient } from "../types";
+
+// Traffic-light mapping for aiEstimate.confidence — same palette and same
+// meaning as ProductScreen's, so "trust this less" reads identically
+// wherever an AI-photo estimate shows up in the app.
+const AI_CONFIDENCE_COLOR: Record<"high" | "medium" | "low", string> = {
+  high: Colors.green,
+  medium: Colors.warning,
+  low: Colors.danger,
+};
+const AI_CONFIDENCE_LABEL: Record<"high" | "medium" | "low", string> = {
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "BatchIngredientPicker">;
 type Route = RouteProp<RootStackParamList, "BatchIngredientPicker">;
@@ -79,6 +106,7 @@ export function BatchIngredientPickerScreen() {
   // this product.
   const [picking, setPicking] = useState<FoodProduct | null>(null);
   const [quantity, setQuantity] = useState("100");
+  const [scanningMeal, setScanningMeal] = useState(false);
 
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -104,6 +132,51 @@ export function BatchIngredientPickerScreen() {
   const startPicking = (product: FoodProduct) => {
     setQuantity(product.serving_g != null ? String(product.serving_g) : "100");
     setPicking(product);
+  };
+
+  // Pick mode: ScannerScreen hands the found product back through this
+  // callback and pops itself, instead of the log flow's navigate("Product").
+  // A fresh closure every tap — see the route-param comment in types/index.ts
+  // on why that matters (a stale one could reuse a dead product/quantity
+  // state from an earlier open of this screen).
+  const handleScanBarcode = () => {
+    navigation.navigate("Scanner", {
+      onScanned: (product) => startPicking(product),
+    });
+  };
+
+  // Same capture→estimate pipeline the logging flow's "Scan meal" button
+  // uses (lib/mealPhotoCapture.ts) — just handed to startPicking() instead
+  // of navigate("Product"). The result still lands on the exact same
+  // quantity-confirm step as a search hit; the AI banner below tells the
+  // user it's an estimate, but nothing joins the ingredient list until they
+  // tap "Add to batch".
+  const handleScanMeal = async () => {
+    setScanningMeal(true);
+    try {
+      const result = await captureAndScanMealPhoto();
+      switch (result.status) {
+        case "cancelled":
+          return;
+        case "permission_denied":
+          Alert.alert(
+            "Camera access needed",
+            "Allow camera access to scan a meal photo.",
+          );
+          return;
+        case "prep_failed":
+          Alert.alert("Couldn't process that photo", "Try taking it again.");
+          return;
+        case "scan_failed":
+          Alert.alert("Couldn't identify that meal", result.message);
+          return;
+        case "ok":
+          startPicking(result.product);
+          return;
+      }
+    } finally {
+      setScanningMeal(false);
+    }
   };
 
   const confirmQuantity = () => {
@@ -141,11 +214,78 @@ export function BatchIngredientPickerScreen() {
           <Text style={styles.headerTitle}>
             {picking ? "How much?" : "Add ingredient"}
           </Text>
-          <View style={{ width: 36 }} />
+          {picking ? (
+            <View style={{ width: 36 }} />
+          ) : (
+            <View style={styles.headerActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.scanBtn,
+                  pressed && { opacity: 0.75 },
+                ]}
+                onPress={handleScanBarcode}
+              >
+                <Text style={styles.scanIcon}>⌗</Text>
+                <Text style={styles.scanLabel}>Scan</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.scanBtn,
+                  pressed && { opacity: 0.75 },
+                ]}
+                onPress={handleScanMeal}
+                disabled={scanningMeal}
+              >
+                {scanningMeal ? (
+                  <ActivityIndicator size="small" color={Colors.textSub} />
+                ) : (
+                  <>
+                    <Text style={styles.scanIcon}>📷</Text>
+                    <Text style={styles.scanLabel}>Scan meal</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+          )}
         </View>
 
         {picking ? (
           <View style={styles.quantityBody}>
+            {picking.aiEstimate ? (
+              <View style={styles.aiCard}>
+                <View style={styles.aiHeaderRow}>
+                  <Text style={styles.aiTitle}>🤖 AI estimate</Text>
+                  <View
+                    style={[
+                      styles.confidencePill,
+                      {
+                        backgroundColor: `${AI_CONFIDENCE_COLOR[picking.aiEstimate.confidence]}18`,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.confidencePillText,
+                        { color: AI_CONFIDENCE_COLOR[picking.aiEstimate.confidence] },
+                      ]}
+                    >
+                      {AI_CONFIDENCE_LABEL[picking.aiEstimate.confidence]} confidence
+                    </Text>
+                  </View>
+                </View>
+                {picking.aiEstimate.alternatives.length > 0 ? (
+                  <Text style={styles.aiAlternatives}>
+                    Could also be: {picking.aiEstimate.alternatives.join(", ")}
+                  </Text>
+                ) : null}
+                {picking.aiEstimate.notes.map((note, i) => (
+                  <Text key={i} style={styles.aiNote}>
+                    {note}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+
             <Text style={styles.quantityName} numberOfLines={2}>
               {picking.name}
             </Text>
@@ -394,6 +534,68 @@ const styles = StyleSheet.create(
       fontSize: Typography.base,
       fontWeight: Typography.bold,
       color: Colors.text,
+    },
+    headerActions: {
+      flexDirection: "row",
+      gap: Spacing.xs,
+    },
+    scanBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      backgroundColor: Colors.surface,
+      borderRadius: Radius.pill,
+      borderWidth: 1,
+      borderColor: Colors.border,
+      paddingHorizontal: Spacing.sm,
+      paddingVertical: 7,
+    },
+    scanIcon: {
+      fontSize: 14,
+      color: Colors.textSub,
+    },
+    scanLabel: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.semibold,
+      color: Colors.textSub,
+    },
+
+    aiCard: {
+      backgroundColor: Colors.surface,
+      borderRadius: Radius.card,
+      borderWidth: 1,
+      borderColor: Colors.border,
+      padding: Spacing.md,
+      marginBottom: Spacing.md,
+      gap: Spacing.xs,
+    },
+    aiHeaderRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+    },
+    aiTitle: {
+      fontSize: Typography.sm,
+      fontWeight: Typography.bold,
+      color: Colors.text,
+    },
+    confidencePill: {
+      borderRadius: Radius.pill,
+      paddingHorizontal: 9,
+      paddingVertical: 3,
+    },
+    confidencePillText: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.semibold,
+    },
+    aiAlternatives: {
+      fontSize: Typography.sm,
+      color: Colors.textSub,
+    },
+    aiNote: {
+      fontSize: Typography.xs,
+      color: Colors.textMuted,
+      lineHeight: 16,
     },
 
     tabBar: {

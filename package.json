@@ -9,7 +9,8 @@
     "build:preview": "eas build -p android --profile preview",
     "postinstall": "patch-package",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:functions": "deno check --node-modules-dir=none --no-lock supabase/functions/*/index.ts"
   },
   "dependencies": {
     "@expo-google-fonts/hanken-grotesk": "^0.4.3",

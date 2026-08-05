@@ -83,6 +83,26 @@ export interface FoodProduct {
     alternatives: string[];
     confidence: "high" | "medium" | "low";
     notes: string[];
+    /** Only set on a labelled re-estimate. See mealRecognition.ts. */
+    identityDivergence?: boolean;
+    /**
+     * The JPEG bytes (base64) that produced this estimate. Retained so a
+     * correction can resend the SAME photo to scan-meal-photo with a new
+     * user_dish_label, without reopening the camera. This is client-side
+     * retention only — never uploaded to Storage, never spread into a
+     * Supabase insert (aiEstimate isn't a column on meal_entries or
+     * saved_ingredients; both write paths list columns explicitly).
+     */
+    sourceImageBase64: string;
+    /**
+     * true once the user has corrected the identification at least once.
+     * Drives ProductScreen's banner (header/subtext/badge/alternatives) and
+     * is the one flag that distinguishes "first AI guess" from "AI
+     * estimate under a user-asserted name" — the identity is certain either
+     * way the macros came from the model, so this does NOT mean the
+     * macros are more trustworthy, only that the NAME is.
+     */
+    userCorrected: boolean;
   };
 }
 
@@ -524,7 +544,19 @@ export interface CopyPayload {
 export type RootStackParamList = {
   MainTabs: undefined;
   AddIngredient: { date: string; mealType: MealType };
-  Scanner: { date: string; mealType: MealType };
+  /**
+   * Two unrelated callers, two shapes:
+   *   - log flow (AddIngredientScreen): {date, mealType} — a found product
+   *     replaces this screen with Product, targeting that meal.
+   *   - batch-ingredient-picker flow: {onScanned} — a found product is
+   *     handed back via callback and this screen pops, exactly like
+   *     BatchIngredientPicker's own onPick (see the comment on that route
+   *     below for why a callback param, not store state).
+   * ScannerScreen branches on which key is present; never both.
+   */
+  Scanner:
+    | { date: string; mealType: MealType; onScanned?: undefined }
+    | { onScanned: (product: FoodProduct) => void; date?: undefined; mealType?: undefined };
   Product: {
     product: FoodProduct;
     date: string;

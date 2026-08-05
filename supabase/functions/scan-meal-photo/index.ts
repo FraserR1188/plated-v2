@@ -59,15 +59,23 @@ const ANTHROPIC_TIMEOUT_MS = 30_000;
 // against this schema before it ever reaches us, so "the model replied in
 // prose" is not a failure mode we have to handle.
 
-const MACRO_PROPERTIES: Record<MacroKey, Record<string, unknown>> = Object.fromEntries(
-  MACRO_KEYS.map((key) => [
-    key,
-    {
+// Object.fromEntries always types its result with a string INDEX signature
+// ({ [k: string]: V }), never the union-keyed Record<MacroKey, V> this needs
+// — TS can't see that MACRO_KEYS covers every MacroKey, so a cast on the
+// built value is a real structural mismatch (TS2352), not a formality. A
+// typed reduce accumulator sidesteps that: each assignment is checked
+// against Record<MacroKey, ...> as it happens, so a missing or misspelled
+// key is a compile error instead of a silenced cast.
+const MACRO_PROPERTIES = MACRO_KEYS.reduce<Record<MacroKey, Record<string, unknown>>>(
+  (acc, key) => {
+    acc[key] = {
       type: "number",
       description: `Estimated ${key} for the WHOLE portion described in portionGrams — NOT per 100g. Must be a realistic, non-negative number.`,
-    },
-  ]),
-) as Record<MacroKey, Record<string, unknown>>;
+    };
+    return acc;
+  },
+  {} as Record<MacroKey, Record<string, unknown>>,
+);
 
 const MEAL_SCAN_TOOL = {
   name: "record_meal_estimate",
@@ -150,6 +158,23 @@ Rules, in order of importance:
 
 8. If the image shows no identifiable food, or is too degraded to assess at all, set recognisable to false.`;
 
+// Appended to SYSTEM_PROMPT only when the request carries a user_dish_label
+// (a corrected re-estimate). The server OVERRIDES dishName/alternativeNames
+// with the label regardless of what the model returns here — see the
+// labelOverride param on normalise() below — so this text exists to get the
+// MACROS right, not the name. A model that ignores rule 9
+// still can't corrupt the identity, but it CAN still produce macros for the
+// wrong dish under a forced-correct title, which is worse than an honest
+// wrong guess. Rule 9 is the only defence against that, which is why it is
+// blunt and repeats itself.
+const CORRECTION_ADDENDUM = `
+
+9. THIS IS A CORRECTED RE-ESTIMATE. The user has told you exactly what this dish is — see the identification in the user message. Treat that as settled, non-negotiable fact:
+   - Do NOT rename it, hedge on it, or second-guess it. Do NOT populate alternativeNames — return an empty array. dishName should restate the user's label.
+   - The photograph is now ONLY for judging QUANTITY: how many items, how much of each visible component, a realistic total weight (portionGrams). If what's on the plate looks like it could be a different dish than the label says, that is not your call — estimate the amount of food you can see and produce macros for the LABELLED dish at that amount.
+   - confidence on this pass describes your uncertainty in the QUANTITY/macro estimate only. The identification is not in question, so it should never be the reason for a "low" confidence here.
+   - It is possible the photo genuinely doesn't look like what the label says (wrong photo, badly lit, odd angle). Estimate as best you can regardless — do not refuse or return placeholder numbers.`;
+
 // ─── Types coming back from the model ────────────────────────
 
 type RawResult = {
@@ -184,6 +209,18 @@ export type MealScanSuccess = {
    *  the label scanner's per-field confidence — a UX hint, not a gate. */
   confidence: Confidence;
   notes: string[];
+  /**
+   * ONLY present (and only ever computed) on a labelled re-estimate pass.
+   * true when the model's OWN raw identification (before the server
+   * overrides it with the user's label) shared no words with that label —
+   * a cheap signal that the model likely didn't internalise the correction,
+   * so the macros below may still describe the WRONG dish under a
+   * now-forced-correct name. That combination is more deceptive than an
+   * honest wrong guess, which is why it's worth flagging even though the
+   * signal is crude. Absent on a first pass, where there is nothing to
+   * diverge from.
+   */
+  identityDivergence?: boolean;
 };
 
 export type MealScanFailure = {
@@ -231,12 +268,45 @@ function isValidMacro(v: unknown): v is number {
 }
 
 /**
+ * Crude, cheap word-overlap check: does the model's own raw identification
+ * share ANY word with the user's corrected label? Used only to flag
+ * `identityDivergence`, never to reject or alter the estimate — see the
+ * type's comment for why this matters more than it looks like it should.
+ */
+function labelDiverges(label: string, modelGuess: string): boolean {
+  const words = (s: string) =>
+    new Set(
+      s
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+  const labelWords = words(label);
+  const guessWords = words(modelGuess);
+  if (labelWords.size === 0 || guessWords.size === 0) return false;
+  for (const w of guessWords) {
+    if (labelWords.has(w)) return false;
+  }
+  return true;
+}
+
+/**
  * Raw tool input -> the wire response, or null if the response is unusable
  * (caller turns that into a model_error, distinct from a clean "no food in
  * this photo" no_food).
+ *
+ * `labelOverride`, when present, means this is a corrected re-estimate: the
+ * user has already told us what the dish is, so the NAME and ALTERNATIVES
+ * are taken from the request, not the model — deterministically, not just
+ * via prompt compliance (CORRECTION_ADDENDUM asks the model to do this too,
+ * but this override is what actually guarantees it). The MACROS are still
+ * entirely the model's — this override cannot and does not make them
+ * correct. See identityDivergence for the one signal that flags when they
+ * might not be.
  */
-function normalise(raw: RawResult): MealScanSuccess | null {
-  const name = raw.dishName?.trim();
+function normalise(raw: RawResult, labelOverride?: string): MealScanSuccess | null {
+  const name = labelOverride ?? raw.dishName?.trim();
   if (!name) return null;
 
   if (!isValidMacro(raw.portionGrams) || raw.portionGrams <= 0) return null;
@@ -254,12 +324,16 @@ function normalise(raw: RawResult): MealScanSuccess | null {
     per100g[key] = round(key, raw.macros[key] * factor);
   }
 
-  const alternatives = Array.isArray(raw.alternativeNames)
-    ? raw.alternativeNames
-        .map((a) => (typeof a === "string" ? a.trim() : ""))
-        .filter((a) => a.length > 0 && a.toLowerCase() !== name.toLowerCase())
-        .slice(0, 2)
-    : [];
+  // A corrected pass has final say on identity — the user already said what
+  // else this could be, so "here's what ELSE it could be" is nonsensical.
+  const alternatives = labelOverride
+    ? []
+    : Array.isArray(raw.alternativeNames)
+      ? raw.alternativeNames
+          .map((a) => (typeof a === "string" ? a.trim() : ""))
+          .filter((a) => a.length > 0 && a.toLowerCase() !== name.toLowerCase())
+          .slice(0, 2)
+      : [];
 
   const confidence: Confidence = (["high", "medium", "low"] as const).includes(
     raw.confidence,
@@ -276,6 +350,19 @@ function normalise(raw: RawResult): MealScanSuccess | null {
     );
   }
 
+  // Only ever computed on a labelled pass — there is nothing to diverge
+  // from on a first scan. See the type's comment: this does NOT mean the
+  // macros are wrong when false, only that the cheapest signal we have
+  // found nothing suspicious.
+  const identityDivergence = labelOverride
+    ? labelDiverges(labelOverride, raw.dishName ?? "")
+    : undefined;
+  if (identityDivergence) {
+    notes.push(
+      "The AI's own read of this photo didn't match your correction — double-check every macro closely, it may still describe the wrong dish.",
+    );
+  }
+
   return {
     ok: true,
     dish: { name, alternatives },
@@ -286,6 +373,7 @@ function normalise(raw: RawResult): MealScanSuccess | null {
     per100g,
     confidence,
     notes,
+    ...(identityDivergence !== undefined ? { identityDivergence } : {}),
   };
 }
 
@@ -342,10 +430,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   let imageBase64: string;
   let mediaType: string;
+  let userDishLabel: string | undefined;
   try {
     const body = await req.json();
     imageBase64 = String(body?.imageBase64 ?? "");
     mediaType = String(body?.mediaType ?? "image/jpeg");
+    // Optional. Absent on a first scan. Present on a corrected re-estimate —
+    // see CORRECTION_ADDENDUM and normalise()'s labelOverride.
+    userDishLabel =
+      typeof body?.user_dish_label === "string"
+        ? body.user_dish_label.trim().slice(0, 200) || undefined
+        : undefined;
   } catch {
     return fail("bad_request", "Couldn't read that request.", 400);
   }
@@ -412,7 +507,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // No `temperature` — see extract-nutrition-label for why: Sonnet 5
         // / Opus 4.x reject non-default sampling params outright, and
         // forced tool use gives all the determinism this needs.
-        system: SYSTEM_PROMPT,
+        system: userDishLabel ? SYSTEM_PROMPT + CORRECTION_ADDENDUM : SYSTEM_PROMPT,
         tools: [MEAL_SCAN_TOOL],
         tool_choice: { type: "tool", name: MEAL_SCAN_TOOL.name },
         messages: [
@@ -429,7 +524,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
               },
               {
                 type: "text",
-                text: "Identify this meal and estimate its nutrition.",
+                text: userDishLabel
+                  ? `The user has told you exactly what this dish is: "${userDishLabel}". Treat that as settled — do not contradict it, rename it, or suggest alternatives. Use the photograph only to judge quantity: how many items, how much of each visible component, a realistic total weight. Estimate nutrition for "${userDishLabel}" at the amount shown in the photo.`
+                  : "Identify this meal and estimate its nutrition.",
               },
             ],
           },
@@ -515,7 +612,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     );
   }
 
-  const result = normalise(raw);
+  const result = normalise(raw, userDishLabel);
 
   if (!result) {
     await logExtraction(admin, {

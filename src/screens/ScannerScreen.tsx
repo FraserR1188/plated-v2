@@ -38,7 +38,8 @@ type ErrorKind = "not_found" | "network" | null;
 
 export function ScannerScreen() {
   const navigation = useNavigation<Nav>();
-  const { date, mealType } = useRoute<Route>().params;
+  const params = useRoute<Route>().params;
+  const { onScanned } = params;
   const insets = useSafeAreaInsets();
 
   const [hasPermission, setPermission] = useState<boolean | null>(null);
@@ -91,11 +92,18 @@ export function ScannerScreen() {
     const result = await lookupFood(data);
 
     if (result.status === "found") {
-      navigation.replace("Product", {
-        product: result.product,
-        date,
-        mealType,
-      });
+      if (onScanned) {
+        // Pick mode: hand the product back to whoever opened this screen
+        // (BatchIngredientPicker) and pop — never log it ourselves.
+        onScanned(result.product);
+        navigation.goBack();
+      } else {
+        navigation.replace("Product", {
+          product: result.product,
+          date: params.date,
+          mealType: params.mealType,
+        });
+      }
       return;
     }
 
@@ -110,11 +118,14 @@ export function ScannerScreen() {
     setFailedBarcode(null);
   };
 
+  // Only reachable in log mode — pick mode has no {date, mealType} target
+  // for a brand-new food to land in, so that action is hidden there.
   const handleAddManually = () => {
+    if (onScanned) return;
     navigation.replace("CreateFood", {
       barcode: failedBarcode ?? undefined,
-      date,
-      mealType,
+      date: params.date,
+      mealType: params.mealType,
     });
   };
 
@@ -271,16 +282,20 @@ export function ScannerScreen() {
 
               {errorKind === "not_found" ? (
                 <>
-                  {/* Primary: the productive path */}
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.primaryBtn,
-                      pressed && { opacity: 0.85 },
-                    ]}
-                    onPress={handleAddManually}
-                  >
-                    <Text style={styles.primaryText}>Add it manually</Text>
-                  </Pressable>
+                  {/* Primary: the productive path — only in log mode. Pick
+                      mode has no {date, mealType} for a brand-new food to
+                      land in (same scope cut as the picker's search tab). */}
+                  {!onScanned && (
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.primaryBtn,
+                        pressed && { opacity: 0.85 },
+                      ]}
+                      onPress={handleAddManually}
+                    >
+                      <Text style={styles.primaryText}>Add it manually</Text>
+                    </Pressable>
+                  )}
                   <View style={styles.errorActions}>
                     <Pressable
                       style={({ pressed }) => [
@@ -298,7 +313,9 @@ export function ScannerScreen() {
                       ]}
                       onPress={() => navigation.goBack()}
                     >
-                      <Text style={styles.secondaryText}>Search by name</Text>
+                      <Text style={styles.secondaryText}>
+                        {onScanned ? "Search instead" : "Search by name"}
+                      </Text>
                     </Pressable>
                   </View>
                 </>

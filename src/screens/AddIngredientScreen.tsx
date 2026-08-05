@@ -26,11 +26,9 @@ import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import * as ImagePicker from "expo-image-picker";
 import { searchFood } from "../lib/openfoodfacts";
 import { useStore } from "../store/useStore";
-import { prepareImage } from "../lib/imagePrep";
-import { scanMealPhoto, mealScanToFoodProduct } from "../lib/mealRecognition";
+import { captureAndScanMealPhoto } from "../lib/mealPhotoCapture";
 import {
   Colors,
   Spacing,
@@ -88,55 +86,38 @@ export function AddIngredientScreen() {
     navigation.navigate("Product", { product, date, mealType });
 
   // Photo of a PLATE, not a barcode or a label — a different button from
-  // "Scan" above. Camera only (no library): recognising what's on the
-  // plate depends on it being a fresh photo of food in front of the
-  // camera, not an old library image of anything. The photo itself is
-  // never uploaded or stored; scanMealPhoto sends the bytes for
-  // recognition and gets numbers back. Nothing reaches meal_entries until
-  // the user confirms on ProductScreen — mealScanToFoodProduct only builds
-  // an editable draft.
+  // "Scan" above. Nothing reaches meal_entries until the user confirms on
+  // ProductScreen — captureAndScanMealPhoto only builds an editable draft.
+  // (Capture/prepare/scan pipeline lives in lib/mealPhotoCapture.ts, shared
+  // with BatchIngredientPickerScreen, which reuses the SAME lookup but
+  // never routes the result through this screen's Product-logging path.)
   const handleScanMeal = async () => {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert(
-        "Camera access needed",
-        "Allow camera access to scan a meal photo.",
-      );
-      return;
-    }
-
-    const picked = await ImagePicker.launchCameraAsync({
-      quality: 1,
-      base64: false,
-    });
-    if (picked.canceled || !picked.assets?.[0]) return;
-
-    const asset = picked.assets[0];
     setScanningMeal(true);
     try {
-      const prepared = await prepareImage(
-        { uri: asset.uri, width: asset.width, height: asset.height },
-        "meal",
-      );
-      if (!prepared) {
-        Alert.alert(
-          "Couldn't process that photo",
-          "Try taking it again.",
-        );
-        return;
+      const result = await captureAndScanMealPhoto();
+      switch (result.status) {
+        case "cancelled":
+          return;
+        case "permission_denied":
+          Alert.alert(
+            "Camera access needed",
+            "Allow camera access to scan a meal photo.",
+          );
+          return;
+        case "prep_failed":
+          Alert.alert("Couldn't process that photo", "Try taking it again.");
+          return;
+        case "scan_failed":
+          Alert.alert("Couldn't identify that meal", result.message);
+          return;
+        case "ok":
+          navigation.navigate("Product", {
+            product: result.product,
+            date,
+            mealType,
+          });
+          return;
       }
-
-      const scan = await scanMealPhoto(prepared.base64);
-      if (!scan.ok) {
-        Alert.alert("Couldn't identify that meal", scan.message);
-        return;
-      }
-
-      navigation.navigate("Product", {
-        product: mealScanToFoodProduct(scan),
-        date,
-        mealType,
-      });
     } finally {
       setScanningMeal(false);
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { scanMealPhoto, mealScanToFoodProduct } from "../mealRecognition";
+import { scanMealPhoto, mealScanToFoodProduct, type MealScanSuccess } from "../mealRecognition";
 import { supabase } from "../supabase";
 import {
   VALID_SUCCESS,
@@ -30,6 +30,20 @@ describe("scanMealPhoto — valid responses", () => {
 
     expect(invoke()).toHaveBeenCalledWith("scan-meal-photo", {
       body: { imageBase64: "abc123", mediaType: "image/jpeg" },
+    });
+  });
+
+  it("passes user_dish_label through on a corrected re-estimate", async () => {
+    invoke().mockResolvedValue({ data: VALID_SUCCESS, error: null } as never);
+
+    await scanMealPhoto("abc123", "Fruit scone with clotted cream");
+
+    expect(invoke()).toHaveBeenCalledWith("scan-meal-photo", {
+      body: {
+        imageBase64: "abc123",
+        mediaType: "image/jpeg",
+        user_dish_label: "Fruit scone with clotted cream",
+      },
     });
   });
 
@@ -147,7 +161,7 @@ describe("scanMealPhoto — error envelopes (non-2xx)", () => {
 
 describe("mealScanToFoodProduct", () => {
   it("maps per100g and the portion assumption onto the fields ProductScreen already renders", () => {
-    const product = mealScanToFoodProduct(VALID_SUCCESS);
+    const product = mealScanToFoodProduct(VALID_SUCCESS, "sourceBytes");
 
     expect(product.name).toBe(VALID_SUCCESS.dish.name);
     expect(product.cal_per100).toBe(VALID_SUCCESS.per100g.cal);
@@ -166,19 +180,56 @@ describe("mealScanToFoodProduct", () => {
   });
 
   it("carries confidence, alternatives and notes into aiEstimate so ProductScreen can flag provenance", () => {
-    const product = mealScanToFoodProduct(LOW_CONFIDENCE_SUCCESS);
+    const product = mealScanToFoodProduct(LOW_CONFIDENCE_SUCCESS, "sourceBytes");
 
     expect(product.aiEstimate).toEqual({
       alternatives: LOW_CONFIDENCE_SUCCESS.dish.alternatives,
       confidence: "low",
       notes: LOW_CONFIDENCE_SUCCESS.notes,
+      sourceImageBase64: "sourceBytes",
+      userCorrected: false,
     });
   });
 
   it("never sets an image — the capture photo is used for recognition only, never stored", () => {
-    const product = mealScanToFoodProduct(VALID_SUCCESS);
+    const product = mealScanToFoodProduct(VALID_SUCCESS, "sourceBytes");
     expect(product.image_url).toBeUndefined();
     expect(product.image_path).toBeUndefined();
+  });
+
+  describe("on a corrected re-estimate (corrected = true)", () => {
+    it("sets userCorrected and retains the source image bytes the re-estimate needs", () => {
+      const product = mealScanToFoodProduct(VALID_SUCCESS, "sourceBytes", true);
+
+      expect(product.aiEstimate?.userCorrected).toBe(true);
+      expect(product.aiEstimate?.sourceImageBase64).toBe("sourceBytes");
+    });
+
+    it("forces alternatives empty even if the result still carries some — the user has final say", () => {
+      const stillHasAlternatives: MealScanSuccess = {
+        ...VALID_SUCCESS,
+        dish: { name: "Fruit scone with clotted cream", alternatives: ["Pâté on toast"] },
+      };
+
+      const product = mealScanToFoodProduct(stillHasAlternatives, "sourceBytes", true);
+
+      expect(product.aiEstimate?.alternatives).toEqual([]);
+    });
+
+    it("carries identityDivergence through when the server flagged the model's own guess as diverging", () => {
+      const diverging: MealScanSuccess = { ...VALID_SUCCESS, identityDivergence: true };
+
+      const product = mealScanToFoodProduct(diverging, "sourceBytes", true);
+
+      expect(product.aiEstimate?.identityDivergence).toBe(true);
+    });
+  });
+
+  it("defaults to userCorrected: false and keeps the model's own alternatives on a first pass", () => {
+    const product = mealScanToFoodProduct(VALID_SUCCESS, "sourceBytes");
+
+    expect(product.aiEstimate?.userCorrected).toBe(false);
+    expect(product.aiEstimate?.alternatives).toEqual(VALID_SUCCESS.dish.alternatives);
   });
 });
 

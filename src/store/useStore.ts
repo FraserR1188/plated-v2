@@ -10,7 +10,7 @@ import {
   FoodProduct,
 } from "../types";
 import { dateKey, TimeOfDay } from "../lib/time";
-import { applyEntries, draftsFromDay } from "../lib/entries";
+import { applyEntries, draftsFromDay, draftsForTarget } from "../lib/entries";
 import * as compositionApi from "../lib/compositions";
 
 const DEFAULT_GOALS: Goals = {
@@ -140,6 +140,15 @@ interface AppState {
   copyEntriesToDay: (
     entries: MealEntry[],
     targetDayKey: string,
+  ) => Promise<WriteResult>;
+  /**
+   * Copy entries onto ONE chosen {day, meal_type, time} — the single-item
+   * "Copy to…" sheet. Every entry passed in lands on the SAME slot; see
+   * draftsForTarget in lib/entries.ts for why this isn't copyEntriesToDay.
+   */
+  copyEntriesTo: (
+    entries: MealEntry[],
+    target: { dayKey: string; meal_type: MealType; time: TimeOfDay },
   ) => Promise<WriteResult>;
   /** "Save these 4 as a bundle." */
   saveBundleFromEntries: (
@@ -637,6 +646,20 @@ export const useStore = create<AppState>((set, get) => ({
       return { error: null };
     } catch (e) {
       return { error: msg(e, "Couldn't copy those. Check your connection.") };
+    }
+  },
+
+  copyEntriesTo: async (entries, target) => {
+    if (entries.length === 0) return { error: null };
+    try {
+      // Same rule as copyEntriesToDay: append the trigger's own `planned`
+      // from the RETURNING row, never a guess — a target slot in the future
+      // comes back planned = true regardless of what the source rows were.
+      const inserted = await applyEntries(draftsForTarget(entries, target));
+      set((s) => ({ entries: [...inserted, ...s.entries] }));
+      return { error: null };
+    } catch (e) {
+      return { error: msg(e, "Couldn't copy that. Check your connection.") };
     }
   },
 

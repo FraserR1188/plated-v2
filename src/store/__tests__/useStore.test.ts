@@ -229,3 +229,66 @@ describe("useStore.copyEntriesToDay", () => {
     expect(entries).toHaveLength(2);
   });
 });
+
+// ─── D5: copy-to-any-slot — the new contract ─────────────────────────────
+//
+// copyEntriesToDay (above) can only ever land a copy in the source's own
+// meal_type at the source's own wall-clock time — it just moves the day.
+// copyEntriesTo takes an explicit { dayKey, meal_type, time } target, so a
+// copy can land in ANY section at ANY time on ANY day. It must route through
+// the same applyEntries() seam (no third meal_entries insert site) and must
+// append whatever `planned` the trigger's RETURNING row actually says —
+// never guess.
+describe("useStore.copyEntriesTo", () => {
+  it("inserts exactly one new row at the CHOSEN day/meal/time, appends the trigger's own `planned`, and leaves the source untouched", async () => {
+    const source = makeEntry({
+      id: "source-1",
+      date: "2026-07-20",
+      meal_type: "breakfast",
+      eaten_at: "2026-07-20T08:00:00.000Z",
+      planned: false,
+    });
+    useStore.setState({ entries: [source] });
+    useStore.getState().setUserId("test-user-id");
+
+    // A future slot: the trigger would derive planned = true. The store must
+    // append THAT, not assume false because the source was logged.
+    const insertedCopy = makeEntry({
+      id: "copy-1",
+      date: "2026-07-27",
+      meal_type: "dinner",
+      eaten_at: "2026-07-27T19:00:00.000Z",
+      planned: true,
+    });
+
+    const select = vi.fn(async () => ({ data: [insertedCopy], error: null }));
+    const insert = vi.fn(() => ({ select }));
+    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ insert });
+
+    const { error } = await useStore.getState().copyEntriesTo([source], {
+      dayKey: "2026-07-27",
+      meal_type: "dinner",
+      time: { hours: 19, minutes: 0 },
+    });
+
+    expect(error).toBeNull();
+
+    const entries = useStore.getState().entries;
+
+    // Source untouched: same id, same day, same section.
+    const stillSource = entries.find((e) => e.id === "source-1");
+    expect(stillSource).toBeDefined();
+    expect(stillSource!.date).toBe("2026-07-20");
+    expect(stillSource!.meal_type).toBe("breakfast");
+
+    // Exactly one new row, in the chosen section, carrying the trigger's planned.
+    const copy = entries.find((e) => e.id === "copy-1");
+    expect(copy).toBeDefined();
+    expect(copy!.date).toBe("2026-07-27");
+    expect(copy!.meal_type).toBe("dinner");
+    expect(copy!.planned).toBe(true);
+
+    // Total entry count grew by exactly one.
+    expect(entries).toHaveLength(2);
+  });
+});

@@ -41,6 +41,8 @@ import {
   addDays,
   parseTimeOfDay,
   earliestTimeOfDay,
+  sameTimeOnDay,
+  willBePlanned,
   TimeOfDay,
   DEFAULT_HOUR,
 } from "../lib/time";
@@ -118,6 +120,7 @@ export function TodayScreen() {
     deleteEntry,
     deleteEntries,
     copyEntriesToDay,
+    copyEntriesTo,
     saveBundleFromEntries,
     addEntriesToBundle,
     applyCompositionToDay,
@@ -196,7 +199,12 @@ export function TodayScreen() {
   const selecting = selection !== null;
 
   const [sheet, setSheet] = useState<
-    null | "apply" | "save" | "copy" | "time" // copy = date picker; time = bulk retime
+    | null
+    | "apply"
+    | "save"
+    | "copy" // multi-select day-only picker — each row keeps its own meal/time
+    | "copyOne" // single-item Day/Meal/Time sheet — see CopyToSheet
+    | "time" // bulk retime
   >(null);
   const [busy, setBusy] = useState(false);
 
@@ -378,6 +386,30 @@ export function TodayScreen() {
     setSelected(target); // land on the day you just filled. Show, don't tell.
   };
 
+  // Copy-to-a-slot: the single-item sheet. Unlike onCopyDayPicked above, the
+  // target's meal_type and time are chosen in the sheet, not inherited — see
+  // draftsForTarget in lib/entries.ts.
+  const onCopyTargetPicked = async (target: {
+    dayKey: string;
+    meal_type: MealType;
+    time: TimeOfDay;
+  }) => {
+    setSheet(null);
+    const entry = selectedEntries[0];
+    if (!entry) return;
+
+    setBusy(true);
+    const { error } = await copyEntriesTo([entry], target);
+    setBusy(false);
+
+    if (error) {
+      Alert.alert("Couldn't copy that", error);
+      return;
+    }
+    exitSelection();
+    setSelected(target.dayKey); // land on the day you just filled. Show, don't tell.
+  };
+
   // Bulk retime: one time, applied to every selected row (each keeps its own
   // calendar day). Writes only the clock — never a macro. Selection is kept so a
   // partial failure stays on screen.
@@ -482,7 +514,9 @@ export function TodayScreen() {
           hasOverduePending={hasOverduePending}
           onMarkEaten={handleMarkEatenSelected}
           onSetTime={handleSetTimeSelected}
-          onCopy={() => setSheet("copy")}
+          onCopy={() =>
+            setSheet(selectedEntries.length === 1 ? "copyOne" : "copy")
+          }
           onBundle={() => setSheet("save")}
           onDelete={handleDeleteSelected}
           onCancel={exitSelection}
@@ -526,6 +560,14 @@ export function TodayScreen() {
           if (error) Alert.alert("Couldn't add to that bundle", error);
           else exitSelection();
         }}
+      />
+
+      {/* ── Copy to a chosen day/meal/time (single item) ────── */}
+      <CopyToSheet
+        visible={sheet === "copyOne"}
+        entry={selectedEntries[0] ?? null}
+        onClose={() => setSheet(null)}
+        onCopy={onCopyTargetPicked}
       />
     </SafeAreaView>
   );
@@ -1090,6 +1132,15 @@ function SelectionActionBar({
               <Text style={barStyles.actionDangerText}>Remove</Text>
             </Pressable>
           </View>
+
+          {/* Copying more than one item skips the Day/Meal/Time sheet — each
+              row keeps its OWN section and time, only the day changes. Say so,
+              or the difference from a single-item copy reads as a bug. */}
+          {count > 1 && (
+            <Text style={barStyles.copyHint}>
+              Copying {count} items keeps each item's own meal & time
+            </Text>
+          )}
         </View>
       )}
     </View>
@@ -1188,6 +1239,13 @@ const barStyles = StyleSheet.create({
     fontWeight: Typography.bold,
     fontFamily: Fonts.sans.bold,
     color: Colors.danger,
+  },
+  copyHint: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
+    textAlign: "center",
   },
 });
 
@@ -1559,6 +1617,234 @@ function SaveBundleSheet({
     </Modal>
   );
 }
+
+// ─── Copy-to-a-slot sheet (single item) ──────────────────────────────────
+//
+// Day / Meal / Time, all three, all overridable — the whole point of D5.
+// Defaults to the source entry's OWN day/meal/time, so "just change the
+// meal" or "just change the time" is a one-tap edit, not a full re-entry.
+//
+// The Logged/Planned pill is computed from THIS SHEET'S OWN live day/meal/
+// time state on every render, via sameTimeOnDay + willBePlanned — never from
+// the source entry's original eaten_at. Move the time picker into the future
+// and the pill must flip before you commit, the same reason ApplyBundleSheet's
+// pills exist: silently recording a plan as "eaten" is a WHOOP-correlation bug,
+// not a display nit.
+function CopyToSheet({
+  visible,
+  entry,
+  onClose,
+  onCopy,
+}: {
+  visible: boolean;
+  entry: MealEntry | null;
+  onClose: () => void;
+  onCopy: (target: {
+    dayKey: string;
+    meal_type: MealType;
+    time: TimeOfDay;
+  }) => void;
+}) {
+  const [dayKey, setDayKey] = useState(todayKey());
+  const [mealType, setMealType] = useState<MealType>("breakfast");
+  const [time, setTime] = useState<TimeOfDay>({ hours: 8, minutes: 0 });
+  const [picking, setPicking] = useState<"date" | "time" | null>(null);
+
+  // Reseed from the source entry every time the sheet OPENS (`visible` flips
+  // true) — not on every render, or moving the time picker would keep
+  // snapping back to the source's own time. Keyed on `visible` as well as
+  // `entry?.id`, not just the id: the sheet stays mounted between opens (only
+  // its Modal `visible` prop toggles), so re-opening on the SAME entry after
+  // a Cancel must still reset to source values, not resume the cancelled
+  // edit — "defaults to the source" means every open, not just the first.
+  useEffect(() => {
+    if (!visible || !entry) return;
+    setDayKey(dateKey(new Date(entry.eaten_at)));
+    setMealType(entry.meal_type);
+    setTime(localHM(entry.eaten_at));
+  }, [visible, entry?.id]);
+
+  if (!entry) return null;
+
+  const prospectiveEatenAt = sameTimeOnDay(time, dayKey);
+  const planned = willBePlanned(prospectiveEatenAt);
+
+  const timeSeed = new Date();
+  timeSeed.setHours(time.hours, time.minutes, 0, 0);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="slide"
+      onRequestClose={onClose}
+    >
+      <Pressable style={sheetStyles.backdrop} onPress={onClose} />
+      <View style={sheetStyles.sheet}>
+        <View style={sheetStyles.grabber} />
+        <Text style={sheetStyles.title} numberOfLines={1}>
+          Copy "{entry.name}"
+        </Text>
+
+        <Pressable
+          style={copyStyles.row}
+          onPress={() => setPicking("date")}
+        >
+          <Text style={copyStyles.rowLabel}>Day</Text>
+          <Text style={copyStyles.rowValue}>{formatDayLabel(dayKey)}</Text>
+        </Pressable>
+
+        <Text style={copyStyles.rowLabel}>Meal</Text>
+        <View style={copyStyles.segmented}>
+          {MEAL_TYPES.map((mt) => (
+            <Pressable
+              key={mt}
+              style={[
+                copyStyles.segment,
+                mealType === mt && copyStyles.segmentActive,
+              ]}
+              onPress={() => setMealType(mt)}
+            >
+              <Text
+                style={[
+                  copyStyles.segmentText,
+                  mealType === mt && copyStyles.segmentTextActive,
+                ]}
+              >
+                {MEAL_LABELS[mt]}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        <Pressable
+          style={copyStyles.row}
+          onPress={() => setPicking("time")}
+        >
+          <Text style={copyStyles.rowLabel}>Time</Text>
+          <Text style={copyStyles.rowValue}>{formatTimeOfDay(time)}</Text>
+        </Pressable>
+
+        <View
+          style={[
+            sheetStyles.pill,
+            planned ? sheetStyles.pillPlanned : sheetStyles.pillLogged,
+            copyStyles.pill,
+          ]}
+        >
+          <Text
+            style={[
+              sheetStyles.pillText,
+              planned ? sheetStyles.pillTextPlanned : sheetStyles.pillTextLogged,
+            ]}
+          >
+            {planned ? "Will be saved as Planned" : "Will be saved as Logged"}
+          </Text>
+        </View>
+
+        <Pressable
+          style={({ pressed }) => [
+            sheetStyles.primary,
+            pressed && { opacity: 0.85 },
+          ]}
+          onPress={() => onCopy({ dayKey, meal_type: mealType, time })}
+        >
+          <Text style={sheetStyles.primaryText}>Copy</Text>
+        </Pressable>
+
+        <Pressable style={sheetStyles.close} onPress={onClose}>
+          <Text style={sheetStyles.closeText}>Cancel</Text>
+        </Pressable>
+      </View>
+
+      {picking === "date" && (
+        <DateTimePicker
+          value={parseDateKey(dayKey)}
+          mode="date"
+          display="default"
+          onChange={(event: any, picked?: Date) => {
+            setPicking(null);
+            if (event?.type === "dismissed" || !picked) return;
+            setDayKey(dateKey(picked));
+          }}
+        />
+      )}
+
+      {picking === "time" && (
+        <DateTimePicker
+          value={timeSeed}
+          mode="time"
+          is24Hour
+          display="default"
+          onChange={(event: any, picked?: Date) => {
+            setPicking(null);
+            if (event?.type === "dismissed" || !picked) return;
+            setTime({ hours: picked.getHours(), minutes: picked.getMinutes() });
+          }}
+        />
+      )}
+    </Modal>
+  );
+}
+
+const copyStyles = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.control,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+  },
+  rowLabel: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+  },
+  rowValue: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
+    color: Colors.text,
+  },
+  segmented: {
+    flexDirection: "row",
+    gap: 6,
+  },
+  segment: {
+    flex: 1,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  segmentActive: {
+    backgroundColor: Colors.greenSoft,
+    borderColor: `${Colors.green}60`,
+  },
+  segmentText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
+    color: Colors.textMuted,
+  },
+  segmentTextActive: {
+    color: Colors.green,
+  },
+  pill: {
+    alignSelf: "center",
+    marginTop: Spacing.xs,
+  },
+});
 
 const sheetStyles = StyleSheet.create({
   backdrop: {

@@ -1,25 +1,36 @@
 // ============================================================
 // src/lib/entries.ts — THE apply path
 //
-// Every bulk write into meal_entries goes through here. There are three
-// callers and they differ in exactly one thing: where eaten_at comes from.
+// Every bulk write into meal_entries goes through here. There are four
+// callers and they differ in exactly one thing: where eaten_at (and, for the
+// two copy builders, meal_type) comes from.
 //
 //   social copy      → now().                    "You are eating this NOW."
 //   copy-a-day       → same wall clock, new day. "Monday's lunch, on Tuesday."
+//   copy-to-a-slot   → one CHOSEN time and section, for every entry passed in.
+//                                                 "Put this at Lunch, 13:30, Tuesday."
 //   bundle apply     → the item's stored time.   "07:30 porridge, on Thursday."
 //
-// That's it. That is the whole of "bundles and copy-a-day are one feature with
-// two sources" — three builders, one insert.
+// That's it. That is the whole of "bundles and copy are one feature with
+// multiple sources" — four builders, one insert.
 //
-// A STRATEGY FLAG WAS THE OBVIOUS DESIGN AND IT IS WRONG. It would need three
-// values today and a fourth the moment anything else copies a meal, and the
+// A STRATEGY FLAG WAS THE OBVIOUS DESIGN AND IT IS WRONG. It would need four
+// values today and a fifth the moment anything else copies a meal, and the
 // social rule ("now") cannot even see a target day, so the flag would have to
 // carry one optionally. Resolve in the caller; pass a finished row.
+//
+// draftsFromDay and draftsForTarget look similar and are NOT interchangeable:
+// draftsFromDay preserves each row's OWN meal_type/time and moves only the
+// day — the multi-select "copy this whole selection, keeping each item's
+// slot" case. draftsForTarget forces every entry passed in onto ONE chosen
+// {meal_type, time} — the single-item "put this at Lunch instead" case. Using
+// the wrong one silently either merges a multi-select into one slot, or
+// leaves a single copy stuck in its source section. Do not collapse them.
 // ============================================================
 
 import { supabase } from "./supabase";
-import { EntryDraft, MealEntry } from "../types";
-import { dateKey, localHM, sameTimeOnDay } from "./time";
+import { EntryDraft, MealEntry, MealType } from "../types";
+import { dateKey, localHM, sameTimeOnDay, TimeOfDay } from "./time";
 
 /**
  * Insert a set of fully-resolved drafts into the current user's log.
@@ -170,6 +181,63 @@ export function draftsFromDay(
 
     // You have not eaten the copy. Whatever the source's timing certainty, the
     // copy's timing is a forecast. Fails safe.
+    eaten_at_estimated: true,
+
+    source: "copied",
+    barcode: e.barcode ?? null,
+    off_id: e.off_id ?? null,
+
+    image_url: e.image_url ?? null,
+    image_path: e.image_path ?? null,
+    custom_food_id: e.custom_food_id ?? null,
+  }));
+}
+
+/**
+ * COPY-TO-A-SLOT. Take entries and put copies at one explicit
+ * {day, meal_type, time} target — the single-item "Copy to…" sheet, not the
+ * multi-select day picker above.
+ *
+ * ─── THE ONE DIFFERENCE FROM draftsFromDay ───
+ *
+ * draftsFromDay changes only the day; every row keeps ITS OWN meal_type and
+ * wall clock — correct when copying a whole selection and preserving each
+ * item's slot. This builder is the opposite: EVERY entry passed in lands on
+ * the SAME chosen section and time, because choosing that target is the
+ * entire point of this path. Required argument, not an optional override —
+ * same reasoning as EntryDraft omitting a `date` field for applyEntries.
+ *
+ * ─── WALL CLOCK, NOT ARITHMETIC ───
+ *
+ * Same DST-safety as draftsFromDay: sameTimeOnDay() goes through the local
+ * Date constructor, not `+24h`. Only the TimeOfDay fed to it differs — the
+ * TARGET's time, not localHM(source.eaten_at).
+ */
+export function draftsForTarget(
+  entries: MealEntry[],
+  target: { dayKey: string; meal_type: MealType; time: TimeOfDay },
+): EntryDraft[] {
+  return entries.map((e) => ({
+    name: e.name,
+    brand: e.brand ?? null,
+    serving_g: e.serving_g,
+
+    calories: e.calories,
+    protein: e.protein,
+    carbs: e.carbs,
+    fat: e.fat,
+
+    sat_fat: e.sat_fat ?? null,
+    salt: e.salt ?? null,
+    fibre: e.fibre ?? null,
+    sugar: e.sugar ?? null,
+
+    // The CHOSEN section, not the row's own — see the comment above.
+    meal_type: target.meal_type,
+
+    eaten_at: sameTimeOnDay(target.time, target.dayKey),
+
+    // You have not eaten the copy. Fails safe.
     eaten_at_estimated: true,
 
     source: "copied",

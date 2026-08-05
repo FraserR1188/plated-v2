@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { applyEntries, draftsFromDay } from "../entries";
+import { applyEntries, draftsFromDay, draftsForTarget } from "../entries";
 import { supabase } from "../supabase";
 import { dateKey } from "../time";
 import { EntryDraft, MealEntry } from "../../types";
@@ -174,5 +174,94 @@ describe("draftsFromDay (copy-a-day)", () => {
     const sourceD = new Date(source.eaten_at);
     expect(d.getHours()).toBe(sourceD.getHours());
     expect(d.getMinutes()).toBe(sourceD.getMinutes());
+  });
+});
+
+// ─── D5: copy-to-any-slot — the new contract ─────────────────────────────
+//
+// draftsFromDay hard-inherits meal_type and wall-clock time from the source
+// row (see the two tests above: "keeping its OWN meal_type", "preserves the
+// wall-clock time"). That is the bug: "Copy to…" can only ever land a copy
+// in the same section at the same time, on a different day.
+//
+// draftsForTarget replaces it with a signature that REQUIRES the explicit
+// target — day, meal_type AND time — so source-inheritance is structurally
+// impossible, the same intent as EntryDraft omitting `date`/`planned`.
+describe("draftsForTarget (copy to an explicit day/meal/time)", () => {
+  it("lands the copy in the CHOSEN meal_type and at the CHOSEN time, not the source's", () => {
+    const source = makeEntry({
+      meal_type: "breakfast",
+      eaten_at: "2026-07-20T08:00:00.000Z", // 08:00 breakfast
+    });
+
+    const [draft] = draftsForTarget([source], {
+      dayKey: "2026-07-20",
+      meal_type: "lunch",
+      time: { hours: 13, minutes: 30 },
+    });
+
+    expect(draft.meal_type).toBe("lunch");
+    const d = new Date(draft.eaten_at);
+    expect(d.getHours()).toBe(13);
+    expect(d.getMinutes()).toBe(30);
+    expect(dateKey(d)).toBe("2026-07-20");
+  });
+
+  it("produces exactly one draft per source entry — count grows by exactly one at the apply seam", () => {
+    const source = makeEntry({ id: "source-1" });
+    const drafts = draftsForTarget([source], {
+      dayKey: "2026-07-27",
+      meal_type: "dinner",
+      time: { hours: 19, minutes: 0 },
+    });
+    expect(drafts).toHaveLength(1);
+  });
+
+  it("derives the day from the chosen dayKey via local dateKey — never the source's day", () => {
+    const source = makeEntry({ eaten_at: "2026-07-20T08:00:00.000Z" });
+    const [draft] = draftsForTarget([source], {
+      dayKey: "2026-08-15",
+      meal_type: "breakfast",
+      time: { hours: 8, minutes: 0 },
+    });
+    expect(dateKey(new Date(draft.eaten_at))).toBe("2026-08-15");
+  });
+
+  it("never produces a draft with a `date` or `planned` field — both stay unrepresentable in EntryDraft", () => {
+    const source = makeEntry();
+    const [draft] = draftsForTarget([source], {
+      dayKey: "2026-07-27",
+      meal_type: "snacks",
+      time: { hours: 15, minutes: 0 },
+    });
+    expect(draft).not.toHaveProperty("date");
+    expect(draft).not.toHaveProperty("planned");
+    expect(draft).not.toHaveProperty("confirmed_at");
+    expect(draft).not.toHaveProperty("skipped_at");
+  });
+
+  it("marks the copy as an estimate, regardless of the source's certainty", () => {
+    const source = makeEntry({ eaten_at_estimated: false });
+    const [draft] = draftsForTarget([source], {
+      dayKey: "2026-07-27",
+      meal_type: "breakfast",
+      time: { hours: 8, minutes: 0 },
+    });
+    expect(draft.eaten_at_estimated).toBe(true);
+  });
+
+  it("builds eaten_at from dayKey + time via the local Date constructor — no +24h arithmetic across DST", () => {
+    // BST → GMT fold, 2026-10-25. A +24h/ms-arithmetic implementation would
+    // shift the wall-clock time by an hour; going through parts must not.
+    const source = makeEntry({ eaten_at: "2026-10-20T07:30:00.000Z" });
+    const [draft] = draftsForTarget([source], {
+      dayKey: "2026-10-26",
+      meal_type: "breakfast",
+      time: { hours: 7, minutes: 30 },
+    });
+    const d = new Date(draft.eaten_at);
+    expect(d.getHours()).toBe(7);
+    expect(d.getMinutes()).toBe(30);
+    expect(dateKey(d)).toBe("2026-10-26");
   });
 });

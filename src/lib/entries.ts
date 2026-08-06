@@ -213,6 +213,24 @@ export function draftsFromDay(
  * Date constructor, not `+24h`. Only the TimeOfDay fed to it differs — the
  * TARGET's time, not localHM(source.eaten_at).
  */
+/**
+ * Do every one of these entries already agree on a meal_type? Returns that
+ * shared type, or null if they don't (or there's nothing to compare).
+ *
+ * This is the multi-select "Copy to…" sheet's smart default: three items
+ * that are ALL breakfast open pre-set to merge into one slot ("all these to
+ * lunch, one tap"); a mixed selection opens defaulted to keep-each-slot
+ * instead, since there's no single section to preselect. A single entry
+ * trivially "shares" its own meal_type with itself — the caller decides
+ * whether to show the mode toggle at all (only when length > 1), not this
+ * function.
+ */
+export function sharedMealType(entries: MealEntry[]): MealType | null {
+  if (entries.length === 0) return null;
+  const first = entries[0].meal_type;
+  return entries.every((e) => e.meal_type === first) ? first : null;
+}
+
 export function draftsForTarget(
   entries: MealEntry[],
   target: { dayKey: string; meal_type: MealType; time: TimeOfDay },

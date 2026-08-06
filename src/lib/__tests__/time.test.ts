@@ -13,6 +13,7 @@ import {
   earliestTimeOfDay,
   anchorTimesOfDay,
   sectionForTime,
+  minutesSinceLocalMidnight,
 } from "../time";
 import type { MealType } from "../../types";
 
@@ -215,6 +216,39 @@ describe("earliestTimeOfDay", () => {
       { hours: 8, minutes: 20 },
     ];
     expect(earliestTimeOfDay(times)).toEqual({ hours: 8, minutes: 0 });
+  });
+});
+
+describe("minutesSinceLocalMidnight", () => {
+  it("reads LOCAL hours, not UTC — matches localHM's own convention", () => {
+    const iso = "2026-07-20T08:05:00.000Z";
+    const d = new Date(iso);
+    expect(minutesSinceLocalMidnight(iso)).toBe(
+      d.getHours() * 60 + d.getMinutes(),
+    );
+  });
+
+  describe("in a fixed timezone (Europe/London)", () => {
+    const originalTZ = process.env.TZ;
+    beforeEach(() => {
+      process.env.TZ = "Europe/London";
+    });
+    afterEach(() => {
+      process.env.TZ = originalTZ;
+    });
+
+    it("converts a local wall-clock time to minutes since midnight", () => {
+      // Mid-July is BST (UTC+1): 08:05Z is 09:05 local.
+      expect(minutesSinceLocalMidnight("2026-07-20T08:05:00.000Z")).toBe(
+        9 * 60 + 5,
+      );
+    });
+
+    it("orders correctly within the same local day (00:05 sorts before 23:55)", () => {
+      const early = minutesSinceLocalMidnight("2026-07-20T00:05:00.000Z");
+      const late = minutesSinceLocalMidnight("2026-07-20T22:55:00.000Z");
+      expect(early).toBeLessThan(late);
+    });
   });
 });
 

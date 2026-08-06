@@ -1,7 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { applyEntries, draftsFromDay, draftsForTarget } from "../entries";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import {
+  applyEntries,
+  draftsFromDay,
+  draftsForTarget,
+  sharedMealType,
+} from "../entries";
 import { supabase } from "../supabase";
-import { dateKey } from "../time";
+import { dateKey, localHM, willBePlanned } from "../time";
 import { EntryDraft, MealEntry } from "../../types";
 
 function makeDraft(overrides: Partial<EntryDraft> = {}): EntryDraft {
@@ -263,5 +268,132 @@ describe("draftsForTarget (copy to an explicit day/meal/time)", () => {
     expect(d.getHours()).toBe(7);
     expect(d.getMinutes()).toBe(30);
     expect(dateKey(d)).toBe("2026-10-26");
+  });
+});
+
+// ─── D6: merge-to-one-slot — multi-select "Same meal & time for all" ────
+//
+// sharedMealType is the pure predicate the sheet's smart default reads: do
+// all selected rows already agree on a section? If so, default to merging
+// them into one slot and preselect that section. If not, default to keeping
+// each item's own slot. Empty selection can't happen from the UI (the sheet
+// only opens with a non-empty selectedEntries), but is covered here as the
+// honest base case of "all() over zero items".
+describe("sharedMealType", () => {
+  it("returns the common meal_type when every entry shares one", () => {
+    const entries = [
+      makeEntry({ id: "a", meal_type: "breakfast" }),
+      makeEntry({ id: "b", meal_type: "breakfast" }),
+      makeEntry({ id: "c", meal_type: "breakfast" }),
+    ];
+    expect(sharedMealType(entries)).toBe("breakfast");
+  });
+
+  it("returns null when entries span more than one meal_type", () => {
+    const entries = [
+      makeEntry({ id: "a", meal_type: "breakfast" }),
+      makeEntry({ id: "b", meal_type: "lunch" }),
+    ];
+    expect(sharedMealType(entries)).toBeNull();
+  });
+
+  it("returns that entry's own meal_type for a single entry", () => {
+    const entries = [makeEntry({ id: "a", meal_type: "dinner" })];
+    expect(sharedMealType(entries)).toBe("dinner");
+  });
+
+  it("returns null for an empty selection", () => {
+    expect(sharedMealType([])).toBeNull();
+  });
+});
+
+describe("multi-entry merge to one slot (draftsForTarget + copyEntriesTo seam)", () => {
+  it("produces N drafts for N selected rows, all sharing the target meal_type and wall-clock time", () => {
+    const sources = [
+      makeEntry({ id: "a", meal_type: "breakfast", eaten_at: "2026-07-20T07:00:00.000Z" }),
+      makeEntry({ id: "b", meal_type: "breakfast", eaten_at: "2026-07-20T07:15:00.000Z" }),
+      makeEntry({ id: "c", meal_type: "breakfast", eaten_at: "2026-07-20T07:30:00.000Z" }),
+    ];
+
+    const drafts = draftsForTarget(sources, {
+      dayKey: "2026-07-21",
+      meal_type: "lunch",
+      time: { hours: 12, minutes: 15 },
+    });
+
+    expect(drafts).toHaveLength(sources.length);
+    for (const draft of drafts) {
+      expect(draft.meal_type).toBe("lunch");
+      const d = new Date(draft.eaten_at);
+      expect(d.getHours()).toBe(12);
+      expect(d.getMinutes()).toBe(15);
+      expect(dateKey(d)).toBe("2026-07-21");
+    }
+  });
+
+  it("leaves the sources untouched — copyEntriesTo's insert is additive, count grows by exactly N", async () => {
+    const sources = [
+      makeEntry({ id: "a", meal_type: "breakfast" }),
+      makeEntry({ id: "b", meal_type: "lunch" }),
+    ];
+    const capture = mockInsert(sources.map((s, i) => ({ id: `new-${i}` })));
+
+    const drafts = draftsForTarget(sources, {
+      dayKey: "2026-07-22",
+      meal_type: "dinner",
+      time: { hours: 19, minutes: 0 },
+    });
+    const inserted = await applyEntries(drafts);
+
+    expect(inserted).toHaveLength(sources.length);
+    const rows = capture.rows as Record<string, unknown>[];
+    expect(rows).toHaveLength(sources.length);
+    // Nothing here mutates or deletes `sources` — draftsForTarget only reads them.
+    expect(sources[0].meal_type).toBe("breakfast");
+    expect(sources[1].meal_type).toBe("lunch");
+  });
+});
+
+// The each-mode pill in CopyToSheet previews planned/logged with
+// draftsFromDay(entries, dayKey).map(d => willBePlanned(d.eaten_at)) — the
+// SAME builder applyEntries actually inserts through. If that prediction used
+// a different time calculation than the real insert, a DST-switch day is
+// exactly where they'd silently disagree: a naive +24h/ms shift moves the
+// wall-clock time by an hour across the fold, which can flip which side of
+// "now" a copy lands on and make the pill lie about what's about to happen.
+describe("each-mode pill survives a DST-switch day (draftsFromDay → willBePlanned)", () => {
+  const originalTZ = process.env.TZ;
+  beforeEach(() => {
+    process.env.TZ = "Europe/London";
+  });
+  afterEach(() => {
+    process.env.TZ = originalTZ;
+  });
+
+  it("splits planned vs logged using the same resolved wall-clock instant the insert will use", () => {
+    const sources = [
+      makeEntry({ id: "a", meal_type: "breakfast", eaten_at: "2026-10-18T07:00:00.000Z" }), // 08:00 BST
+      makeEntry({ id: "b", meal_type: "dinner", eaten_at: "2026-10-18T19:00:00.000Z" }), // 20:00 BST
+    ];
+
+    // 2026-10-25: UK clocks fall back from BST to GMT.
+    const targetDayKey = "2026-10-25";
+    const drafts = draftsFromDay(sources, targetDayKey);
+
+    // The wall clock itself must survive the fold — 08:00 stays 08:00 local,
+    // not shifted to 07:00 or 09:00 by naive instant arithmetic.
+    expect(localHM(drafts[0].eaten_at)).toEqual({ hours: 8, minutes: 0 });
+    expect(localHM(drafts[1].eaten_at)).toEqual({ hours: 20, minutes: 0 });
+
+    // "now" is 11:00 local on the target day, itself past the fold (GMT).
+    const now = new Date("2026-10-25T11:00:00.000Z");
+    const plannedFlags = drafts.map((d) => willBePlanned(d.eaten_at, now));
+
+    // 08:00 has already passed by 11:00 → logged. 20:00 is still ahead → planned.
+    expect(plannedFlags).toEqual([false, true]);
+
+    const plannedCount = plannedFlags.filter(Boolean).length;
+    expect(plannedCount).toBe(1); // "1 logged · 1 planned"
+    expect(drafts.length - plannedCount).toBe(1);
   });
 });

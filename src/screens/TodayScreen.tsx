@@ -28,6 +28,7 @@ import { MacroBar } from "../components/MacroBar";
 import { useStore, todayKey } from "../store/useStore";
 import { mealEntryToProduct } from "../lib/foodLookup";
 import { previewComposition, bundlesOnly } from "../lib/compositions";
+import { draftsFromDay, sharedMealType } from "../lib/entries";
 import { roundSalt } from "../lib/macros";
 import { dayHeaderInfo } from "../lib/dayHeader";
 import {
@@ -35,6 +36,7 @@ import {
   formatDayLabel,
   formatTimeOfDay,
   localHM,
+  minutesSinceLocalMidnight,
   isFutureDay,
   parseDateKey,
   dateKey,
@@ -202,8 +204,8 @@ export function TodayScreen() {
     | null
     | "apply"
     | "save"
-    | "copy" // multi-select day-only picker — each row keeps its own meal/time
-    | "copyOne" // single-item Day/Meal/Time sheet — see CopyToSheet
+    | "copy" // Day/Meal/Time sheet — see CopyToSheet. One item or many; the
+    // sheet itself picks its opening mode from the selection.
     | "time" // bulk retime
   >(null);
   const [busy, setBusy] = useState(false);
@@ -366,48 +368,49 @@ export function TodayScreen() {
     setSelected(dateKey(picked));
   };
 
-  // Copy-a-day: pick the target day, then copy. Each row keeps its own wall
-  // clock and its own meal section — Monday's 12:30 lunch becomes Tuesday's
-  // 12:30 LUNCH, not "whatever section you picked".
-  const onCopyDayPicked = async (event: any, picked?: Date) => {
+  // Copy — shared mode: every selected entry lands on ONE chosen
+  // {day, meal_type, time}, chosen in the sheet, not inherited from any
+  // source row — see draftsForTarget in lib/entries.ts. This is the ONLY
+  // path for a single item (always shared, no toggle) and is what a
+  // multi-select "Same meal & time for all" routes through too.
+  const onCopySharedTarget = async (target: {
+    dayKey: string;
+    meal_type: MealType;
+    time: TimeOfDay;
+  }) => {
     setSheet(null);
-    if (event?.type === "dismissed" || !picked) return;
+    if (selectedEntries.length === 0) return;
 
     setBusy(true);
-    const { error } = await copyEntriesToDay(selectedEntries, dateKey(picked));
+    const { error } = await copyEntriesTo(selectedEntries, target);
     setBusy(false);
 
     if (error) {
       Alert.alert("Couldn't copy those", error);
       return;
     }
-    const target = dateKey(picked);
     exitSelection();
-    setSelected(target); // land on the day you just filled. Show, don't tell.
+    setSelected(target.dayKey); // land on the day you just filled. Show, don't tell.
   };
 
-  // Copy-to-a-slot: the single-item sheet. Unlike onCopyDayPicked above, the
-  // target's meal_type and time are chosen in the sheet, not inherited — see
-  // draftsForTarget in lib/entries.ts.
-  const onCopyTargetPicked = async (target: {
-    dayKey: string;
-    meal_type: MealType;
-    time: TimeOfDay;
-  }) => {
+  // Copy — each mode: every selected entry keeps its OWN wall clock and its
+  // own meal section — Monday's 12:30 lunch becomes Tuesday's 12:30 LUNCH,
+  // not "whatever section you picked". Only reachable from a multi-select
+  // whose sections don't already agree (see sharedMealType).
+  const onCopyEachTarget = async (targetDayKey: string) => {
     setSheet(null);
-    const entry = selectedEntries[0];
-    if (!entry) return;
+    if (selectedEntries.length === 0) return;
 
     setBusy(true);
-    const { error } = await copyEntriesTo([entry], target);
+    const { error } = await copyEntriesToDay(selectedEntries, targetDayKey);
     setBusy(false);
 
     if (error) {
-      Alert.alert("Couldn't copy that", error);
+      Alert.alert("Couldn't copy those", error);
       return;
     }
     exitSelection();
-    setSelected(target.dayKey); // land on the day you just filled. Show, don't tell.
+    setSelected(targetDayKey); // land on the day you just filled. Show, don't tell.
   };
 
   // Bulk retime: one time, applied to every selected row (each keeps its own
@@ -437,15 +440,6 @@ export function TodayScreen() {
           mode="date"
           display="default"
           onChange={onJump}
-        />
-      )}
-
-      {sheet === "copy" && (
-        <DateTimePicker
-          value={parseDateKey(selected)}
-          mode="date"
-          display="default"
-          onChange={onCopyDayPicked}
         />
       )}
 
@@ -514,9 +508,7 @@ export function TodayScreen() {
           hasOverduePending={hasOverduePending}
           onMarkEaten={handleMarkEatenSelected}
           onSetTime={handleSetTimeSelected}
-          onCopy={() =>
-            setSheet(selectedEntries.length === 1 ? "copyOne" : "copy")
-          }
+          onCopy={() => setSheet("copy")}
           onBundle={() => setSheet("save")}
           onDelete={handleDeleteSelected}
           onCancel={exitSelection}
@@ -562,12 +554,14 @@ export function TodayScreen() {
         }}
       />
 
-      {/* ── Copy to a chosen day/meal/time (single item) ────── */}
+      {/* ── Copy to a chosen day/meal/time (one item, or a merged/kept-each
+            multi-select) ──────────────────────────────────────── */}
       <CopyToSheet
-        visible={sheet === "copyOne"}
-        entry={selectedEntries[0] ?? null}
+        visible={sheet === "copy"}
+        entries={selectedEntries}
         onClose={() => setSheet(null)}
-        onCopy={onCopyTargetPicked}
+        onCopyShared={onCopySharedTarget}
+        onCopyEach={onCopyEachTarget}
       />
     </SafeAreaView>
   );
@@ -1132,15 +1126,6 @@ function SelectionActionBar({
               <Text style={barStyles.actionDangerText}>Remove</Text>
             </Pressable>
           </View>
-
-          {/* Copying more than one item skips the Day/Meal/Time sheet — each
-              row keeps its OWN section and time, only the day changes. Say so,
-              or the difference from a single-item copy reads as a bug. */}
-          {count > 1 && (
-            <Text style={barStyles.copyHint}>
-              Copying {count} items keeps each item's own meal & time
-            </Text>
-          )}
         </View>
       )}
     </View>
@@ -1239,13 +1224,6 @@ const barStyles = StyleSheet.create({
     fontWeight: Typography.bold,
     fontFamily: Fonts.sans.bold,
     color: Colors.danger,
-  },
-  copyHint: {
-    fontSize: Typography.xs,
-    color: Colors.textMuted,
-    fontWeight: Typography.medium,
-    fontFamily: Fonts.sans.medium,
-    textAlign: "center",
   },
 });
 
@@ -1618,59 +1596,113 @@ function SaveBundleSheet({
   );
 }
 
-// ─── Copy-to-a-slot sheet (single item) ──────────────────────────────────
+// ─── Copy-to-a-slot sheet (one item, or a multi-select) ──────────────────
 //
-// Day / Meal / Time, all three, all overridable — the whole point of D5.
-// Defaults to the source entry's OWN day/meal/time, so "just change the
-// meal" or "just change the time" is a one-tap edit, not a full re-entry.
+// Day / Meal / Time, all overridable — the whole point of D5. D6 extends it
+// to a multi-select: the sheet now has TWO modes.
 //
-// The Logged/Planned pill is computed from THIS SHEET'S OWN live day/meal/
-// time state on every render, via sameTimeOnDay + willBePlanned — never from
-// the source entry's original eaten_at. Move the time picker into the future
-// and the pill must flip before you commit, the same reason ApplyBundleSheet's
-// pills exist: silently recording a plan as "eaten" is a WHOOP-correlation bug,
-// not a display nit.
+//   SHARED — every entry lands on ONE chosen {day, meal_type, time}. Meal
+//            and Time pickers are visible. Routes through copyEntriesTo /
+//            draftsForTarget.
+//   EACH   — every entry keeps its OWN meal_type and wall clock; only the
+//            day moves. Meal and Time pickers are hidden. Routes through
+//            copyEntriesToDay / draftsFromDay.
+//
+// A single item is ALWAYS shared mode with no toggle — that's "behaves
+// exactly as today". The toggle only appears for a multi-select
+// (entries.length > 1); which mode WINS by default is a separate question
+// from whether the toggle shows — see the opening-mode effect below, and
+// don't collapse the two checks back into one "length > 1" gate, which is
+// the exact regression that shipped and got caught: it forced single items
+// down the EACH branch and silently dropped their Meal/Time pickers.
+//
+// The Logged/Planned pill is computed from THIS SHEET'S OWN live state on
+// every render — never from a source entry's original eaten_at. Move a
+// picker into the future and the pill must flip before you commit, the same
+// reason ApplyBundleSheet's pills exist: silently recording a plan as
+// "eaten" is a WHOOP-correlation bug, not a display nit. In EACH mode the
+// pill is built from draftsFromDay + willBePlanned — the SAME builder the
+// actual insert goes through — so the preview can't drift from what lands
+// (see the DST-switch test in entries.test.ts).
 function CopyToSheet({
   visible,
-  entry,
+  entries,
   onClose,
-  onCopy,
+  onCopyShared,
+  onCopyEach,
 }: {
   visible: boolean;
-  entry: MealEntry | null;
+  entries: MealEntry[];
   onClose: () => void;
-  onCopy: (target: {
+  onCopyShared: (target: {
     dayKey: string;
     meal_type: MealType;
     time: TimeOfDay;
   }) => void;
+  onCopyEach: (dayKey: string) => void;
 }) {
+  const [mode, setMode] = useState<"shared" | "each">("shared");
   const [dayKey, setDayKey] = useState(todayKey());
   const [mealType, setMealType] = useState<MealType>("breakfast");
   const [time, setTime] = useState<TimeOfDay>({ hours: 8, minutes: 0 });
   const [picking, setPicking] = useState<"date" | "time" | null>(null);
 
-  // Reseed from the source entry every time the sheet OPENS (`visible` flips
-  // true) — not on every render, or moving the time picker would keep
-  // snapping back to the source's own time. Keyed on `visible` as well as
-  // `entry?.id`, not just the id: the sheet stays mounted between opens (only
-  // its Modal `visible` prop toggles), so re-opening on the SAME entry after
-  // a Cancel must still reset to source values, not resume the cancelled
-  // edit — "defaults to the source" means every open, not just the first.
-  useEffect(() => {
-    if (!visible || !entry) return;
-    setDayKey(dateKey(new Date(entry.eaten_at)));
-    setMealType(entry.meal_type);
-    setTime(localHM(entry.eaten_at));
-  }, [visible, entry?.id]);
+  const showToggle = entries.length > 1;
 
-  if (!entry) return null;
+  // Reseed every time the sheet OPENS on a (possibly new) selection — not on
+  // every render, or moving a picker would keep snapping back. Keyed on the
+  // selection's ids as well as `visible`: the sheet stays mounted between
+  // opens (only its Modal `visible` prop toggles), so re-opening on the SAME
+  // set after a Cancel must still reset, not resume the cancelled edit.
+  const idsKey = entries.map((e) => e.id).join(",");
+  useEffect(() => {
+    if (!visible || entries.length === 0) return;
+
+    const shared = sharedMealType(entries);
+
+    if (shared !== null) {
+      setMode("shared");
+      const earliest = entries.reduce((min, e) =>
+        minutesSinceLocalMidnight(e.eaten_at) <
+        minutesSinceLocalMidnight(min.eaten_at)
+          ? e
+          : min,
+      );
+      setDayKey(dateKey(new Date(earliest.eaten_at)));
+      setMealType(shared);
+      setTime(localHM(earliest.eaten_at));
+    } else {
+      setMode("each");
+      setDayKey(dateKey(new Date(entries[0].eaten_at)));
+    }
+  }, [visible, idsKey]);
+
+  if (entries.length === 0) return null;
 
   const prospectiveEatenAt = sameTimeOnDay(time, dayKey);
-  const planned = willBePlanned(prospectiveEatenAt);
+  const sharedPlanned = willBePlanned(prospectiveEatenAt);
+
+  // EACH-mode pill: built from the exact drafts copyEntriesToDay will insert
+  // — recomputed from `entries`/`dayKey` on every render, so it can't go
+  // stale when the Day picker changes.
+  const eachDrafts = mode === "each" ? draftsFromDay(entries, dayKey) : [];
+  const eachPlannedCount = eachDrafts.filter((d) =>
+    willBePlanned(d.eaten_at),
+  ).length;
+  const eachLoggedCount = eachDrafts.length - eachPlannedCount;
 
   const timeSeed = new Date();
   timeSeed.setHours(time.hours, time.minutes, 0, 0);
+
+  const title =
+    entries.length === 1 ? `Copy "${entries[0].name}"` : `Copy ${entries.length} items`;
+
+  const eachSummary =
+    eachLoggedCount > 0 && eachPlannedCount > 0
+      ? `${eachLoggedCount} logged · ${eachPlannedCount} planned`
+      : eachPlannedCount > 0
+        ? `${eachPlannedCount} planned`
+        : `${eachLoggedCount} logged`;
 
   return (
     <Modal
@@ -1683,8 +1715,45 @@ function CopyToSheet({
       <View style={sheetStyles.sheet}>
         <View style={sheetStyles.grabber} />
         <Text style={sheetStyles.title} numberOfLines={1}>
-          Copy "{entry.name}"
+          {title}
         </Text>
+
+        {showToggle && (
+          <View style={copyStyles.segmented}>
+            <Pressable
+              style={[
+                copyStyles.segment,
+                mode === "each" && copyStyles.segmentActive,
+              ]}
+              onPress={() => setMode("each")}
+            >
+              <Text
+                style={[
+                  copyStyles.segmentText,
+                  mode === "each" && copyStyles.segmentTextActive,
+                ]}
+              >
+                Keep each item's meal & time
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[
+                copyStyles.segment,
+                mode === "shared" && copyStyles.segmentActive,
+              ]}
+              onPress={() => setMode("shared")}
+            >
+              <Text
+                style={[
+                  copyStyles.segmentText,
+                  mode === "shared" && copyStyles.segmentTextActive,
+                ]}
+              >
+                Same meal & time for all
+              </Text>
+            </Pressable>
+          </View>
+        )}
 
         <Pressable
           style={copyStyles.row}
@@ -1694,60 +1763,95 @@ function CopyToSheet({
           <Text style={copyStyles.rowValue}>{formatDayLabel(dayKey)}</Text>
         </Pressable>
 
-        <Text style={copyStyles.rowLabel}>Meal</Text>
-        <View style={copyStyles.segmented}>
-          {MEAL_TYPES.map((mt) => (
+        {mode === "shared" && (
+          <>
+            <Text style={copyStyles.rowLabel}>Meal</Text>
+            <View style={copyStyles.segmented}>
+              {MEAL_TYPES.map((mt) => (
+                <Pressable
+                  key={mt}
+                  style={[
+                    copyStyles.segment,
+                    mealType === mt && copyStyles.segmentActive,
+                  ]}
+                  onPress={() => setMealType(mt)}
+                >
+                  <Text
+                    style={[
+                      copyStyles.segmentText,
+                      mealType === mt && copyStyles.segmentTextActive,
+                    ]}
+                  >
+                    {MEAL_LABELS[mt]}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+
             <Pressable
-              key={mt}
+              style={copyStyles.row}
+              onPress={() => setPicking("time")}
+            >
+              <Text style={copyStyles.rowLabel}>Time</Text>
+              <Text style={copyStyles.rowValue}>{formatTimeOfDay(time)}</Text>
+            </Pressable>
+
+            <View
               style={[
-                copyStyles.segment,
-                mealType === mt && copyStyles.segmentActive,
+                sheetStyles.pill,
+                sharedPlanned ? sheetStyles.pillPlanned : sheetStyles.pillLogged,
+                copyStyles.pill,
               ]}
-              onPress={() => setMealType(mt)}
             >
               <Text
                 style={[
-                  copyStyles.segmentText,
-                  mealType === mt && copyStyles.segmentTextActive,
+                  sheetStyles.pillText,
+                  sharedPlanned
+                    ? sheetStyles.pillTextPlanned
+                    : sheetStyles.pillTextLogged,
                 ]}
               >
-                {MEAL_LABELS[mt]}
+                {sharedPlanned
+                  ? "Will be saved as Planned"
+                  : "Will be saved as Logged"}
               </Text>
-            </Pressable>
-          ))}
-        </View>
+            </View>
+          </>
+        )}
 
-        <Pressable
-          style={copyStyles.row}
-          onPress={() => setPicking("time")}
-        >
-          <Text style={copyStyles.rowLabel}>Time</Text>
-          <Text style={copyStyles.rowValue}>{formatTimeOfDay(time)}</Text>
-        </Pressable>
-
-        <View
-          style={[
-            sheetStyles.pill,
-            planned ? sheetStyles.pillPlanned : sheetStyles.pillLogged,
-            copyStyles.pill,
-          ]}
-        >
-          <Text
+        {mode === "each" && (
+          <View
             style={[
-              sheetStyles.pillText,
-              planned ? sheetStyles.pillTextPlanned : sheetStyles.pillTextLogged,
+              sheetStyles.pill,
+              eachPlannedCount > 0
+                ? sheetStyles.pillPlanned
+                : sheetStyles.pillLogged,
+              copyStyles.pill,
             ]}
           >
-            {planned ? "Will be saved as Planned" : "Will be saved as Logged"}
-          </Text>
-        </View>
+            <Text
+              style={[
+                sheetStyles.pillText,
+                eachPlannedCount > 0
+                  ? sheetStyles.pillTextPlanned
+                  : sheetStyles.pillTextLogged,
+              ]}
+            >
+              {eachSummary}
+            </Text>
+          </View>
+        )}
 
         <Pressable
           style={({ pressed }) => [
             sheetStyles.primary,
             pressed && { opacity: 0.85 },
           ]}
-          onPress={() => onCopy({ dayKey, meal_type: mealType, time })}
+          onPress={() =>
+            mode === "shared"
+              ? onCopyShared({ dayKey, meal_type: mealType, time })
+              : onCopyEach(dayKey)
+          }
         >
           <Text style={sheetStyles.primaryText}>Copy</Text>
         </Pressable>
@@ -1770,7 +1874,7 @@ function CopyToSheet({
         />
       )}
 
-      {picking === "time" && (
+      {picking === "time" && mode === "shared" && (
         <DateTimePicker
           value={timeSeed}
           mode="time"

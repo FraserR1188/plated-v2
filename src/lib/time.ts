@@ -243,6 +243,19 @@ export function localHM(iso: string): TimeOfDay {
 }
 
 /**
+ * The LOCAL wall-clock minute-of-day of an instant — the sort key behind
+ * "which of these entries has the earliest time?" comparisons that need to
+ * keep hold of the winning ENTRY (not just its TimeOfDay, which is what
+ * earliestTimeOfDay above already covers). One definition, so a multi-select
+ * merge's default time and any future "earliest of these instants" caller
+ * can't quietly compute it two different ways.
+ */
+export function minutesSinceLocalMidnight(iso: string): number {
+  const { hours, minutes } = localHM(iso);
+  return hours * 60 + minutes;
+}
+
+/**
  * The inverse of DEFAULT_HOUR: given a real time, which section does it
  * belong in by default?
  *

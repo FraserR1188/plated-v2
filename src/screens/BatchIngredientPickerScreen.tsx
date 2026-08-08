@@ -101,6 +101,7 @@ export function BatchIngredientPickerScreen() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodProduct[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
 
   // The quantity step. null = still browsing; set = showing "how much?" for
   // this product.
@@ -109,24 +110,52 @@ export function BatchIngredientPickerScreen() {
   const [scanningMeal, setScanningMeal] = useState(false);
 
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Monotonic stamp for the in-flight request. A ref (not state) because the
+  // async .then/.catch closures must read the CURRENT latest value, not the
+  // value from the render that kicked them off.
+  const requestSeq = useRef(0);
+  const abortRef = useRef<AbortController | undefined>(undefined);
+  const lastQueryRef = useRef("");
+
+  const runSearch = (trimmed: string) => {
+    const seq = ++requestSeq.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    lastQueryRef.current = trimmed;
+    setSearching(true);
+    setSearchError(false);
+    searchFood(trimmed, controller.signal)
+      .then((found) => {
+        if (seq !== requestSeq.current) return; // superseded by a newer query
+        setResults(found);
+        setSearching(false);
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError") return; // cancelled — the newer request owns loading/error state
+        if (seq !== requestSeq.current) return; // stale failure
+        setSearchError(true);
+        setSearching(false);
+      });
+  };
 
   const handleSearch = (text: string) => {
     setQuery(text);
     clearTimeout(timer.current);
-    if (text.trim().length < 2) {
+    const trimmed = text.trim();
+    if (trimmed.length < 2) {
+      requestSeq.current += 1; // invalidate any in-flight request
+      abortRef.current?.abort();
+      setSearching(false);
+      setSearchError(false);
       setResults([]);
       return;
     }
-    timer.current = setTimeout(async () => {
-      setSearching(true);
-      try {
-        setResults(await searchFood(text.trim()));
-      } catch {
-        setResults([]);
-      } finally {
-        setSearching(false);
-      }
-    }, 600);
+    timer.current = setTimeout(() => runSearch(trimmed), 600);
+  };
+
+  const handleRetrySearch = () => {
+    if (lastQueryRef.current) runSearch(lastQueryRef.current);
   };
 
   const startPicking = (product: FoodProduct) => {
@@ -189,8 +218,12 @@ export function BatchIngredientPickerScreen() {
     navigation.goBack();
   };
 
+  const showSearchError = !searching && searchError;
   const showNoResults =
-    !searching && query.trim().length >= 2 && results.length === 0;
+    !searching &&
+    !searchError &&
+    query.trim().length >= 2 &&
+    results.length === 0;
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
@@ -358,7 +391,7 @@ export function BatchIngredientPickerScreen() {
                     )}
                   </View>
 
-                  {results.length > 0 && (
+                  {!showSearchError && results.length > 0 && (
                     <View style={styles.resultsList}>
                       {results.map((p, i) => (
                         <Pressable
@@ -396,6 +429,16 @@ export function BatchIngredientPickerScreen() {
                         </Pressable>
                       ))}
                     </View>
+                  )}
+
+                  {/* Distinct from showNoResults: a failed request must not
+                      render identically to an empty database. */}
+                  {showSearchError && (
+                    <Pressable onPress={handleRetrySearch}>
+                      <Text style={styles.emptyText}>
+                        Couldn't search — tap to retry.
+                      </Text>
+                    </Pressable>
                   )}
 
                   {showNoResults && (

@@ -183,10 +183,26 @@ export function TodayScreen() {
     if (w > 0 && w !== pagerWidth) setPagerWidth(w);
   };
 
+  // Android's pagingEnabled ScrollView can dispatch onMomentumScrollEnd twice
+  // for a single swipe — once for the fling settling, once more for the
+  // snap-to-page correction that follows it — both reporting the same landed
+  // offset. Without a guard, the second firing runs against the closure from
+  // the FIRST firing's setSelected, advancing the day twice per swipe. This
+  // ref makes only the first REAL (non-centre) firing per gesture count;
+  // onScrollBeginDrag reliably precedes momentum on Android, so it's the
+  // right place to reset the lock for the next swipe.
+  const hasHandledRef = useRef(false);
+
+  const handlePagerScrollBegin = () => {
+    hasHandledRef.current = false;
+  };
+
   const handlePagerScrollEnd = (e: any) => {
     if (pagerWidth === 0) return;
+    if (hasHandledRef.current) return;
     const page = Math.round(e.nativeEvent.contentOffset.x / pagerWidth);
-    if (page === 1) return; // bounced back to the centre — no day change
+    if (page === 1) return; // bounced back to the centre — no day change, no lock consumed
+    hasHandledRef.current = true;
     setSelected(addDays(selected, page - 1));
   };
 
@@ -463,6 +479,7 @@ export function TodayScreen() {
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
+            onScrollBeginDrag={handlePagerScrollBegin}
             onMomentumScrollEnd={handlePagerScrollEnd}
           >
             {pageDates.map((date) => (

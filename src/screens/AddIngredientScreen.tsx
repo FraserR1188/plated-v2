@@ -59,27 +59,56 @@ export function AddIngredientScreen() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoodProduct[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const [scanningMeal, setScanningMeal] = useState(false);
 
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Monotonic stamp for the in-flight request. A ref (not state) because the
+  // async .then/.catch closures must read the CURRENT latest value, not the
+  // value from the render that kicked them off.
+  const requestSeq = useRef(0);
+  const abortRef = useRef<AbortController | undefined>(undefined);
+  const lastQueryRef = useRef("");
+
+  const runSearch = (trimmed: string) => {
+    const seq = ++requestSeq.current;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    lastQueryRef.current = trimmed;
+    setSearching(true);
+    setSearchError(false);
+    searchFood(trimmed, controller.signal)
+      .then((found) => {
+        if (seq !== requestSeq.current) return; // superseded by a newer query
+        setResults(found);
+        setSearching(false);
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError") return; // cancelled — the newer request owns loading/error state
+        if (seq !== requestSeq.current) return; // stale failure
+        setSearchError(true);
+        setSearching(false);
+      });
+  };
 
   const handleSearch = (text: string) => {
     setQuery(text);
     clearTimeout(timer.current);
-    if (text.trim().length < 2) {
+    const trimmed = text.trim();
+    if (trimmed.length < 2) {
+      requestSeq.current += 1; // invalidate any in-flight request
+      abortRef.current?.abort();
+      setSearching(false);
+      setSearchError(false);
       setResults([]);
       return;
     }
-    timer.current = setTimeout(async () => {
-      setSearching(true);
-      try {
-        setResults(await searchFood(text.trim()));
-      } catch {
-        setResults([]);
-      } finally {
-        setSearching(false);
-      }
-    }, 600);
+    timer.current = setTimeout(() => runSearch(trimmed), 600);
+  };
+
+  const handleRetrySearch = () => {
+    if (lastQueryRef.current) runSearch(lastQueryRef.current);
   };
 
   const handleSelectProduct = (product: FoodProduct) =>
@@ -157,8 +186,12 @@ export function AddIngredientScreen() {
     });
 
   const mealLabel = MEAL_LABELS[mealType];
+  const showSearchError = !searching && searchError;
   const showNoResults =
-    !searching && query.trim().length >= 2 && results.length === 0;
+    !searching &&
+    !searchError &&
+    query.trim().length >= 2 &&
+    results.length === 0;
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
@@ -261,6 +294,11 @@ export function AddIngredientScreen() {
                     <Pressable
                       onPress={() => {
                         setQuery("");
+                        clearTimeout(timer.current);
+                        requestSeq.current += 1;
+                        abortRef.current?.abort();
+                        setSearching(false);
+                        setSearchError(false);
                         setResults([]);
                       }}
                       hitSlop={8}
@@ -271,7 +309,7 @@ export function AddIngredientScreen() {
                 )}
               </View>
 
-              {results.length > 0 && (
+              {!showSearchError && results.length > 0 && (
                 <View style={styles.resultsList}>
                   {results.map((p, i) => (
                     <Pressable
@@ -324,6 +362,31 @@ export function AddIngredientScreen() {
                 </View>
               )}
 
+              {/* ── Search failed → retry ───────────────────── */}
+              {/* Distinct from showNoResults: a failed request must not
+                  render identically to an empty database, or the user
+                  either gives up or "fixes" a query that never ran. */}
+              {showSearchError && (
+                <View style={styles.notFoundCard}>
+                  <Text style={styles.notFoundEmoji}>⚠️</Text>
+                  <Text style={styles.notFoundTitle}>Couldn't search</Text>
+                  <Text style={styles.notFoundText}>
+                    Something went wrong reaching the food database.
+                  </Text>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.primaryBtn,
+                      pressed && { opacity: 0.88 },
+                    ]}
+                    onPress={handleRetrySearch}
+                  >
+                    <Text style={styles.primaryBtnText} numberOfLines={1}>
+                      Tap to retry
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
+
               {/* ── Not found → create it ─────────────────── */}
               {/* Mirrors the Scanner's not_found treatment: name the thing
                   that's missing, then offer the productive path. */}
@@ -354,7 +417,7 @@ export function AddIngredientScreen() {
               {/* ── Always-available create affordance ────── */}
               {/* Without this, creating a food from scratch would mean typing
                   a nonsense query just to summon the empty state. */}
-              {!showNoResults && (
+              {!showNoResults && !showSearchError && (
                 <Pressable
                   style={({ pressed }) => [
                     styles.createRow,

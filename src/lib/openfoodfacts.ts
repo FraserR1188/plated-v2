@@ -264,7 +264,10 @@ function parseProduct(p: any): FoodProduct | null {
 
 // ─── Search ──────────────────────────────────────────────────
 
-export async function searchFood(query: string): Promise<FoodProduct[]> {
+export async function searchFood(
+  query: string,
+  signal?: AbortSignal,
+): Promise<FoodProduct[]> {
   const trimmed = query.trim();
   if (!trimmed) return [];
 
@@ -289,7 +292,7 @@ export async function searchFood(query: string): Promise<FoodProduct[]> {
     language: "en",
   });
 
-  const res = await fetch(`${BASE}/cgi/search.pl?${params}`);
+  const res = await fetch(`${BASE}/cgi/search.pl?${params}`, { signal });
   const data = await res.json();
 
   const products = (data.products ?? [])

@@ -4,21 +4,46 @@
 // Create AND edit, one screen — compositionId omitted means create, present
 // means edit (same pattern as ProductScreen's editEntryId).
 //
+// The ingredient list, name, and yield/portion fields all render straight
+// off useStore's `batchDraft` slice rather than local component state.
+// BatchIngredientPickerScreen adds to that same slice directly
+// (addBatchIngredient/addBatchIngredients) and pops — there is no callback
+// handed through navigation params anymore. See useStore.ts's BatchDraft
+// comment for why: a function in a nav param broke React Navigation's
+// "Non-serializable values" contract and couldn't survive state restore.
+//
+// DRAFT LIFECYCLE — read before touching either effect below.
+//   - Edit mode hydrates the draft from the existing composition ONCE, at
+//     mount (see the effect below `existing`). Deliberately not re-run when
+//     `existing` changes: useFocusEffect's fetchCompositions() refetches on
+//     every refocus, including the refocus FROM BatchIngredientPicker — if
+//     hydration re-ran then, it would silently discard whatever the user
+//     just picked mid-edit.
+//   - Create mode resets the draft at mount as a belt-and-braces guard
+//     against a stale draft surviving from an abandoned previous session.
+//   - Every genuine exit (header back, hardware back, gesture, or Save's
+//     navigation.goBack()) resets the draft via a `beforeRemove` listener —
+//     NOT a blur/useFocusEffect cleanup, which would also fire when merely
+//     navigating to BatchIngredientPicker and clear the draft mid-build.
+//
 // YIELD-ON-EDIT: the moment the ingredient set changes (add / remove /
 // quantity edit — NOT renaming the batch or the portion label), the yield
 // and portion fields are CLEARED, not left holding a stale number and not
-// silently recomputed from the new ingredient weights. A tappable "use the
-// raw ingredient weight" suggestion appears once ingredients exist, but
-// filling it in is a deliberate tap — never automatic. Save is disabled
-// while either field is empty or invalid, so there is no path to saving a
-// batch whose yield doesn't reflect its current ingredients.
+// silently recomputed from the new ingredient weights. This now happens
+// INSIDE the store's batch-draft actions (addBatchIngredient(s),
+// removeBatchIngredient, updateBatchIngredientQuantity), not here. A
+// tappable "use the raw ingredient weight" suggestion appears once
+// ingredients exist, but filling it in is a deliberate tap — never
+// automatic. Save is disabled while either field is empty or invalid, so
+// there is no path to saving a batch whose yield doesn't reflect its
+// current ingredients.
 //
 // IMMUTABILITY: saving here (create or edit) never touches meal_entries —
 // see compositions.ts's updateBatch for why an edit is safe by construction,
 // not by care taken here.
 // ============================================================
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -34,7 +59,7 @@ import {
 import { useFocusEffect, useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { useStore } from "../store/useStore";
+import { useStore, BatchDraftIngredient } from "../store/useStore";
 import { BatchIngredientInput } from "../lib/compositions";
 import {
   Colors,
@@ -48,12 +73,6 @@ import { FoodProduct, MealCompositionItem, RootStackParamList } from "../types";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "BatchEditor">;
 type Route = RouteProp<RootStackParamList, "BatchEditor">;
-
-interface DraftIngredient {
-  key: string;
-  product: FoodProduct;
-  quantityG: number;
-}
 
 /**
  * Reconstruct an approximate FoodProduct (per-100g rates) from an already-
@@ -100,7 +119,7 @@ function IngredientRow({
   onQuantityChange,
   onRemove,
 }: {
-  ingredient: DraftIngredient;
+  ingredient: BatchDraftIngredient;
   onQuantityChange: (g: number) => void;
   onRemove: () => void;
 }) {
@@ -150,35 +169,70 @@ export function BatchEditorScreen() {
   const isEditing = !!compositionId;
   const insets = useSafeAreaInsets();
 
-  const { compositions, fetchCompositions, saveBatch, saveBatchEdits, removeComposition } =
-    useStore();
+  const {
+    compositions,
+    fetchCompositions,
+    saveBatch,
+    saveBatchEdits,
+    removeComposition,
+    batchDraft,
+    setBatchDraftName,
+    setBatchDraftPortionLabel,
+    setBatchDraftTotalYieldG,
+    setBatchDraftPortionSizeG,
+    setBatchDraftIngredients,
+    removeBatchIngredient,
+    updateBatchIngredientQuantity,
+    resetBatchDraft,
+  } = useStore();
 
   const existing = isEditing
     ? compositions.find((c) => c.id === compositionId)
     : undefined;
 
-  const [name, setName] = useState(existing?.name ?? "");
-  const [portionLabel, setPortionLabel] = useState(existing?.portion_label ?? "");
-  const [yieldG, setYieldG] = useState(
-    existing?.yield_g != null ? String(existing.yield_g) : "",
-  );
-  const [portionG, setPortionG] = useState(
-    existing?.portion_g != null ? String(existing.portion_g) : "",
-  );
-  const [ingredients, setIngredients] = useState<DraftIngredient[]>(() => {
-    if (!existing) return [];
-    return existing.items.flatMap((item) => {
-      const product = productFromItem(item);
-      if (!product) {
-        console.warn(
-          `BatchEditor: skipping item ${item.id} — no usable serving_g to reconstruct from.`,
-        );
-        return [];
-      }
-      return [{ key: item.id, product, quantityG: item.serving_g! }];
-    });
-  });
   const [saving, setSaving] = useState(false);
+
+  // Hydrate (edit) or reset (create) the draft ONCE at mount — see the
+  // file-level DRAFT LIFECYCLE comment for why this must not re-run on
+  // every `existing` change.
+  useEffect(() => {
+    if (existing) {
+      setBatchDraftName(existing.name);
+      setBatchDraftPortionLabel(existing.portion_label ?? "");
+      setBatchDraftTotalYieldG(existing.yield_g != null ? String(existing.yield_g) : "");
+      setBatchDraftPortionSizeG(existing.portion_g != null ? String(existing.portion_g) : "");
+      setBatchDraftIngredients(
+        existing.items.flatMap((item) => {
+          const product = productFromItem(item);
+          if (!product) {
+            console.warn(
+              `BatchEditor: skipping item ${item.id} — no usable serving_g to reconstruct from.`,
+            );
+            return [];
+          }
+          return [{ key: item.id, product, quantityG: item.serving_g! }];
+        }),
+      );
+    } else {
+      // Belt-and-braces: the draft SHOULD already be empty (the
+      // beforeRemove listener below clears it on every exit), but a stale
+      // draft surviving here would silently reopen a half-finished batch
+      // from a previous session as if it were a fresh one.
+      resetBatchDraft();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Reset on every genuine exit — NOT on blur, which also fires when
+  // navigating to BatchIngredientPicker and would wipe the draft mid-build.
+  // beforeRemove fires only when this screen is actually leaving the stack
+  // (back button, hardware back, gesture, or Save's navigation.goBack()).
+  useEffect(() => {
+    const unsubscribe = navigation.addListener("beforeRemove", () => {
+      resetBatchDraft();
+    });
+    return unsubscribe;
+  }, [navigation, resetBatchDraft]);
 
   // Refetch on focus so an edit made elsewhere (or a slow initial load) isn't
   // silently stale — harmless if it's already fresh.
@@ -188,44 +242,20 @@ export function BatchEditorScreen() {
     }, []),
   );
 
-  const clearYieldOnIngredientChange = () => {
-    setYieldG("");
-    setPortionG("");
-  };
-
-  const addIngredient = (product: FoodProduct, quantityG: number) => {
-    setIngredients((prev) => [
-      ...prev,
-      { key: `${Date.now()}-${Math.random()}`, product, quantityG },
-    ]);
-    clearYieldOnIngredientChange();
-  };
-
-  const removeIngredient = (key: string) => {
-    setIngredients((prev) => prev.filter((i) => i.key !== key));
-    clearYieldOnIngredientChange();
-  };
-
-  const updateIngredientQuantity = (key: string, quantityG: number) => {
-    setIngredients((prev) =>
-      prev.map((i) => (i.key === key ? { ...i, quantityG } : i)),
-    );
-    clearYieldOnIngredientChange();
-  };
-
-  const rawSumG = ingredients.reduce((s, i) => s + i.quantityG, 0);
+  const rawSumG = batchDraft.ingredients.reduce((s, i) => s + i.quantityG, 0);
   const needsYieldConfirm =
-    ingredients.length > 0 && (yieldG.trim() === "" || portionG.trim() === "");
+    batchDraft.ingredients.length > 0 &&
+    (batchDraft.totalYieldG.trim() === "" || batchDraft.portionSizeG.trim() === "");
 
-  const yieldGNum = parseFloat(yieldG.replace(",", "."));
-  const portionGNum = parseFloat(portionG.replace(",", "."));
+  const yieldGNum = parseFloat(batchDraft.totalYieldG.replace(",", "."));
+  const portionGNum = parseFloat(batchDraft.portionSizeG.replace(",", "."));
   const yieldValid = Number.isFinite(yieldGNum) && yieldGNum > 0;
   const portionValid = Number.isFinite(portionGNum) && portionGNum > 0;
   const portionFitsYield = !yieldValid || !portionValid || portionGNum <= yieldGNum;
 
   const canSave =
-    name.trim().length > 0 &&
-    ingredients.length > 0 &&
+    batchDraft.name.trim().length > 0 &&
+    batchDraft.ingredients.length > 0 &&
     yieldValid &&
     portionValid &&
     portionGNum <= yieldGNum;
@@ -234,24 +264,24 @@ export function BatchEditorScreen() {
     if (!canSave) return;
     setSaving(true);
 
-    const ingredientInputs: BatchIngredientInput[] = ingredients.map((i) => ({
+    const ingredientInputs: BatchIngredientInput[] = batchDraft.ingredients.map((i) => ({
       product: i.product,
       quantityG: i.quantityG,
     }));
 
     const { error } = isEditing
       ? await saveBatchEdits(compositionId!, {
-          name,
+          name: batchDraft.name,
           yieldG: yieldGNum,
           portionG: portionGNum,
-          portionLabel: portionLabel.trim() ? portionLabel.trim() : null,
+          portionLabel: batchDraft.portionLabel.trim() ? batchDraft.portionLabel.trim() : null,
           ingredients: ingredientInputs,
         })
       : await saveBatch({
-          name,
+          name: batchDraft.name,
           yieldG: yieldGNum,
           portionG: portionGNum,
-          portionLabel: portionLabel.trim() ? portionLabel.trim() : null,
+          portionLabel: batchDraft.portionLabel.trim() ? batchDraft.portionLabel.trim() : null,
           ingredients: ingredientInputs,
         });
 
@@ -333,8 +363,8 @@ export function BatchEditorScreen() {
             <Text style={styles.cardLabel}>Name</Text>
             <TextInput
               style={styles.nameInput}
-              value={name}
-              onChangeText={setName}
+              value={batchDraft.name}
+              onChangeText={setBatchDraftName}
               placeholder="Sunday pancakes, chilli, soup…"
               placeholderTextColor={Colors.textMuted}
               returnKeyType="done"
@@ -344,20 +374,20 @@ export function BatchEditorScreen() {
           {/* ── Ingredients ──────────────────────────── */}
           <View style={styles.card}>
             <Text style={styles.cardLabel}>
-              Ingredients {ingredients.length > 0 ? `(${ingredients.length})` : ""}
+              Ingredients {batchDraft.ingredients.length > 0 ? `(${batchDraft.ingredients.length})` : ""}
             </Text>
 
-            {ingredients.length === 0 ? (
+            {batchDraft.ingredients.length === 0 ? (
               <Text style={styles.emptyIngredients}>
                 Add what went into the pot — search or pick from your library.
               </Text>
             ) : (
-              ingredients.map((ing) => (
+              batchDraft.ingredients.map((ing) => (
                 <IngredientRow
                   key={ing.key}
                   ingredient={ing}
-                  onQuantityChange={(g) => updateIngredientQuantity(ing.key, g)}
-                  onRemove={() => removeIngredient(ing.key)}
+                  onQuantityChange={(g) => updateBatchIngredientQuantity(ing.key, g)}
+                  onRemove={() => removeBatchIngredient(ing.key)}
                 />
               ))
             )}
@@ -367,11 +397,7 @@ export function BatchEditorScreen() {
                 styles.addIngredientRow,
                 pressed && { backgroundColor: Colors.surface2 },
               ]}
-              onPress={() =>
-                navigation.navigate("BatchIngredientPicker", {
-                  onPick: addIngredient,
-                })
-              }
+              onPress={() => navigation.navigate("BatchIngredientPicker")}
             >
               <Text style={styles.addIngredientIcon}>＋</Text>
               <Text style={styles.addIngredientText}>Add ingredient</Text>
@@ -390,7 +416,7 @@ export function BatchEditorScreen() {
                 </Text>
                 {rawSumG > 0 && (
                   <Pressable
-                    onPress={() => setYieldG(String(Math.round(rawSumG)))}
+                    onPress={() => setBatchDraftTotalYieldG(String(Math.round(rawSumG)))}
                     style={({ pressed }) => [
                       styles.suggestionChip,
                       pressed && { opacity: 0.8 },
@@ -411,8 +437,8 @@ export function BatchEditorScreen() {
                 <View style={styles.numberInputRow}>
                   <TextInput
                     style={styles.numberInput}
-                    value={yieldG}
-                    onChangeText={setYieldG}
+                    value={batchDraft.totalYieldG}
+                    onChangeText={setBatchDraftTotalYieldG}
                     keyboardType="decimal-pad"
                     placeholder="e.g. 900"
                     placeholderTextColor={Colors.textMuted}
@@ -425,8 +451,8 @@ export function BatchEditorScreen() {
                 <View style={styles.numberInputRow}>
                   <TextInput
                     style={styles.numberInput}
-                    value={portionG}
-                    onChangeText={setPortionG}
+                    value={batchDraft.portionSizeG}
+                    onChangeText={setBatchDraftPortionSizeG}
                     keyboardType="decimal-pad"
                     placeholder="e.g. 150"
                     placeholderTextColor={Colors.textMuted}
@@ -445,8 +471,8 @@ export function BatchEditorScreen() {
             <Text style={styles.cardLabel}>Portion label (optional)</Text>
             <TextInput
               style={styles.nameInput}
-              value={portionLabel}
-              onChangeText={setPortionLabel}
+              value={batchDraft.portionLabel}
+              onChangeText={setBatchDraftPortionLabel}
               placeholder="1 pancake, 1 bowl…"
               placeholderTextColor={Colors.textMuted}
               returnKeyType="done"

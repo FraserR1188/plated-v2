@@ -9,14 +9,18 @@
 //
 // OUTPUT SHAPE — deliberately FoodProduct, not a bespoke wrapper type.
 // BatchIngredientPickerScreen already has the full "search -> pick ->
-// confirm quantity in grams" flow built around FoodProduct
-// (onPick(product: FoodProduct, quantityG: number) — see that screen's
-// startPicking()). A resolved candidate's `product.serving_g` is set to
-// the estimated grams for exactly that reason: a future recipe-scan screen
-// can call startPicking(candidate.product) UNCHANGED and the quantity
-// field prefills itself, the same way a search hit or barcode scan does
-// today. ResolvedCandidate is a thin sidecar carrying what FoodProduct has
-// no field for — confidence and provenance — not a replacement for it.
+// confirm quantity in grams" flow built around FoodProduct: startPicking()
+// prefills the quantity field from product.serving_g, and confirming calls
+// useStore's addBatchIngredient(product, quantityG) — see that screen and
+// useStore.ts's BatchDraft comment (addBatchIngredient(s) replaced an
+// onPick callback threaded through navigation params, which React
+// Navigation warned about; the FoodProduct shape itself is unaffected by
+// that change). A resolved candidate's `product.serving_g` is set to the
+// estimated grams for exactly that reason: a future recipe-scan screen can
+// call startPicking(candidate.product) UNCHANGED and the quantity field
+// prefills itself, the same way a search hit or barcode scan does today.
+// ResolvedCandidate is a thin sidecar carrying what FoodProduct has no
+// field for — confidence and provenance — not a replacement for it.
 //
 // ⚠ KNOWN SCHEMA MISMATCH — see stapleToProduct()'s comment. core_ingredients
 // (migration 20260808140000) makes ALL EIGHT macros nullable, but FoodProduct

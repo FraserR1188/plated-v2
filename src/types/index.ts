@@ -549,9 +549,14 @@ export type RootStackParamList = {
    *   - log flow (AddIngredientScreen): {date, mealType} — a found product
    *     replaces this screen with Product, targeting that meal.
    *   - batch-ingredient-picker flow: {onScanned} — a found product is
-   *     handed back via callback and this screen pops, exactly like
-   *     BatchIngredientPicker's own onPick (see the comment on that route
-   *     below for why a callback param, not store state).
+   *     handed back via callback and this screen pops.
+   *
+   * ⚠ onScanned is a function in a navigation param — the same
+   * non-serialisable-params shape BatchIngredientPicker's onPick used to be
+   * (see that route below for why it was moved to a store slice instead).
+   * Not fixed here: this callsite is Scanner's own, shared by the log flow
+   * too, and a bigger change than this pass touched. Flagging it, not
+   * fixing it silently.
    * ScannerScreen branches on which key is present; never both.
    */
   Scanner:
@@ -588,20 +593,22 @@ export type RootStackParamList = {
   BatchEditor: { compositionId?: string };
 
   /**
-   * ⚠ THE ONE ROUTE PARAM IN THIS LIST THAT ISN'T PLAIN DATA.
+   * No params. USED TO carry `onPick: (product, quantityG) => void` — a
+   * function in a navigation param, which React Navigation warns about
+   * ("Non-serializable values were found in the navigation state") because
+   * it can't survive JSON serialisation for state restore. Fixed by lifting
+   * the in-progress batch into useStore's `batchDraft` slice: the picker now
+   * calls `addBatchIngredient`/`addBatchIngredients` directly and pops
+   * itself, instead of handing a result back through params. See
+   * useStore.ts's BatchDraft comment for the full reasoning, and
+   * BatchEditorScreen's `beforeRemove` listener for when the draft resets.
    *
-   * A batch ingredient has no {date, mealType} target to navigate onward
-   * with — unlike every food-adding flow above, it isn't going into a day at
-   * all, just a draft ingredient list still being built on BatchEditorScreen.
-   * Passing a callback closure back through the param is the standard React
-   * Navigation pattern for "this picker screen hands a value back to
-   * whoever opened it" when there's no shared store state to write into
-   * instead — deliberately NOT threading a global batch-draft slice through
-   * useStore for what is purely one screen's transient, unsaved form state.
+   * If a future caller needs to tell the picker which mode to open in
+   * (there's no multi-select today — this screen is strictly one item,
+   * confirm, pop, repeat), that's plain serialisable data (e.g. a
+   * `mode: "single" | "multi"` flag) and belongs here — never a callback.
    */
-  BatchIngredientPicker: {
-    onPick: (product: FoodProduct, quantityG: number) => void;
-  };
+  BatchIngredientPicker: undefined;
 };
 
 export type BottomTabParamList = {

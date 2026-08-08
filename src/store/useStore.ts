@@ -61,6 +61,63 @@ export type MealEntryPatch = Partial<
   >
 >;
 
+/** One ingredient in an in-progress (unsaved) batch: a food (per-100g rate)
+ *  plus how much of it, in grams. Same shape BatchIngredientInput wraps for
+ *  the actual save call — see compositions.ts. */
+export interface BatchDraftIngredient {
+  key: string;
+  product: FoodProduct;
+  quantityG: number;
+}
+
+/**
+ * The in-progress, unsaved batch being built on BatchEditorScreen.
+ *
+ * WHY THIS LIVES IN THE STORE, NOT SCREEN-LOCAL STATE
+ *   BatchIngredientPickerScreen used to hand a picked product back to
+ *   BatchEditorScreen via an `onPick` callback threaded through navigation
+ *   params. React Navigation warns loudly about that ("Non-serializable
+ *   values were found in the navigation state") because a function can't be
+ *   JSON-serialised for state restore — so a killed-and-restored app with
+ *   the picker on screen had a navigation stack it could never rebuild.
+ *   Lifting the draft here means the picker calls addBatchIngredient(s)
+ *   directly and pops itself; navigation params carry no callback at all.
+ *
+ * WHOLESALE STATE, NOT A SUPABASE ROW
+ *   camelCase, client-only, never written directly — saving still goes
+ *   through compositionApi.createBatchFromIngredients / updateBatch (see
+ *   saveBatch/saveBatchEdits below), which is the ONLY place a batch's
+ *   contents reach Postgres. This slice never touches meal_entries and
+ *   never carries date/planned — those are trigger-owned, and a batch item
+ *   has no date of its own until it's applied to one.
+ *
+ * LIFECYCLE
+ *   Reset on every genuine exit from BatchEditorScreen (its `beforeRemove`
+ *   listener — NOT blur, since losing focus to BatchIngredientPicker must
+ *   NOT clear it), and hydrated from the existing composition once, at
+ *   mount, when editing. See BatchEditorScreen.tsx for both.
+ */
+export interface BatchDraft {
+  name: string;
+  ingredients: BatchDraftIngredient[];
+  totalYieldG: string;
+  portionSizeG: string;
+  portionLabel: string;
+}
+
+const EMPTY_BATCH_DRAFT: BatchDraft = {
+  name: "",
+  ingredients: [],
+  totalYieldG: "",
+  portionSizeG: "",
+  portionLabel: "",
+};
+
+/** Fresh key per add — same scheme BatchEditorScreen's local state used
+ *  before this moved into the store. `i` guards addBatchIngredients: several
+ *  items added in one synchronous call can share a Date.now() millisecond. */
+const draftKey = (i = 0): string => `${Date.now()}-${i}-${Math.random()}`;
+
 /** Macro totals split by whether the food has actually been eaten. */
 export interface SplitTotals {
   /** Logged entries + confirmed planned entries. What actually went in you. */
@@ -185,6 +242,30 @@ interface AppState {
   /** Log-now only for v1: no day, no time — applies to right now. */
   applyBatchNow: (composition: MealCompositionWithItems) => Promise<WriteResult>;
 
+  // ── Batch draft (pre-save, client-only — see the BatchDraft type comment) ──
+  batchDraft: BatchDraft;
+  setBatchDraftName: (name: string) => void;
+  setBatchDraftPortionLabel: (portionLabel: string) => void;
+  setBatchDraftTotalYieldG: (totalYieldG: string) => void;
+  setBatchDraftPortionSizeG: (portionSizeG: string) => void;
+  /** Wholesale replace — used to hydrate from an existing composition when
+   *  BatchEditorScreen opens in edit mode. */
+  setBatchDraftIngredients: (ingredients: BatchDraftIngredient[]) => void;
+  /** BatchIngredientPicker's single-add path. Also clears yield/portion —
+   *  see BatchEditorScreen's YIELD-ON-EDIT note: the ingredient set changing
+   *  invalidates any previously entered yield. */
+  addBatchIngredient: (product: FoodProduct, quantityG: number) => void;
+  /** Same, for several resolved ingredients at once — the shape the
+   *  upcoming recipe-scan confirm screen needs (resolved ingredients arrive
+   *  together, not one at a time). Do not build a picker-only add path that
+   *  this can't also use. */
+  addBatchIngredients: (
+    items: { product: FoodProduct; quantityG: number }[],
+  ) => void;
+  removeBatchIngredient: (key: string) => void;
+  updateBatchIngredientQuantity: (key: string, quantityG: number) => void;
+  resetBatchDraft: () => void;
+
   saveIngredient: (product: FoodProduct) => Promise<SavedIngredient | null>;
   deleteIngredient: (id: string) => Promise<void>;
 
@@ -272,6 +353,7 @@ export const useStore = create<AppState>((set, get) => ({
   savedIngredients: [],
   goals: DEFAULT_GOALS,
   loading: false,
+  batchDraft: EMPTY_BATCH_DRAFT,
 
   setUserId: (id) => set({ userId: id }),
 
@@ -284,6 +366,7 @@ export const useStore = create<AppState>((set, get) => ({
       savedIngredients: [],
       goals: DEFAULT_GOALS,
       loading: false,
+      batchDraft: EMPTY_BATCH_DRAFT,
     }),
 
   // NOTE: still unbounded. ~2,200 rows/year today; planning pushed that up and
@@ -835,6 +918,73 @@ export const useStore = create<AppState>((set, get) => ({
       return { error: msg(e, "Couldn't log that.") };
     }
   },
+
+  // ─── Batch draft ────────────────────────────────────────────
+
+  setBatchDraftName: (name) =>
+    set((s) => ({ batchDraft: { ...s.batchDraft, name } })),
+  setBatchDraftPortionLabel: (portionLabel) =>
+    set((s) => ({ batchDraft: { ...s.batchDraft, portionLabel } })),
+  setBatchDraftTotalYieldG: (totalYieldG) =>
+    set((s) => ({ batchDraft: { ...s.batchDraft, totalYieldG } })),
+  setBatchDraftPortionSizeG: (portionSizeG) =>
+    set((s) => ({ batchDraft: { ...s.batchDraft, portionSizeG } })),
+  setBatchDraftIngredients: (ingredients) =>
+    set((s) => ({ batchDraft: { ...s.batchDraft, ingredients } })),
+
+  addBatchIngredient: (product, quantityG) =>
+    set((s) => ({
+      batchDraft: {
+        ...s.batchDraft,
+        ingredients: [
+          ...s.batchDraft.ingredients,
+          { key: draftKey(), product, quantityG },
+        ],
+        totalYieldG: "",
+        portionSizeG: "",
+      },
+    })),
+
+  addBatchIngredients: (items) =>
+    set((s) => ({
+      batchDraft: {
+        ...s.batchDraft,
+        ingredients: [
+          ...s.batchDraft.ingredients,
+          ...items.map((item, i) => ({
+            key: draftKey(i),
+            product: item.product,
+            quantityG: item.quantityG,
+          })),
+        ],
+        totalYieldG: "",
+        portionSizeG: "",
+      },
+    })),
+
+  removeBatchIngredient: (key) =>
+    set((s) => ({
+      batchDraft: {
+        ...s.batchDraft,
+        ingredients: s.batchDraft.ingredients.filter((i) => i.key !== key),
+        totalYieldG: "",
+        portionSizeG: "",
+      },
+    })),
+
+  updateBatchIngredientQuantity: (key, quantityG) =>
+    set((s) => ({
+      batchDraft: {
+        ...s.batchDraft,
+        ingredients: s.batchDraft.ingredients.map((i) =>
+          i.key === key ? { ...i, quantityG } : i,
+        ),
+        totalYieldG: "",
+        portionSizeG: "",
+      },
+    })),
+
+  resetBatchDraft: () => set({ batchDraft: EMPTY_BATCH_DRAFT }),
 
   // ─── Saved ingredients ─────────────────────────────────────
 

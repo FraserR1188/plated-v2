@@ -3,11 +3,20 @@
 // ============================================================
 // Search, scan, photograph, or pick from the library — however the food is
 // found, it funnels through the SAME two steps: land a FoodProduct (a
-// per-100g rate) via startPicking(), confirm a quantity, hand
-// {product, quantityG} back to whoever opened this screen (route.params.
-// onPick — see the type's comment in types/index.ts for why a callback and
-// not a store slice). Nothing here ever writes to meal_entries or the
-// composition — that only happens when BatchEditorScreen's Save is pressed.
+// per-100g rate) via startPicking(), confirm a quantity, call
+// addBatchIngredient(product, quantityG) on the store's batchDraft slice,
+// then pop.
+//
+// NOT a callback through navigation params. That was the original design
+// (route.params.onPick) and React Navigation warned about it on every open
+// — "Non-serializable values were found in the navigation state" — because
+// a function can't survive JSON serialisation for state restore (the
+// OS-kills-the-app-with-the-picker-open case). BatchEditorScreen renders
+// straight off the same batchDraft slice, so there's nothing to hand back:
+// this screen mutates shared state and leaves. See useStore.ts's BatchDraft
+// comment for the full reasoning. Nothing here ever writes to meal_entries
+// or the composition either way — that only happens when BatchEditorScreen's
+// Save is pressed.
 //
 // Barcode and AI-photo reuse the existing scanner/photo-recognition LOOKUPS
 // only (ScannerScreen in "pick mode" via its onScanned callback param, and
@@ -39,7 +48,7 @@ import {
   Pressable,
   Alert,
 } from "react-native";
-import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { searchFood } from "../lib/openfoodfacts";
@@ -71,7 +80,6 @@ const AI_CONFIDENCE_LABEL: Record<"high" | "medium" | "low", string> = {
 };
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "BatchIngredientPicker">;
-type Route = RouteProp<RootStackParamList, "BatchIngredientPicker">;
 type Tab = "search" | "library";
 
 function savedToProduct(saved: SavedIngredient): FoodProduct {
@@ -93,8 +101,7 @@ function savedToProduct(saved: SavedIngredient): FoodProduct {
 
 export function BatchIngredientPickerScreen() {
   const navigation = useNavigation<Nav>();
-  const { onPick } = useRoute<Route>().params;
-  const { savedIngredients } = useStore();
+  const { savedIngredients, addBatchIngredient } = useStore();
   const insets = useSafeAreaInsets();
 
   const [tab, setTab] = useState<Tab>("search");
@@ -214,7 +221,7 @@ export function BatchIngredientPickerScreen() {
       Alert.alert("Enter a quantity", "How many grams went into the batch?");
       return;
     }
-    onPick(picking, g);
+    addBatchIngredient(picking, g);
     navigation.goBack();
   };
 

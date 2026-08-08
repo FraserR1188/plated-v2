@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useStore } from "../useStore";
 import { supabase } from "../../lib/supabase";
-import { MealEntry } from "../../types";
+import { MealEntry, FoodProduct } from "../../types";
 
 function makeEntry(overrides: Partial<MealEntry> = {}): MealEntry {
   return {
@@ -290,5 +290,163 @@ describe("useStore.copyEntriesTo", () => {
 
     // Total entry count grew by exactly one.
     expect(entries).toHaveLength(2);
+  });
+});
+
+// ─── Batch draft ─────────────────────────────────────────────
+//
+// Pure client-side state — no Supabase mocking needed. These exist because
+// the picker->caller flow that used to be an onPick callback in navigation
+// params (which React Navigation warned about — non-serialisable state) is
+// now entirely this slice: BatchIngredientPickerScreen calls these actions
+// directly and BatchEditorScreen renders off the same state.
+
+function makeProduct(overrides: Partial<FoodProduct> = {}): FoodProduct {
+  return {
+    name: "Plain flour",
+    brand: "",
+    cal_per100: 341,
+    protein_per100: 9.4,
+    carbs_per100: 77.7,
+    fat_per100: 1.3,
+    ...overrides,
+  };
+}
+
+describe("useStore batch draft", () => {
+  it("starts empty", () => {
+    expect(useStore.getState().batchDraft).toEqual({
+      name: "",
+      ingredients: [],
+      totalYieldG: "",
+      portionSizeG: "",
+      portionLabel: "",
+    });
+  });
+
+  it("addBatchIngredient appends one ingredient and clears yield/portion", () => {
+    useStore.getState().setBatchDraftTotalYieldG("900");
+    useStore.getState().setBatchDraftPortionSizeG("150");
+
+    useStore.getState().addBatchIngredient(makeProduct(), 200);
+
+    const draft = useStore.getState().batchDraft;
+    expect(draft.ingredients).toHaveLength(1);
+    expect(draft.ingredients[0].product.name).toBe("Plain flour");
+    expect(draft.ingredients[0].quantityG).toBe(200);
+    expect(draft.ingredients[0].key).toBeTruthy();
+    // YIELD-ON-EDIT: the ingredient set just changed.
+    expect(draft.totalYieldG).toBe("");
+    expect(draft.portionSizeG).toBe("");
+  });
+
+  it("addBatchIngredient does not clobber name/portionLabel — only yield/portion", () => {
+    useStore.getState().setBatchDraftName("Sunday chilli");
+    useStore.getState().setBatchDraftPortionLabel("1 bowl");
+
+    useStore.getState().addBatchIngredient(makeProduct(), 200);
+
+    const draft = useStore.getState().batchDraft;
+    expect(draft.name).toBe("Sunday chilli");
+    expect(draft.portionLabel).toBe("1 bowl");
+  });
+
+  it("repeated adds accumulate, each with a distinct key", () => {
+    useStore.getState().addBatchIngredient(makeProduct({ name: "Egg" }), 58);
+    useStore.getState().addBatchIngredient(makeProduct({ name: "Milk" }), 100);
+
+    const { ingredients } = useStore.getState().batchDraft;
+    expect(ingredients.map((i) => i.product.name)).toEqual(["Egg", "Milk"]);
+    expect(ingredients[0].key).not.toBe(ingredients[1].key);
+  });
+
+  it("addBatchIngredients adds several at once, each with a distinct key — the recipe-scan confirm shape", () => {
+    useStore.getState().addBatchIngredients([
+      { product: makeProduct({ name: "Onion" }), quantityG: 130 },
+      { product: makeProduct({ name: "Garlic" }), quantityG: 4 },
+      { product: makeProduct({ name: "Olive oil" }), quantityG: 14 },
+    ]);
+
+    const { ingredients } = useStore.getState().batchDraft;
+    expect(ingredients).toHaveLength(3);
+    expect(new Set(ingredients.map((i) => i.key)).size).toBe(3);
+    expect(ingredients.map((i) => i.product.name)).toEqual(["Onion", "Garlic", "Olive oil"]);
+  });
+
+  it("removeBatchIngredient removes by key and leaves the rest, clearing yield/portion", () => {
+    useStore.getState().addBatchIngredient(makeProduct({ name: "Egg" }), 58);
+    useStore.getState().addBatchIngredient(makeProduct({ name: "Milk" }), 100);
+    const [first, second] = useStore.getState().batchDraft.ingredients;
+    useStore.getState().setBatchDraftTotalYieldG("500");
+
+    useStore.getState().removeBatchIngredient(first.key);
+
+    const draft = useStore.getState().batchDraft;
+    expect(draft.ingredients).toEqual([second]);
+    expect(draft.totalYieldG).toBe("");
+  });
+
+  it("updateBatchIngredientQuantity updates only the matching row, clearing yield/portion", () => {
+    useStore.getState().addBatchIngredient(makeProduct({ name: "Egg" }), 58);
+    useStore.getState().addBatchIngredient(makeProduct({ name: "Milk" }), 100);
+    const [egg, milk] = useStore.getState().batchDraft.ingredients;
+    useStore.getState().setBatchDraftPortionSizeG("150");
+
+    useStore.getState().updateBatchIngredientQuantity(egg.key, 116);
+
+    const draft = useStore.getState().batchDraft;
+    expect(draft.ingredients.find((i) => i.key === egg.key)?.quantityG).toBe(116);
+    expect(draft.ingredients.find((i) => i.key === milk.key)?.quantityG).toBe(100);
+    expect(draft.portionSizeG).toBe("");
+  });
+
+  it("setBatchDraftIngredients wholesale-replaces — the edit-mode hydration path", () => {
+    useStore.getState().addBatchIngredient(makeProduct({ name: "Stale" }), 1);
+
+    const hydrated = [{ key: "item-1", product: makeProduct({ name: "Chicken" }), quantityG: 300 }];
+    useStore.getState().setBatchDraftIngredients(hydrated);
+
+    expect(useStore.getState().batchDraft.ingredients).toEqual(hydrated);
+  });
+
+  it("setters touch only their own field", () => {
+    useStore.getState().setBatchDraftName("A");
+    useStore.getState().setBatchDraftPortionLabel("B");
+    useStore.getState().setBatchDraftTotalYieldG("900");
+    useStore.getState().setBatchDraftPortionSizeG("150");
+
+    expect(useStore.getState().batchDraft).toEqual({
+      name: "A",
+      portionLabel: "B",
+      totalYieldG: "900",
+      portionSizeG: "150",
+      ingredients: [],
+    });
+  });
+
+  it("resetBatchDraft clears everything back to the initial empty draft", () => {
+    useStore.getState().setBatchDraftName("Sunday chilli");
+    useStore.getState().addBatchIngredient(makeProduct(), 200);
+    useStore.getState().setBatchDraftTotalYieldG("900");
+
+    useStore.getState().resetBatchDraft();
+
+    expect(useStore.getState().batchDraft).toEqual({
+      name: "",
+      ingredients: [],
+      totalYieldG: "",
+      portionSizeG: "",
+      portionLabel: "",
+    });
+  });
+
+  it("reset() (sign-out) also clears the batch draft", () => {
+    useStore.getState().setBatchDraftName("Sunday chilli");
+    useStore.getState().addBatchIngredient(makeProduct(), 200);
+
+    useStore.getState().reset();
+
+    expect(useStore.getState().batchDraft.name).toBe("");
+    expect(useStore.getState().batchDraft.ingredients).toEqual([]);
   });
 });

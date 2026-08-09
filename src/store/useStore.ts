@@ -8,6 +8,7 @@ import {
   DayTotals,
   MealType,
   FoodProduct,
+  Workout,
 } from "../types";
 import { dateKey, TimeOfDay } from "../lib/time";
 import { applyEntries, draftsFromDay, draftsForTarget } from "../lib/entries";
@@ -136,6 +137,8 @@ export interface WriteResult {
 interface AppState {
   userId: string | null;
   entries: MealEntry[];
+  /** Read-only WHOOP workout spine — see fetchWorkouts. Never written here. */
+  workouts: Workout[];
   compositions: MealCompositionWithItems[];
   savedIngredients: SavedIngredient[];
   goals: Goals;
@@ -147,6 +150,8 @@ interface AppState {
   fetchGoals: () => Promise<void>;
   fetchSavedIngredients: () => Promise<void>;
   fetchCompositions: () => Promise<void>;
+  /** Unbounded, same caveat as fetchEntries — refetched on every screen focus. */
+  fetchWorkouts: () => Promise<void>;
 
   /**
    * `planned`, `confirmed_at` and `skipped_at` are omitted on purpose: the DB
@@ -276,6 +281,9 @@ interface AppState {
   getEntriesForMeal: (date: string, mealType: MealType) => MealEntry[];
   /** Everything visible on a day, across all four sections. What copy-a-day copies. */
   getEntriesForDate: (date: string) => MealEntry[];
+  /** WHOOP workouts on this LOCAL day, sorted by start time. Keys off
+   *  localDate, not date — the spine column exposed for exactly this join. */
+  getWorkoutsForDate: (date: string) => Workout[];
   /** Every planned meal awaiting an answer, any day. For the Review screen. */
   getPendingEntries: () => MealEntry[];
   /** Pending meals whose calendar day has ENDED. For the banner — never nags about today. */
@@ -349,6 +357,7 @@ const msg = (e: unknown, fallback: string): string =>
 export const useStore = create<AppState>((set, get) => ({
   userId: null,
   entries: [],
+  workouts: [],
   compositions: [],
   savedIngredients: [],
   goals: DEFAULT_GOALS,
@@ -362,6 +371,7 @@ export const useStore = create<AppState>((set, get) => ({
     set({
       userId: null,
       entries: [],
+      workouts: [],
       compositions: [],
       savedIngredients: [],
       goals: DEFAULT_GOALS,
@@ -402,6 +412,43 @@ export const useStore = create<AppState>((set, get) => ({
     } catch (e) {
       console.warn("fetchCompositions:", msg(e, "unknown"));
     }
+  },
+
+  // Read-only WHOOP spine, same unbounded-refetch-on-focus shape as
+  // fetchEntries above (no windowed query here either). biometric_workouts
+  // is security_invoker, so RLS already scopes it to the caller — the
+  // explicit .eq mirrors fetchEntries rather than relying on that alone.
+  fetchWorkouts: async () => {
+    const { userId } = get();
+    if (!userId) return;
+    const { data, error } = await supabase
+      .from("biometric_workouts")
+      .select("*")
+      .eq("user_id", userId);
+    if (error) {
+      console.warn("fetchWorkouts:", error.message);
+      return;
+    }
+    if (!data) return;
+
+    // EXPLICIT snake_case → camelCase mapping — no spread. NULL-faithful:
+    // strain/HR/energy/distance are nullable on the spine and stay that way.
+    const workouts: Workout[] = data.map((w) => ({
+      id: w.source_workout_id,
+      ingestSource: w.ingest_source,
+      workoutStart: w.workout_start,
+      workoutEnd: w.workout_end,
+      timezoneOffset: w.timezone_offset,
+      localDate: w.local_date,
+      sportName: w.sport_name,
+      strain: w.strain,
+      averageHeartRate: w.average_heart_rate,
+      maxHeartRate: w.max_heart_rate,
+      energyKilojoule: w.energy_kilojoule,
+      distanceMeter: w.distance_meter,
+      strainScoreState: w.strain_score_state,
+    }));
+    set({ workouts });
   },
 
   fetchGoals: async () => {
@@ -1102,6 +1149,16 @@ export const useStore = create<AppState>((set, get) => ({
     get()
       .entries.filter((e) => e.date === date && !isSkipped(e))
       .sort(byEatenAt),
+
+  // Keys off localDate, not date — meal_entries and biometric_workouts are
+  // different grains with different column names for the same idea (the
+  // wall-clock day), and localDate is the spine column exposed for exactly
+  // this join. A future day has no WHOOP workouts, so this returns []
+  // there for free — nothing further needs to special-case planned days.
+  getWorkoutsForDate: (date) =>
+    get()
+      .workouts.filter((w) => w.localDate === date)
+      .sort((a, b) => a.workoutStart.localeCompare(b.workoutStart)),
 
   getPendingEntries: () => get().entries.filter(isPending).sort(byEatenAt),
 

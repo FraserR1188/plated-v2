@@ -65,6 +65,7 @@ import {
   MealType,
   MEAL_TYPES,
   MEAL_LABELS,
+  Workout,
 } from "../types";
 
 /** Awaiting an answer. Mirrors the store's predicate; kept local for row styling. */
@@ -110,6 +111,7 @@ export function TodayScreen() {
     applyCompositionToDay,
     fetchEntries,
     fetchCompositions,
+    fetchWorkouts,
   } = useStore();
 
   // Bundles-only view — see bundlesOnly() in lib/compositions.ts for why
@@ -216,12 +218,13 @@ export function TodayScreen() {
     useCallback(() => {
       fetchEntries();
       fetchCompositions();
+      fetchWorkouts();
     }, []),
   );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([fetchEntries(), fetchCompositions()]);
+    await Promise.all([fetchEntries(), fetchCompositions(), fetchWorkouts()]);
     setRefreshing(false);
   };
 
@@ -626,7 +629,8 @@ function DayPage({
 }) {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { goals, getSplitTotalsForDate, getEntriesForDate } = useStore();
+  const { goals, getSplitTotalsForDate, getEntriesForDate, getWorkoutsForDate } =
+    useStore();
 
   const isPageToday = date === today;
   const isFuture = isFutureDay(date);
@@ -644,9 +648,11 @@ function DayPage({
 
   const totals = getSplitTotalsForDate(date);
   const dayEntries = getEntriesForDate(date);
-  // Commit 1: no workouts arg — buildDayStream defaults it to [], so this is
-  // a plain food stream until the WHOOP pass wires getWorkoutsForDate(date) in.
-  const dayStream = buildDayStream(dayEntries);
+  // getWorkoutsForDate returns [] on a future day (WHOOP has no future
+  // workouts), so planned days are untouched by this for free. Workouts
+  // NEVER feed totals — only dayEntries does, above and everywhere below.
+  const dayWorkouts = getWorkoutsForDate(date);
+  const dayStream = buildDayStream(dayEntries, dayWorkouts);
 
   // ── Time-first add ──────────────────────────────────────────
   //
@@ -980,13 +986,21 @@ function DayPage({
                   </Text>
                 );
               }
-              if (item.kind === "workout") return null; // wired in commit 2
-
               // Bordered under everything except the last row of its band —
               // the next band header already reads as a break, a border
-              // there would just double it.
+              // there would just double it. Applies to both row kinds.
               const next = dayStream[i + 1];
               const isLastOfGroup = !next || next.kind === "band";
+
+              if (item.kind === "workout") {
+                return (
+                  <WorkoutCard
+                    key={item.key}
+                    workout={item.workout}
+                    bordered={!isLastOfGroup}
+                  />
+                );
+              }
 
               return (
                 <StreamFoodRow
@@ -2648,6 +2662,131 @@ function StreamFoodRow({
     </Pressable>
   );
 }
+
+// ─── Workout card ───────────────────────────────────────────────────────────
+//
+// Read-only, cyan (Colors.whoop). Deliberately NOT a Pressable: no tap-to-
+// edit, no long-press-to-select, no checkbox — a workout isn't a MealEntry,
+// it's never counted by select-all (which only ever walks dayEntries' ids),
+// and there is nothing here to edit or delete. energyKilojoule is
+// intentionally never rendered — sitting a WHOOP calorie figure next to the
+// ring invites a burned-vs-eaten netting model, which is exactly what the
+// still-deferred gross-to-net add-back formula exists to gate.
+
+function WorkoutCard({
+  workout,
+  bordered,
+}: {
+  workout: Workout;
+  bordered: boolean;
+}) {
+  const durationMin = Math.round(
+    (new Date(workout.workoutEnd).getTime() -
+      new Date(workout.workoutStart).getTime()) /
+      60000,
+  );
+  const hours = Math.floor(durationMin / 60);
+  const mins = durationMin % 60;
+  const durationLabel = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+
+  const distanceKm =
+    workout.distanceMeter != null ? (workout.distanceMeter / 1000).toFixed(2) : null;
+
+  return (
+    <View style={[workoutStyles.row, bordered && streamStyles.rowBorder]}>
+      <View style={workoutStyles.accent} />
+
+      <View style={workoutStyles.body}>
+        <View style={workoutStyles.top}>
+          <Text style={workoutStyles.sport} numberOfLines={1}>
+            {workout.sportName ?? "Workout"}
+          </Text>
+          {/* Source mark — where a future Garmin/Apple badge lives, keyed
+              off the same ingestSource column. */}
+          <View style={workoutStyles.sourceTag}>
+            <Text style={workoutStyles.sourceTagText}>
+              {workout.ingestSource.toUpperCase()}
+            </Text>
+          </View>
+        </View>
+        <Text style={workoutStyles.meta}>
+          {formatTime(workout.workoutStart)} · {durationLabel}
+          {distanceKm ? ` · ${distanceKm} km` : ""}
+        </Text>
+      </View>
+
+      {workout.strain != null && (
+        <Text style={workoutStyles.strain}>{workout.strain.toFixed(1)}</Text>
+      )}
+    </View>
+  );
+}
+
+const workoutStyles = StyleSheet.create({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 11,
+    backgroundColor: `${Colors.whoop}0C`,
+  },
+  accent: {
+    width: 3,
+    alignSelf: "stretch",
+    borderRadius: 2,
+    backgroundColor: Colors.whoop,
+    marginRight: Spacing.sm,
+  },
+  body: {
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  top: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: Spacing.sm,
+  },
+  sport: {
+    flex: 1,
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
+    color: Colors.text,
+    letterSpacing: -0.1,
+  },
+  sourceTag: {
+    flexShrink: 0,
+    backgroundColor: `${Colors.whoop}18`,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: `${Colors.whoop}40`,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  sourceTagText: {
+    fontSize: 10,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
+    color: Colors.whoop,
+    letterSpacing: 0.3,
+  },
+  meta: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: 3,
+    fontWeight: Typography.medium,
+    fontFamily: Fonts.mono.medium,
+  },
+  strain: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
+    color: Colors.whoop,
+    minWidth: 32,
+    textAlign: "right",
+  },
+});
 
 // ─── Styles ─────────────────────────────────────────────────────────────────
 

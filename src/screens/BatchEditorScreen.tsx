@@ -402,6 +402,17 @@ export function BatchEditorScreen() {
               <Text style={styles.addIngredientIcon}>＋</Text>
               <Text style={styles.addIngredientText}>Add ingredient</Text>
             </Pressable>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.addIngredientRow,
+                pressed && { backgroundColor: Colors.surface2 },
+              ]}
+              onPress={() => navigation.navigate("RecipeScan")}
+            >
+              <Text style={styles.addIngredientIcon}>🪄</Text>
+              <Text style={styles.addIngredientText}>Scan Recipe</Text>
+            </Pressable>
           </View>
 
           {/* ── Yield & portion ──────────────────────── */}

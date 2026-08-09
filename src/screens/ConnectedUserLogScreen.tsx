@@ -308,12 +308,12 @@ export function ConnectedUserLogScreen() {
       // ⚠ NOT entry.meal_type. That was inheriting the FRIEND's section as
       // this copy's target — exactly the bug class CLAUDE.md's architecture
       // invariants call out ("never inherit date or section from a source
-      // entry"). ProductScreen has no meal-type control (checked — the old
-      // comment here claiming "user can change on Product screen" was false),
-      // so whatever is passed here is final. This screen lands the copy at
-      // eaten_at = now (ProductScreen seeds "now" for date: todayKey()), so
-      // sectionForTime(now) is the correct default: a fresh section derived
-      // from THIS copy's own time, not borrowed from the source.
+      // entry"). This screen lands the copy at eaten_at = now (ProductScreen
+      // seeds "now" for date: todayKey()), so sectionForTime(now) is the
+      // correct STARTING default: a fresh section derived from THIS copy's
+      // own time, not borrowed from the source. ProductScreen's meal-type
+      // tag is editable on creation, so a wrong guess here is one tap to
+      // fix, not a re-navigation.
       navigation.navigate("Product", {
         product,
         date: todayKey(),

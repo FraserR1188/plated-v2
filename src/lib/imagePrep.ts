@@ -31,19 +31,22 @@ import type { PhotoKind } from "./customFoodImages";
 // server-side, so there is no accuracy to be gained by sending more.
 const MAX_EDGE = 1568;
 
-// "meal" is NOT a PhotoKind: PhotoKind is the storage upload convention in
-// customFoodImages.ts (path = {user}/{food}/{kind}.jpg), and a meal-photo
-// scan is never uploaded — see scan-meal-photo's header comment. It only
-// needs a JPEG quality here, so it gets its own small union rather than
-// widening PhotoKind to mean something it doesn't.
-export type PrepareKind = PhotoKind | "meal";
+// "meal" and "recipe" are NOT PhotoKinds: PhotoKind is the storage upload
+// convention in customFoodImages.ts (path = {user}/{food}/{kind}.jpg), and
+// neither a meal-photo scan nor a recipe scan is ever uploaded — see
+// scan-meal-photo's and scan-recipe's header comments. They only need a
+// JPEG quality here, so they get their own small union rather than widening
+// PhotoKind to mean something it doesn't.
+export type PrepareKind = PhotoKind | "meal" | "recipe";
 
-// Front-of-pack is a thumbnail; the label has to survive OCR; a meal photo
-// needs enough detail for the model to judge portion size and components.
+// Front-of-pack is a thumbnail; the label and a recipe page both have to
+// survive OCR (same quality tier); a meal photo needs enough detail for the
+// model to judge portion size and components.
 const QUALITY: Record<PrepareKind, number> = {
   front: 0.7,
   label: 0.85,
   meal: 0.8,
+  recipe: 0.85,
 };
 
 // Belt and braces. After a 1568px resize we can't realistically hit this,

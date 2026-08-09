@@ -35,7 +35,13 @@ import {
   Fonts,
   withDefaultFont,
 } from "../theme/tokens";
-import { FoodProduct, RootStackParamList, MEAL_LABELS } from "../types";
+import {
+  FoodProduct,
+  RootStackParamList,
+  MealType,
+  MEAL_TYPES,
+  MEAL_LABELS,
+} from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
 import { scanMealPhoto, mealScanToFoodProduct, MacroKey } from "../lib/mealRecognition";
 import { computeServingTotals } from "../lib/macros";
@@ -195,7 +201,7 @@ export function ProductScreen() {
   const {
     product,
     date: routeDate,
-    mealType,
+    mealType: routeMealType,
     editEntryId,
     initialServingG,
     initialEatenAt,
@@ -205,6 +211,15 @@ export function ProductScreen() {
   const scrollRef = useRef<ScrollView>(null);
 
   const isEditing = !!editEntryId;
+
+  // The route's mealType is only ever a STARTING guess now — derived from
+  // the time picked on Today (sectionForTime), not chosen by the user. This
+  // is the one place it becomes overridable: an editable tag on CREATE only.
+  // meal_type is sticky once a row exists (MealEntryPatch has no field for
+  // it — see CLAUDE.md's architecture invariants), so on an EDIT this stays
+  // fixed at the entry's real, already-set section and the tag renders
+  // read-only.
+  const [mealType, setMealType] = useState<MealType>(routeMealType);
 
   // ── Editable draft ──────────────────────────────────────────
   //
@@ -597,9 +612,34 @@ export function ProductScreen() {
                   ? "Plan a meal"
                   : "Add to meal"}
             </Text>
-            <View style={styles.mealPill}>
-              <Text style={styles.mealPillText}>{mealLabel}</Text>
-            </View>
+            {isEditing ? (
+              <View style={styles.mealPill}>
+                <Text style={styles.mealPillText}>{mealLabel}</Text>
+              </View>
+            ) : (
+              <View style={styles.mealTypeRow}>
+                {MEAL_TYPES.map((mt) => (
+                  <Pressable
+                    key={mt}
+                    onPress={() => setMealType(mt)}
+                    style={({ pressed }) => [
+                      styles.mealTypeChip,
+                      mealType === mt && styles.mealTypeChipActive,
+                      pressed && { opacity: 0.75 },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.mealTypeChipText,
+                        mealType === mt && styles.mealTypeChipTextActive,
+                      ]}
+                    >
+                      {MEAL_LABELS[mt]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
           </View>
         </View>
 
@@ -1082,6 +1122,30 @@ const styles = StyleSheet.create(
   mealPillText: {
     fontSize: Typography.xs,
     fontWeight: Typography.semibold,
+    color: Colors.green,
+  },
+  mealTypeRow: {
+    flexDirection: "row",
+    gap: 4,
+  },
+  mealTypeChip: {
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.pill,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  mealTypeChipActive: {
+    backgroundColor: Colors.greenSoft,
+    borderColor: `${Colors.green}35`,
+  },
+  mealTypeChipText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+    color: Colors.textMuted,
+  },
+  mealTypeChipTextActive: {
     color: Colors.green,
   },
 

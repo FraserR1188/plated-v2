@@ -304,3 +304,37 @@ export async function lookupStapleFromDb(normalizedName: string): Promise<Staple
 function withServingG(product: FoodProduct, grams: number | null): FoodProduct {
   return grams != null ? { ...product, serving_g: grams } : product;
 }
+
+// ─── Recipe-scan confirm row grams precedence ────────────────
+//
+// The recipe-scan confirm screen has TWO independent grams opinions for a
+// line: the resolved candidate's (from THIS file's own estimateGrams/staple
+// logic) and the scanner LLM's own rough estimatedGrams fallback (see
+// scan-recipe's header — that field exists purely for when the resolver has
+// nothing). This function is the one place that reconciles them, so the
+// precedence rule has exactly one implementation and one set of tests.
+//
+// THE EDGE CASE THIS EXISTS TO GET RIGHT: a resolved candidate can be a
+// real, correctly-matched product that STILL carries gramsConfidence
+// 'unknown' (e.g. "salt to taste" resolves to a salt product, but there is
+// no quantity to convert). Branching on whether `preselected` itself is
+// truthy — as an early draft of this did — would let the LLM's fallback
+// number silently render on screen while the badge still says 'unknown',
+// which is a lie: 'unknown' means "no number is showing, tap to set one,"
+// not "there's a number but don't trust it." So this branches on
+// `preselected.estimatedGrams`, not on `preselected`.
+export function resolveRowGrams(
+  preselected: ResolvedCandidate | null,
+  llmFallbackGrams: number | null,
+): { grams: number | null; confidence: GramsConfidence } {
+  if (preselected?.estimatedGrams != null) {
+    return { grams: preselected.estimatedGrams, confidence: preselected.gramsConfidence };
+  }
+  if (llmFallbackGrams != null) {
+    // The resolver had nothing; the LLM's rough figure is genuinely better
+    // than blank, but the moment a number is actually shown it must read as
+    // 'estimated', never inherit 'unknown' styling.
+    return { grams: llmFallbackGrams, confidence: "estimated" };
+  }
+  return { grams: null, confidence: "unknown" }; // no number from either source — forces the tap
+}

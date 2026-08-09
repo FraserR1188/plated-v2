@@ -3,10 +3,23 @@ import {
   estimateGrams,
   normalizeIngredientName,
   resolveIngredient,
+  resolveRowGrams,
   type StapleRow,
   type ResolveDeps,
+  type ResolvedCandidate,
 } from "../ingredients";
 import type { FoodProduct } from "../../types";
+
+function candidate(overrides: Partial<ResolvedCandidate> = {}): ResolvedCandidate {
+  return {
+    product: offProduct("Some Product"),
+    estimatedGrams: 100,
+    gramsConfidence: "exact",
+    source: "off-generic",
+    preselected: true,
+    ...overrides,
+  };
+}
 
 function staple(overrides: Partial<StapleRow> = {}): StapleRow {
   return {
@@ -198,5 +211,37 @@ describe("resolveIngredient", () => {
     expect(candidates).toHaveLength(1);
     expect(candidates[0].source).toBe("staple");
     expect(candidates[0].preselected).toBe(true);
+  });
+});
+
+// ─── resolveRowGrams ─────────────────────────────────────────
+
+describe("resolveRowGrams", () => {
+  it("resolver 'exact' with a number passes through unchanged", () => {
+    const c = candidate({ estimatedGrams: 200, gramsConfidence: "exact" });
+    expect(resolveRowGrams(c, 999)).toEqual({ grams: 200, confidence: "exact" });
+  });
+
+  it("resolver 'estimated' with a number passes through unchanged", () => {
+    const c = candidate({ estimatedGrams: 58, gramsConfidence: "estimated" });
+    expect(resolveRowGrams(c, null)).toEqual({ grams: 58, confidence: "estimated" });
+  });
+
+  it("resolver 'unknown' but the LLM has a fallback number -> uses the LLM number, labelled 'estimated', NEVER 'unknown'", () => {
+    // The regression case: a resolved candidate can be a real product match
+    // that still has no grams opinion (e.g. "salt to taste"). A number must
+    // never render on screen under an "unknown, tap to set" badge.
+    const c = candidate({ estimatedGrams: null, gramsConfidence: "unknown" });
+    expect(resolveRowGrams(c, 3)).toEqual({ grams: 3, confidence: "estimated" });
+  });
+
+  it("resolver 'unknown' and no LLM fallback either -> blank, forces the tap", () => {
+    const c = candidate({ estimatedGrams: null, gramsConfidence: "unknown" });
+    expect(resolveRowGrams(c, null)).toEqual({ grams: null, confidence: "unknown" });
+  });
+
+  it("no candidate at all (empty resolveIngredient() result) falls through the same path as 'unknown'", () => {
+    expect(resolveRowGrams(null, 42)).toEqual({ grams: 42, confidence: "estimated" });
+    expect(resolveRowGrams(null, null)).toEqual({ grams: null, confidence: "unknown" });
   });
 });

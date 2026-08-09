@@ -539,15 +539,48 @@ export interface CopyPayload {
   targetMeal: MealType | null; // null when full_day (preserve original meals)
 }
 
+// ─── Biometric workouts (WHOOP spine) ─────────────────────────
+
+/**
+ * Mirrors public.biometric_workouts (the provider-agnostic spine — so
+ * Garmin/Apple ride in free later via ingestSource). Nullable stays
+ * nullable; camelCase mapping happens explicitly at the fetch site, same
+ * convention as everywhere else in this file — never a spread.
+ *
+ * Read-only in the app: workouts are never created, edited or deleted here.
+ */
+export interface Workout {
+  id: string; // source_workout_id
+  ingestSource: string; // 'whoop'
+  workoutStart: string; // ISO instant — both needed: duration + time position
+  workoutEnd: string;
+  timezoneOffset: string | null;
+  localDate: string; // 'YYYY-MM-DD' — the join key to a day, alongside MealEntry.date
+  sportName: string | null;
+  strain: number | null;
+  averageHeartRate: number | null;
+  maxHeartRate: number | null;
+  energyKilojoule: number | null; // NOT rendered in v1 — see dayStream/TodayScreen
+  distanceMeter: number | null;
+  strainScoreState: string | null;
+}
+
 // ─── Navigation ──────────────────────────────────────────────
 
 export type RootStackParamList = {
   MainTabs: undefined;
-  AddIngredient: { date: string; mealType: MealType };
+  /**
+   * Time-first add (D-today-stream): the caller has already picked WHEN, via
+   * a single time picker on Today, not WHICH SECTION. meal_type no longer
+   * arrives here — AddIngredientScreen derives its own default from
+   * `eatenAt` via sectionForTime(), same as everything downstream of it.
+   */
+  AddIngredient: { date: string; eatenAt: string };
   /**
    * Two unrelated callers, two shapes:
-   *   - log flow (AddIngredientScreen): {date, mealType} — a found product
-   *     replaces this screen with Product, targeting that meal.
+   *   - log flow (AddIngredientScreen): {date, mealType, eatenAt} — a found
+   *     product replaces this screen with Product, targeting that meal and
+   *     carrying forward the time picked on Today.
    *   - batch-ingredient-picker flow: {onScanned} — a found product is
    *     handed back via callback and this screen pops.
    *
@@ -560,8 +593,8 @@ export type RootStackParamList = {
    * ScannerScreen branches on which key is present; never both.
    */
   Scanner:
-    | { date: string; mealType: MealType; onScanned?: undefined }
-    | { onScanned: (product: FoodProduct) => void; date?: undefined; mealType?: undefined };
+    | { date: string; mealType: MealType; eatenAt: string; onScanned?: undefined }
+    | { onScanned: (product: FoodProduct) => void; date?: undefined; mealType?: undefined; eatenAt?: undefined };
   Product: {
     product: FoodProduct;
     date: string;
@@ -569,6 +602,10 @@ export type RootStackParamList = {
     editEntryId?: string;
     // now `| null` because MealEntry.serving_g is honestly nullable
     initialServingG?: number | null;
+    // For an edit: the entry's real eaten_at, kept exactly. For a new entry
+    // via the time-first add flow: the time picked on Today, carried through
+    // AddIngredient/Scanner/CreateFood so it isn't lost to ProductScreen's
+    // now()/DEFAULT_HOUR fallback.
     initialEatenAt?: string;
   };
 
@@ -585,6 +622,7 @@ export type RootStackParamList = {
   CreateFood: {
     date: string;
     mealType: MealType;
+    eatenAt: string;
     barcode?: string;
     initialName?: string;
   };
@@ -609,6 +647,34 @@ export type RootStackParamList = {
    * `mode: "single" | "multi"` flag) and belongs here — never a callback.
    */
   BatchIngredientPicker: undefined;
+
+  /** No params — the screen itself holds the paste-text/photo tab state. */
+  RecipeScan: undefined;
+
+  /**
+   * Plain, JSON-serialisable data — NOT the onPick/onScanned anti-pattern
+   * described above. That anti-pattern is specifically a function through
+   * params; a parsed ingredient list is data, the same category as
+   * Product's `{ product: FoodProduct, ... }` param below. The confirm
+   * screen resolves each line locally and only touches shared state (via
+   * addBatchIngredients) once the user taps "Add to batch" — so there is
+   * still nothing to hand back through params in the other direction.
+   */
+  RecipeConfirm: {
+    // Mirrors ScannedIngredientLine in src/lib/scanRecipe.ts — inlined
+    // rather than imported so this file stays free of lib/ dependencies,
+    // same convention as every other param shape here.
+    ingredients: {
+      raw: string;
+      name: string;
+      quantity: number | null;
+      unit: string | null;
+      estimatedGrams: number | null;
+      brandPresent: boolean;
+    }[];
+    servings: number | null;
+    yieldText: string | null;
+  };
 };
 
 export type BottomTabParamList = {

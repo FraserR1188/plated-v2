@@ -29,6 +29,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { searchFood } from "../lib/openfoodfacts";
 import { useStore } from "../store/useStore";
 import { captureAndScanMealPhoto } from "../lib/mealPhotoCapture";
+import { sectionForTime } from "../lib/time";
 import {
   Colors,
   Spacing,
@@ -51,8 +52,14 @@ type Tab = "search" | "library";
 
 export function AddIngredientScreen() {
   const navigation = useNavigation<Nav>();
-  const { date, mealType } = useRoute<Route>().params;
+  const { date, eatenAt } = useRoute<Route>().params;
   const { savedIngredients } = useStore();
+
+  // The entry point is time-first now (a single "+" on Today, not one button
+  // per section) — meal_type is no longer chosen by the caller, it's derived
+  // from the picked eatenAt. ProductScreen surfaces this as an editable tag,
+  // so a wrong guess is one tap to fix, not a re-navigation.
+  const mealType = sectionForTime(eatenAt);
   const insets = useSafeAreaInsets();
 
   const [tab, setTab] = useState<Tab>("search");
@@ -112,7 +119,12 @@ export function AddIngredientScreen() {
   };
 
   const handleSelectProduct = (product: FoodProduct) =>
-    navigation.navigate("Product", { product, date, mealType });
+    navigation.navigate("Product", {
+      product,
+      date,
+      mealType,
+      initialEatenAt: eatenAt,
+    });
 
   // Photo of a PLATE, not a barcode or a label — a different button from
   // "Scan" above. Nothing reaches meal_entries until the user confirms on
@@ -144,6 +156,7 @@ export function AddIngredientScreen() {
             product: result.product,
             date,
             mealType,
+            initialEatenAt: eatenAt,
           });
           return;
       }
@@ -167,7 +180,12 @@ export function AddIngredientScreen() {
       barcode: saved.barcode ?? undefined,
       off_id: saved.off_id ?? undefined,
     };
-    navigation.navigate("Product", { product, date, mealType });
+    navigation.navigate("Product", {
+      product,
+      date,
+      mealType,
+      initialEatenAt: eatenAt,
+    });
   };
 
   // Hand-created foods now go through CreateFoodScreen, which gives them a
@@ -180,6 +198,7 @@ export function AddIngredientScreen() {
     navigation.navigate("CreateFood", {
       date,
       mealType,
+      eatenAt,
       // Pre-fill the name from whatever they searched for — the "phase 1b"
       // path CreateFoodScreen's initialName param was always waiting for.
       initialName: query.trim() ? query.trim() : undefined,
@@ -225,7 +244,9 @@ export function AddIngredientScreen() {
                 styles.scanBtn,
                 pressed && { opacity: 0.75 },
               ]}
-              onPress={() => navigation.navigate("Scanner", { date, mealType })}
+              onPress={() =>
+                navigation.navigate("Scanner", { date, mealType, eatenAt })
+              }
             >
               <Text style={styles.scanIcon}>⌗</Text>
               <Text style={styles.scanLabel}>Scan</Text>

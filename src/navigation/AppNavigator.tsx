@@ -32,6 +32,8 @@ import { FriendsScreen } from "../screens/FriendsScreen";
 import { BatchesScreen } from "../screens/BatchesScreen";
 import { BatchEditorScreen } from "../screens/BatchEditorScreen";
 import { BatchIngredientPickerScreen } from "../screens/BatchIngredientPickerScreen";
+import { RecipeScanScreen } from "../screens/RecipeScanScreen";
+import { RecipeConfirmScreen } from "../screens/RecipeConfirmScreen";
 import { ConnectedUserLogScreen } from "../screens/ConnectedUserLogScreen";
 import { CopyConfirmScreen } from "../screens/CopyConfirmScreen";
 import { TabBar } from "../components/TabBar";
@@ -214,6 +216,22 @@ export function AppNavigator() {
         <Stack.Screen
           name="BatchIngredientPicker"
           component={BatchIngredientPickerScreen}
+          options={{
+            presentation: "modal",
+            headerShown: false, // screen draws its own header
+          }}
+        />
+        <Stack.Screen
+          name="RecipeScan"
+          component={RecipeScanScreen}
+          options={{
+            presentation: "modal",
+            headerShown: false, // screen draws its own header
+          }}
+        />
+        <Stack.Screen
+          name="RecipeConfirm"
+          component={RecipeConfirmScreen}
           options={{
             presentation: "modal",
             headerShown: false, // screen draws its own header

@@ -31,6 +31,7 @@ import { previewComposition, bundlesOnly } from "../lib/compositions";
 import { draftsFromDay, sharedMealType } from "../lib/entries";
 import { roundSalt } from "../lib/macros";
 import { dayHeaderInfo } from "../lib/dayHeader";
+import { buildDayStream, BAND_LABELS } from "../lib/dayStream";
 import {
   formatTime,
   formatDayLabel,
@@ -55,6 +56,7 @@ import {
   Radius,
   Typography,
   Fonts,
+  Shadow,
 } from "../theme/tokens";
 import {
   RootStackParamList,
@@ -63,7 +65,6 @@ import {
   MealType,
   MEAL_TYPES,
   MEAL_LABELS,
-  MEAL_ICONS,
 } from "../types";
 
 /** Awaiting an answer. Mirrors the store's predicate; kept local for row styling. */
@@ -90,25 +91,6 @@ const frac = (consumed: number, goal: number): number =>
 
 /** How far the sticky bar's crossfade runs, in px of scroll. */
 const STICKY_FADE_RANGE = 40;
-
-/** The rail only covers sections a single time can honestly represent. Snacks
- *  has no such time, so it's excluded here and rendered as a plain card below
- *  the rail — this is a fixed slice of MEAL_TYPES, not a re-derived order. */
-const RAIL_MEAL_TYPES = MEAL_TYPES.filter((t) => t !== "snacks");
-
-/** Earliest logged entry in a section, or null when the section is empty.
- *  Compared by getTime(), not by string, since eaten_at's string formatting
- *  isn't guaranteed uniform across rows. This is the rail's time label — never
- *  a fabricated anchor. Purely presentational; does not affect entry order
- *  within the section. */
-const earliestEatenAt = (entries: MealEntry[]): string | null =>
-  entries.length === 0
-    ? null
-    : entries.reduce((min, e) =>
-        new Date(e.eaten_at).getTime() < new Date(min.eaten_at).getTime()
-          ? e
-          : min,
-      ).eaten_at;
 
 export function TodayScreen() {
   const navigation =
@@ -644,8 +626,7 @@ function DayPage({
 }) {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { goals, getSplitTotalsForDate, getEntriesForMeal, getEntriesForDate } =
-    useStore();
+  const { goals, getSplitTotalsForDate, getEntriesForDate } = useStore();
 
   const isPageToday = date === today;
   const isFuture = isFutureDay(date);
@@ -663,6 +644,42 @@ function DayPage({
 
   const totals = getSplitTotalsForDate(date);
   const dayEntries = getEntriesForDate(date);
+  // Commit 1: no workouts arg — buildDayStream defaults it to [], so this is
+  // a plain food stream until the WHOOP pass wires getWorkoutsForDate(date) in.
+  const dayStream = buildDayStream(dayEntries);
+
+  // ── Time-first add ──────────────────────────────────────────
+  //
+  // ONE add affordance now, not one button per section: pick WHEN, and
+  // meal_type is derived from that time downstream (AddIngredientScreen,
+  // via sectionForTime) rather than chosen here. Seeded to now on today; a
+  // future/past page has no "now" that means anything, so it seeds midday.
+  const [showAddPicker, setShowAddPicker] = useState(false);
+  const [addPickerSeed, setAddPickerSeed] = useState(new Date());
+
+  const openAddPicker = () => {
+    if (isPageToday) {
+      setAddPickerSeed(new Date(now));
+    } else {
+      const seed = parseDateKey(date);
+      seed.setHours(12, 0, 0, 0);
+      setAddPickerSeed(seed);
+    }
+    setShowAddPicker(true);
+  };
+
+  const onAddTimePicked = (event: any, picked?: Date) => {
+    setShowAddPicker(false);
+    if (event?.type === "dismissed" || !picked) return;
+    // The page's OWN date, not today — this is what makes "plan for 19:00
+    // tomorrow" land on tomorrow. sameTimeOnDay also switches OFF the
+    // midnight roll-back heuristic, which would otherwise fight this.
+    const eatenAt = sameTimeOnDay(
+      { hours: picked.getHours(), minutes: picked.getMinutes() },
+      date,
+    );
+    navigation.navigate("AddIngredient", { date, eatenAt });
+  };
 
   const kcalEaten = Math.round(totals.eaten.calories);
   const kcalPlanned = Math.round(totals.planned.calories);
@@ -936,69 +953,82 @@ function DayPage({
           </Pressable>
         )}
 
-        {/* ── Meal time-rail ───────────────────────────────── */}
-        {/* Breakfast/Lunch/Dinner only — fixed order (RAIL_MEAL_TYPES above),
-            never sorted by entry time. Each label is that section's own
-            earliest logged entry, or a blank dash when nothing's logged yet —
-            never a fabricated time. */}
-        {RAIL_MEAL_TYPES.map((mealType, i) => {
-          const entries = getEntriesForMeal(date, mealType);
-          const earliest = earliestEatenAt(entries);
-          return (
-            <View key={mealType} style={railStyles.item}>
-              <View style={railStyles.gutter}>
-                <Text style={railStyles.time}>
-                  {earliest ? formatTimeOfDay(localHM(earliest)) : "–"}
-                </Text>
-                <View style={railStyles.dot} />
-                {i < RAIL_MEAL_TYPES.length - 1 && (
-                  <View style={railStyles.line} />
-                )}
-              </View>
-              <View style={railStyles.cardWrap}>
-                <MealSection
-                  mealType={mealType}
-                  entries={entries}
-                  isFuture={isFuture}
+        {/* ── Day stream ───────────────────────────────────── */}
+        {/* One time-ordered pass over the day (see lib/dayStream.ts) instead
+            of four fixed sections. A band header is presentation only — it
+            never reflects back into meal_type, which is why every food row
+            carries its own inline tag instead of inheriting one from a
+            section it no longer sits in. */}
+        {dayStream.length === 0 ? (
+          <Pressable style={styles.streamEmpty} onPress={openAddPicker}>
+            <Text style={styles.streamEmptyText}>
+              {isFuture ? "Nothing planned yet" : "Nothing logged yet"}
+            </Text>
+            <View style={styles.streamEmptyBtn}>
+              <Text style={styles.streamEmptyBtnText}>
+                {isFuture ? "＋ Plan something" : "＋ Add something"}
+              </Text>
+            </View>
+          </Pressable>
+        ) : (
+          <View style={streamStyles.card}>
+            {dayStream.map((item, i) => {
+              if (item.kind === "band") {
+                return (
+                  <Text key={item.key} style={streamStyles.bandLabel}>
+                    {BAND_LABELS[item.band]}
+                  </Text>
+                );
+              }
+              if (item.kind === "workout") return null; // wired in commit 2
+
+              // Bordered under everything except the last row of its band —
+              // the next band header already reads as a break, a border
+              // there would just double it.
+              const next = dayStream[i + 1];
+              const isLastOfGroup = !next || next.kind === "band";
+
+              return (
+                <StreamFoodRow
+                  key={item.key}
+                  entry={item.entry}
+                  bordered={!isLastOfGroup}
                   selection={selection}
-                  onAdd={() =>
-                    // The page's OWN date, not today. This is the whole feature.
-                    navigation.navigate("AddIngredient", {
-                      date,
-                      mealType,
-                    })
-                  }
                   onPress={onPress}
                   onConfirm={onConfirm}
                   onLongPress={onLongPress}
                 />
-              </View>
-            </View>
-          );
-        })}
-
-        {/* ── Snacks ───────────────────────────────────────── */}
-        {/* No single time represents "snacks", so it sits below the rail as a
-            plain card — no gutter, no dot — but is otherwise identical: same
-            wiring, same loggability. */}
-        <MealSection
-          mealType="snacks"
-          entries={getEntriesForMeal(date, "snacks")}
-          isFuture={isFuture}
-          selection={selection}
-          onAdd={() =>
-            navigation.navigate("AddIngredient", {
-              date,
-              mealType: "snacks",
-            })
-          }
-          onPress={onPress}
-          onConfirm={onConfirm}
-          onLongPress={onLongPress}
-        />
+              );
+            })}
+          </View>
+        )}
 
         <View style={{ height: Spacing.xxl }} />
       </Animated.ScrollView>
+
+      {/* ── Time-first add ───────────────────────────────── */}
+      {!selecting && (
+        <Pressable
+          onPress={openAddPicker}
+          hitSlop={6}
+          style={({ pressed }) => [
+            styles.fab,
+            pressed && { opacity: 0.85 },
+          ]}
+        >
+          <Text style={styles.fabText}>＋</Text>
+        </Pressable>
+      )}
+
+      {showAddPicker && (
+        <DateTimePicker
+          value={addPickerSeed}
+          mode="time"
+          is24Hour
+          display="default"
+          onChange={onAddTimePicked}
+        />
+      )}
 
       {/* ── Sticky condensed bar ─────────────────────────── */}
       <Animated.View
@@ -2511,163 +2541,111 @@ const statStyles = StyleSheet.create({
   },
 });
 
-// ─── Meal section ───────────────────────────────────────────────────────────
+// ─── Stream food row ────────────────────────────────────────────────────────
+//
+// The row internals from the old per-section MealSection, unchanged in what
+// they DO (time, P/C/F, pending dim, overdue "Ate it" chip, selection
+// checkbox, long-press-to-select, tap-to-edit) — the only addition is the
+// inline meal-type tag, since a row no longer sits inside a card that named
+// its section for it. `bordered` replaces "am I not the last row in my
+// section" with "am I not the last row in my BAND", computed by the caller
+// from dayStream's own order.
 
-function MealSection({
-  mealType,
-  entries,
-  isFuture,
+function StreamFoodRow({
+  entry,
+  bordered,
   selection,
-  onAdd,
   onPress,
   onConfirm,
   onLongPress,
 }: {
-  mealType: MealType;
-  entries: MealEntry[];
-  isFuture: boolean;
+  entry: MealEntry;
+  bordered: boolean;
   selection: Set<string> | null;
-  onAdd: () => void;
   onPress: (e: MealEntry) => void;
   onConfirm: (e: MealEntry) => void;
   onLongPress: (e: MealEntry) => void;
 }) {
   const selecting = selection !== null;
-
-  const calories = entries.reduce((s, e) => s + e.calories, 0);
-  const protein = entries.reduce((s, e) => s + e.protein, 0);
-  const carbs = entries.reduce((s, e) => s + e.carbs, 0);
-  const fat = entries.reduce((s, e) => s + e.fat, 0);
+  const pending = isPending(entry);
+  // Only ask "Ate it?" once the planned time has actually passed. A future
+  // plan (tonight's dinner, seen this afternoon) stays a quiet dimmed row.
+  const canConfirmInline = !selecting && isOverduePending(entry);
+  const picked = selection?.has(entry.id) ?? false;
+  const time = formatTime(entry.eaten_at);
 
   return (
-    <View style={mealStyles.section}>
-      <View style={mealStyles.header}>
-        <View style={mealStyles.headerLeft}>
-          <View style={mealStyles.iconWrap}>
-            <Text style={mealStyles.icon}>{MEAL_ICONS[mealType]}</Text>
+    <Pressable
+      onPress={() => onPress(entry)}
+      onLongPress={() => onLongPress(entry)}
+      style={({ pressed }) => [
+        streamStyles.row,
+        bordered && streamStyles.rowBorder,
+        pending && streamStyles.rowPending,
+        picked && streamStyles.rowPicked,
+        pressed && { backgroundColor: Colors.surface2 },
+      ]}
+    >
+      {selecting && (
+        <View style={[streamStyles.check, picked && streamStyles.checkOn]}>
+          {picked && <Text style={streamStyles.checkMark}>✓</Text>}
+        </View>
+      )}
+
+      <View style={streamStyles.rowBody}>
+        <View style={streamStyles.rowTop}>
+          <Text style={streamStyles.rowName} numberOfLines={1}>
+            {pending ? "🕐 " : ""}
+            {entry.name}
+            {entry.brand ? (
+              <Text style={streamStyles.rowBrand}> · {entry.brand}</Text>
+            ) : null}
+          </Text>
+          <View style={streamStyles.mealTag}>
+            <Text style={streamStyles.mealTagText}>
+              {MEAL_LABELS[entry.meal_type]}
+            </Text>
           </View>
-          <Text style={mealStyles.title}>{MEAL_LABELS[mealType]}</Text>
         </View>
-        <View style={mealStyles.headerRight}>
-          {entries.length > 0 && (
-            <Text style={mealStyles.calories}>{Math.round(calories)} kcal</Text>
-          )}
-          {!selecting && (
-            <Pressable
-              onPress={onAdd}
-              style={({ pressed }) => [
-                mealStyles.addBtn,
-                pressed && { opacity: 0.6 },
-              ]}
-              hitSlop={8}
-            >
-              <Text style={mealStyles.addBtnText}>
-                {isFuture ? "＋ Plan" : "＋ Add"}
-              </Text>
-            </Pressable>
-          )}
-        </View>
+        <Text style={streamStyles.rowMacros}>
+          {time ? <Text style={streamStyles.rowTime}>{time} · </Text> : null}
+          {servingLabel(entry.serving_g)}
+          {"  "}
+          <Text style={{ color: Colors.blue }}>
+            P {entry.protein.toFixed(1)}
+          </Text>
+          {"  "}
+          <Text style={{ color: Colors.amber }}>
+            C {entry.carbs.toFixed(1)}
+          </Text>
+          {"  "}
+          <Text style={{ color: Colors.coral }}>
+            F {entry.fat.toFixed(1)}
+          </Text>
+        </Text>
       </View>
 
-      {entries.map((entry, i) => {
-        const pending = isPending(entry);
-        // Only ask "Ate it?" once the planned time has actually passed. A future
-        // plan (tonight's dinner, seen this afternoon) stays a quiet dimmed row.
-        const canConfirmInline = !selecting && isOverduePending(entry);
-        const picked = selection?.has(entry.id) ?? false;
-        const time = formatTime(entry.eaten_at);
-        return (
-          <Pressable
-            key={entry.id}
-            onPress={() => onPress(entry)}
-            onLongPress={() => onLongPress(entry)}
-            style={({ pressed }) => [
-              mealStyles.row,
-              i < entries.length - 1 && mealStyles.rowBorder,
-              pending && mealStyles.rowPending,
-              picked && mealStyles.rowPicked,
-              pressed && { backgroundColor: Colors.surface2 },
-            ]}
-          >
-            {selecting && (
-              <View style={[mealStyles.check, picked && mealStyles.checkOn]}>
-                {picked && <Text style={mealStyles.checkMark}>✓</Text>}
-              </View>
-            )}
-
-            <View style={mealStyles.rowBody}>
-              <Text style={mealStyles.rowName} numberOfLines={1}>
-                {pending ? "🕐 " : ""}
-                {entry.name}
-                {entry.brand ? (
-                  <Text style={mealStyles.rowBrand}> · {entry.brand}</Text>
-                ) : null}
-              </Text>
-              <Text style={mealStyles.rowMacros}>
-                {time ? (
-                  <Text style={mealStyles.rowTime}>{time} · </Text>
-                ) : null}
-                {servingLabel(entry.serving_g)}
-                {"  "}
-                <Text style={{ color: Colors.blue }}>
-                  P {entry.protein.toFixed(1)}
-                </Text>
-                {"  "}
-                <Text style={{ color: Colors.amber }}>
-                  C {entry.carbs.toFixed(1)}
-                </Text>
-                {"  "}
-                <Text style={{ color: Colors.coral }}>
-                  F {entry.fat.toFixed(1)}
-                </Text>
-              </Text>
-            </View>
-
-            {/* Inline confirm for an overdue plan. Nested Pressable: the tap is
-                handled here and does NOT fall through to the row's edit press. */}
-            {canConfirmInline && (
-              <Pressable
-                onPress={() => onConfirm(entry)}
-                hitSlop={6}
-                style={({ pressed }) => [
-                  mealStyles.ateInline,
-                  pressed && { opacity: 0.7 },
-                ]}
-              >
-                <Text style={mealStyles.ateInlineText}>Ate it</Text>
-              </Pressable>
-            )}
-
-            <Text
-              style={[mealStyles.rowCals, pending && mealStyles.rowCalsPending]}
-            >
-              {Math.round(entry.calories)}
-            </Text>
-          </Pressable>
-        );
-      })}
-
-      {entries.length === 0 && !selecting && (
-        <Pressable onPress={onAdd} style={mealStyles.empty}>
-          <Text style={mealStyles.emptyText}>
-            {isFuture ? "Not planned yet" : "Not logged yet"} · tap to{" "}
-            {isFuture ? "plan" : "log"} {MEAL_LABELS[mealType].toLowerCase()}
-          </Text>
+      {/* Inline confirm for an overdue plan. Nested Pressable: the tap is
+          handled here and does NOT fall through to the row's edit press. */}
+      {canConfirmInline && (
+        <Pressable
+          onPress={() => onConfirm(entry)}
+          hitSlop={6}
+          style={({ pressed }) => [
+            streamStyles.ateInline,
+            pressed && { opacity: 0.7 },
+          ]}
+        >
+          <Text style={streamStyles.ateInlineText}>Ate it</Text>
         </Pressable>
       )}
 
-      {entries.length > 0 && (
-        <View style={mealStyles.footer}>
-          <Text style={mealStyles.footerText}>
-            <Text style={{ color: Colors.blue }}>P {protein.toFixed(1)}g</Text>
-            {"   "}
-            <Text style={{ color: Colors.amber }}>C {carbs.toFixed(1)}g</Text>
-            {"   "}
-            <Text style={{ color: Colors.coral }}>F {fat.toFixed(1)}g</Text>
-          </Text>
-        </View>
-      )}
-    </View>
+      <Text
+        style={[streamStyles.rowCals, pending && streamStyles.rowCalsPending]}
+      >
+        {Math.round(entry.calories)}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -2916,49 +2894,64 @@ const styles = StyleSheet.create({
   macroColFull: {
     flexBasis: "100%",
   },
-});
 
-const railStyles = StyleSheet.create({
-  item: {
-    flexDirection: "row",
-    alignItems: "stretch",
-  },
-  gutter: {
-    width: 44,
+  // Day-level empty state — one per day, not one per (now-gone) section.
+  streamEmpty: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.card,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderStyle: "dashed",
+    paddingVertical: Spacing.xl,
     alignItems: "center",
-    paddingTop: Spacing.md,
+    gap: Spacing.md,
+    marginBottom: Spacing.md,
   },
-  time: {
+  streamEmptyText: {
+    fontSize: Typography.sm,
+    color: Colors.textSub,
+    fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
+  },
+  streamEmptyBtn: {
+    backgroundColor: Colors.greenSoft,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: `${Colors.green}40`,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 8,
+  },
+  streamEmptyBtnText: {
     fontSize: Typography.xs,
-    fontWeight: Typography.semibold,
-    fontFamily: Fonts.mono.semibold,
-    color: Colors.textMuted,
-    fontVariant: ["tabular-nums"],
-    marginBottom: 6,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
+    color: Colors.green,
   },
-  dot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+
+  // Time-first add — one floating affordance per page, replacing the old
+  // one-button-per-section rail. Fixed to the page, not the scroll content.
+  fab: {
+    position: "absolute",
+    right: Spacing.md,
+    bottom: Spacing.lg,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: Colors.green,
+    alignItems: "center",
+    justifyContent: "center",
+    ...Shadow.md,
   },
-  // Fills the rest of the gutter's height, connecting this dot down toward
-  // the next one. Approximate, not pixel-anchored to the next dot's centre —
-  // acceptable for this presentation-only pass.
-  line: {
-    flex: 1,
-    width: 1,
-    backgroundColor: Colors.border,
-    marginTop: 4,
-  },
-  cardWrap: {
-    flex: 1,
-    marginLeft: Spacing.sm,
+  fabText: {
+    fontSize: 28,
+    fontWeight: Typography.bold,
+    color: Colors.bg,
+    marginTop: -2,
   },
 });
 
-const mealStyles = StyleSheet.create({
-  section: {
+const streamStyles = StyleSheet.create({
+  card: {
     backgroundColor: Colors.surface,
     borderRadius: Radius.card,
     borderWidth: 1,
@@ -2967,58 +2960,19 @@ const mealStyles = StyleSheet.create({
     overflow: "hidden",
   },
 
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: Spacing.md,
-  },
-  headerLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.sm,
-  },
-  iconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: Radius.control,
-    backgroundColor: Colors.surface2,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  icon: { fontSize: 16 },
-  title: {
-    fontSize: Typography.base,
-    fontWeight: Typography.bold,
-    fontFamily: Fonts.sans.bold,
-    color: Colors.text,
-    letterSpacing: -0.2,
-  },
-  headerRight: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.sm,
-  },
-  calories: {
-    fontSize: Typography.sm,
-    fontWeight: Typography.semibold,
-    fontFamily: Fonts.mono.semibold,
-    color: Colors.textSub,
-  },
-  addBtn: {
-    backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: `${Colors.green}40`,
-  },
-  addBtnText: {
+  // Band header — presentation only, reuses the rail's old time-label
+  // typography rather than a card of its own.
+  bandLabel: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
     fontFamily: Fonts.sans.bold,
-    color: Colors.green,
-    letterSpacing: 0.2,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.6,
+    backgroundColor: Colors.surface2,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
+    paddingBottom: 6,
   },
 
   row: {
@@ -3064,7 +3018,14 @@ const mealStyles = StyleSheet.create({
     flex: 1,
     marginRight: Spacing.sm,
   },
+  rowTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: Spacing.sm,
+  },
   rowName: {
+    flex: 1,
     fontSize: Typography.sm,
     fontWeight: Typography.semibold,
     fontFamily: Fonts.sans.semibold,
@@ -3075,6 +3036,25 @@ const mealStyles = StyleSheet.create({
     fontWeight: Typography.regular,
     fontFamily: Fonts.sans.regular,
     color: Colors.textMuted,
+  },
+  // Inline section tag — a row no longer sits inside a card that named its
+  // section for it, so each row names its own.
+  mealTag: {
+    flexShrink: 0,
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  mealTagText: {
+    fontSize: 10,
+    fontWeight: Typography.semibold,
+    fontFamily: Fonts.sans.semibold,
+    color: Colors.textMuted,
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
   },
   rowMacros: {
     fontSize: Typography.xs,
@@ -3117,29 +3097,5 @@ const mealStyles = StyleSheet.create({
   },
   rowCalsPending: {
     color: Colors.textSub,
-  },
-
-  empty: {
-    paddingVertical: Spacing.lg,
-    alignItems: "center",
-  },
-  emptyText: {
-    fontSize: Typography.sm,
-    color: Colors.textMuted,
-    fontWeight: Typography.medium,
-    fontFamily: Fonts.sans.medium,
-  },
-
-  footer: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.borderSub,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 9,
-    backgroundColor: Colors.surface2,
-  },
-  footerText: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.semibold,
-    fontFamily: Fonts.mono.semibold,
   },
 });

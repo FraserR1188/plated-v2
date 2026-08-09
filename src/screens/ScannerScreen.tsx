@@ -102,6 +102,7 @@ export function ScannerScreen() {
           product: result.product,
           date: params.date,
           mealType: params.mealType,
+          initialEatenAt: params.eatenAt,
         });
       }
       return;
@@ -126,6 +127,7 @@ export function ScannerScreen() {
       barcode: failedBarcode ?? undefined,
       date: params.date,
       mealType: params.mealType,
+      eatenAt: params.eatenAt,
     });
   };
 

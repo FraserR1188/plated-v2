@@ -184,7 +184,8 @@ type CardKey = "identity" | "nutrition" | "serving";
 
 export function CreateFoodScreen() {
   const navigation = useNavigation<Nav>();
-  const { date, mealType, barcode, initialName } = useRoute<Route>().params;
+  const { date, mealType, eatenAt, barcode, initialName } =
+    useRoute<Route>().params;
   const insets = useSafeAreaInsets();
 
   const [name, setName] = useState(initialName ?? "");
@@ -527,6 +528,7 @@ export function CreateFoodScreen() {
       product: customFoodToProduct(saved),
       date,
       mealType,
+      initialEatenAt: eatenAt,
     });
   };
 

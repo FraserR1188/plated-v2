@@ -28,7 +28,16 @@
         }
       ],
       "@react-native-community/datetimepicker",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "@sentry/react-native/expo",
+        {
+          "url": "https://de.sentry.io/",
+          "organization": "fraser-analytics",
+          "project": "plated",
+          "experimental_android": { "enableAndroidGradlePlugin": true }
+        }
+      ]
     ],
     "extra": {
       "eas": {

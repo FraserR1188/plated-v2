@@ -8,13 +8,15 @@
       "distribution": "internal",
       "android": {
         "gradleCommand": ":app:assembleDebug"
-      }
+      },
+      "env": { "EXPO_PUBLIC_SENTRY_ENV": "development" }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      }
+      },
+      "env": { "EXPO_PUBLIC_SENTRY_ENV": "preview" }
     }
   }
 }

@@ -244,8 +244,12 @@ interface AppState {
     compositionId: string,
     input: compositionApi.BatchFormInput,
   ) => Promise<WriteResult>;
-  /** Log-now only for v1: no day, no time — applies to right now. */
-  applyBatchNow: (composition: MealCompositionWithItems) => Promise<WriteResult>;
+  /** Applies at `chosenAt` if given (date and time-of-day both come from
+   *  that single instant), else applies right now — same as v1. */
+  applyBatchNow: (
+    composition: MealCompositionWithItems,
+    chosenAt?: Date,
+  ) => Promise<WriteResult>;
 
   // ── Batch draft (pre-save, client-only — see the BatchDraft type comment) ──
   batchDraft: BatchDraft;
@@ -935,11 +939,22 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  applyBatchNow: async (composition) => {
+  applyBatchNow: async (composition, chosenAt) => {
     try {
-      const inserted = await compositionApi.applyBatch(composition, {
-        date: todayKey(),
-      });
+      // No chosenAt: original v1 call, unchanged — applyBatch defaults `now`
+      // itself and there's no picked instant to pass. With chosenAt: `now` is
+      // left at its default (the real clock) deliberately — it's what
+      // eaten_at_estimated is judged against, and reusing chosenAt for it
+      // would compare the picked time against itself and never come out
+      // planned. See draftsFromBatch's comment.
+      const inserted = chosenAt
+        ? await compositionApi.applyBatch(
+            composition,
+            { date: dateKey(chosenAt) },
+            new Date(),
+            chosenAt,
+          )
+        : await compositionApi.applyBatch(composition, { date: todayKey() });
       set((s) => ({
         entries: [inserted, ...s.entries],
         // Mirror the RPC's effect locally, same as applyCompositionToDay.

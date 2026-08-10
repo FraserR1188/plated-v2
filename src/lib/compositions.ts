@@ -622,11 +622,25 @@ function sumBatchMacros(items: MealCompositionItem[]): BatchMacroTotals {
  * have a place to hide here, because there is no snapshot of a snapshot: the
  * ingredients are the only source of truth, every time.
  *
- * `target.date` is explicit, never assumed "today" internally — same
- * discipline as every other apply path in this file, even though v1's only
- * real caller always passes todayKey() (log-now only, no scheduling; the
- * bundle-style time picker is for a future batch-scheduling step, on these
- * same yield_g/portion_g columns).
+ * `now` plays TWO roles, and they matter precisely because they can
+ * disagree: it supplies the hours/minutes for eaten_at (paired with
+ * `target.date`, which supplies the day), AND it's the clock willBePlanned
+ * compares eaten_at against to decide eaten_at_estimated below. For the
+ * ORIGINAL log-now caller these are the same instant by construction
+ * (target.date is always todayKey(), now is always "right now"), so eaten_at
+ * always equals now exactly and the willBePlanned check always reads false —
+ * that's WHY hardcoding false was correct in v1, not a coincidence this
+ * refactor has to preserve by other means.
+ *
+ * `chosenAt`, if given, is a user-picked instant and takes over eaten_at
+ * entirely (`target`/the hour-minute half of `now` are ignored for it) — but
+ * `now` keeps its SECOND role, the actual current clock, unaltered. This is
+ * the whole reason chosenAt is a separate parameter rather than reusing `now`
+ * for the picked value too: doing that would compare the picked time against
+ * itself and eaten_at_estimated would always read false, silently, even for
+ * a batch planned hours into the future. Callers passing chosenAt should
+ * leave `now` at its default (the real clock) precisely so this comparison
+ * means something.
  *
  * meal_type is derived from THIS apply's own eaten_at via sectionForTime,
  * exactly like draftsFromComposition's bundle items — never inherited from
@@ -637,6 +651,7 @@ export function draftsFromBatch(
   composition: MealCompositionWithItems,
   target: { date: string },
   now: Date = new Date(),
+  chosenAt?: Date,
 ): EntryDraft {
   if (
     composition.kind !== "batch" ||
@@ -657,10 +672,12 @@ export function draftsFromBatch(
   const totals = sumBatchMacros(composition.items); // raw, unrounded
   const scale = composition.portion_g / composition.yield_g;
 
-  const eaten_at = sameTimeOnDay(
-    { hours: now.getHours(), minutes: now.getMinutes() },
-    target.date,
-  );
+  const eaten_at = chosenAt
+    ? chosenAt.toISOString()
+    : sameTimeOnDay(
+        { hours: now.getHours(), minutes: now.getMinutes() },
+        target.date,
+      );
 
   // Scaled AND rounded ONCE, here — never round the sum and round again after
   // scaling. Same granularity as mealEntryToProduct/ProductScreen's preview:
@@ -687,11 +704,14 @@ export function draftsFromBatch(
     meal_type: sectionForTime(eaten_at),
     eaten_at,
 
-    // FALSE, unlike a bundle's always-true. "You are eating this now" is a
-    // fact, not a forecast — log-now only for v1, no scheduling, so nothing
-    // here is a prediction. Matches the social copy path's semantics, not
-    // bundle-apply's.
-    eaten_at_estimated: false,
+    // Same rule as ProductScreen's new-entry path and retimeEntries: a
+    // future eaten_at is still a forecast (you have not eaten this yet,
+    // however deliberately you picked the time), so it stays an estimate
+    // until the trigger's planned=false catches up with the clock. A past
+    // or present eaten_at is a fact — "you are eating this now" — same as
+    // v1's old always-false. willBePlanned is the one place that boundary
+    // is decided; do not re-derive it here.
+    eaten_at_estimated: willBePlanned(eaten_at, now),
 
     source: "batch",
     barcode: null,
@@ -707,16 +727,26 @@ export function draftsFromBatch(
 
 /**
  * Apply a batch: exactly one meal_entries row, through the SAME applyEntries
- * path as everything else in this file — no new insert site. Log-now only
- * for v1 (see draftsFromBatch): there is no day/time argument to thread
- * through here because there is nothing to pick.
+ * path as everything else in this file — no new insert site.
+ *
+ * Call with just `composition` and `{ date: todayKey() }` for the original
+ * log-now behaviour — `now` defaults to the real clock and there's no
+ * `chosenAt`, so eaten_at lands on right now, same as v1.
+ *
+ * A caller with a user-picked instant (BatchesScreen's eat-time sheet) passes
+ * it as `chosenAt` and leaves `now` at its default — see draftsFromBatch's
+ * comment for why `now` must stay the real clock rather than being reused for
+ * the picked value (it's also what eaten_at_estimated is judged against).
+ * `target.date` is still required but is only load-bearing when `chosenAt`
+ * is absent; pass `{ date: dateKey(chosenAt) }` for symmetry regardless.
  */
 export async function applyBatch(
   composition: MealCompositionWithItems,
   target: { date: string },
   now: Date = new Date(),
+  chosenAt?: Date,
 ): Promise<MealEntry> {
-  const draft = draftsFromBatch(composition, target, now);
+  const draft = draftsFromBatch(composition, target, now, chosenAt);
   const [inserted] = await applyEntries([draft]);
 
   // Same atomic RPC bundles use — generic across kind since migration 1.

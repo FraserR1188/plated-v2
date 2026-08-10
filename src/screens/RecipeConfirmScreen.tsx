@@ -218,7 +218,11 @@ export function RecipeConfirmScreen() {
     }
     if (yieldText) setBatchDraftPortionLabel(yieldText);
 
-    navigation.goBack();
+    // RecipeScan is reachable only from BatchEditor's "Scan Recipe" button,
+    // so the stack here is always [...BatchEditor, RecipeScan, RecipeConfirm]
+    // — goBack() would pop just one level, stranding the user back on the
+    // camera/paste screen instead of the editor holding what they just added.
+    navigation.pop(2);
   };
 
   const includedCount = rows.filter((r) => r.included).length;

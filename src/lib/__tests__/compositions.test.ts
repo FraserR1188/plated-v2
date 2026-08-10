@@ -10,7 +10,7 @@
 //   - the batch per-portion macro derivation and the null-poisons-total rule.
 // ============================================================
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   draftsFromComposition,
   draftsFromBatch,
@@ -263,95 +263,107 @@ describe("draftsFromBatch", () => {
 
   // ── Picked-time apply (eat-time sheet) ──────────────────────
   //
-  // chosenAt is a 4th, separate param from `now` specifically because `now`
-  // has to keep meaning "the real clock" — it's what eaten_at_estimated is
-  // judged against. Passing the picked time AS `now` (instead of as
-  // chosenAt) would compare the picked time against itself and always read
-  // "not planned," even for a batch scheduled hours into the future — these
-  // tests pin exactly that distinction. Like the rest of this file, `new
-  // Date(y, m, d, h, min)` + getHours()/getDate() stay in whatever local
-  // timezone the test runs in on both sides, so there's no UTC/local
-  // mismatch to account for — no explicit TZ pin needed or present.
+  // Europe/London-pinned: this app's actual user is UK-based, and 27 Jul is
+  // deliberately inside BST (UTC+1) — the exact condition CLAUDE.md's
+  // dateKey()/toISOString() warning is about. Pinning here means these
+  // wall-clock assertions (getHours/getDate) mean the same thing regardless
+  // of which timezone CI or a dev machine happens to run in.
+  describe("picked-time apply (Europe/London, BST)", () => {
+    const ORIGINAL_TZ = process.env.TZ;
+    beforeAll(() => {
+      process.env.TZ = "Europe/London";
+    });
+    afterAll(() => {
+      process.env.TZ = ORIGINAL_TZ;
+    });
 
-  it("a picked instant becomes eaten_at exactly — target.date is ignored when chosenAt is given", () => {
-    const composition = makeComposition(
-      [makeBatchIngredient({ id: "1" }), makeBatchIngredient({ id: "2" })],
-      { kind: "batch", yield_g: 200, portion_g: 100 },
-    );
+    // chosenAt is a 4th, separate param from `now` specifically because
+    // `now` has to keep meaning "the real clock" — it's what
+    // eaten_at_estimated is judged against. Passing the picked time AS `now`
+    // (instead of as chosenAt) would compare the picked time against itself
+    // and always read "not planned," even for a batch scheduled hours into
+    // the future — the tests below pin exactly that distinction.
 
-    const chosenAt = new Date(2026, 6, 27, 19, 45); // 27 Jul 2026, 19:45 local
-    // target.date deliberately does NOT match chosenAt's day, to prove
-    // chosenAt — not target.date — is what wins.
-    const draft = draftsFromBatch(
-      composition,
-      { date: "2026-01-01" },
-      new Date(2026, 6, 27, 10, 0), // real clock: same day, earlier
-      chosenAt,
-    );
+    it("a picked instant becomes eaten_at exactly — target.date is ignored when chosenAt is given", () => {
+      const composition = makeComposition(
+        [makeBatchIngredient({ id: "1" }), makeBatchIngredient({ id: "2" })],
+        { kind: "batch", yield_g: 200, portion_g: 100 },
+      );
 
-    expect(draft.eaten_at).toBe(chosenAt.toISOString());
-  });
+      const chosenAt = new Date(2026, 6, 27, 19, 45); // 27 Jul 2026, 19:45 BST
+      // target.date deliberately does NOT match chosenAt's day, to prove
+      // chosenAt — not target.date — is what wins.
+      const draft = draftsFromBatch(
+        composition,
+        { date: "2026-01-01" },
+        new Date(2026, 6, 27, 10, 0), // real clock: same day, earlier
+        chosenAt,
+      );
 
-  it("a picked time more than 30 minutes ahead of the real clock is planned and stays an estimate", () => {
-    const composition = makeComposition(
-      [makeBatchIngredient({ id: "1" }), makeBatchIngredient({ id: "2" })],
-      { kind: "batch", yield_g: 200, portion_g: 100 },
-    );
+      expect(draft.eaten_at).toBe(chosenAt.toISOString());
+    });
 
-    const realNow = new Date(2026, 6, 27, 14, 0); // it's actually 14:00
-    const chosenAt = new Date(2026, 6, 27, 19, 0); // picked 19:00 — 5h ahead
+    it("a picked time more than 30 minutes ahead of the real clock is planned and stays an estimate", () => {
+      const composition = makeComposition(
+        [makeBatchIngredient({ id: "1" }), makeBatchIngredient({ id: "2" })],
+        { kind: "batch", yield_g: 200, portion_g: 100 },
+      );
 
-    const draft = draftsFromBatch(
-      composition,
-      { date: "2026-07-27" },
-      realNow,
-      chosenAt,
-    );
+      const realNow = new Date(2026, 6, 27, 14, 0); // it's actually 14:00 BST
+      const chosenAt = new Date(2026, 6, 27, 19, 0); // picked 19:00 — 5h ahead
 
-    expect(draft.eaten_at_estimated).toBe(true); // a forecast, not a fact
-    expect(new Date(draft.eaten_at).getHours()).toBe(19);
-  });
+      const draft = draftsFromBatch(
+        composition,
+        { date: "2026-07-27" },
+        realNow,
+        chosenAt,
+      );
 
-  it("a picked time in the past (backlogging) is a fact, not an estimate", () => {
-    const composition = makeComposition(
-      [makeBatchIngredient({ id: "1" }), makeBatchIngredient({ id: "2" })],
-      { kind: "batch", yield_g: 200, portion_g: 100 },
-    );
+      expect(draft.eaten_at_estimated).toBe(true); // a forecast, not a fact
+      expect(new Date(draft.eaten_at).getHours()).toBe(19);
+    });
 
-    const realNow = new Date(2026, 6, 27, 14, 0); // it's actually 14:00
-    const chosenAt = new Date(2026, 6, 27, 12, 30); // picked 12:30 — already happened
+    it("a picked time in the past (backlogging) is a fact, not an estimate", () => {
+      const composition = makeComposition(
+        [makeBatchIngredient({ id: "1" }), makeBatchIngredient({ id: "2" })],
+        { kind: "batch", yield_g: 200, portion_g: 100 },
+      );
 
-    const draft = draftsFromBatch(
-      composition,
-      { date: "2026-07-27" },
-      realNow,
-      chosenAt,
-    );
+      const realNow = new Date(2026, 6, 27, 14, 0); // it's actually 14:00 BST
+      const chosenAt = new Date(2026, 6, 27, 12, 30); // picked 12:30 — already happened
 
-    expect(draft.eaten_at_estimated).toBe(false);
-  });
+      const draft = draftsFromBatch(
+        composition,
+        { date: "2026-07-27" },
+        realNow,
+        chosenAt,
+      );
 
-  it("midnight-crossing: picking tomorrow 00:30 while it's 23:00 tonight lands on tomorrow, planned", () => {
-    const composition = makeComposition(
-      [makeBatchIngredient({ id: "1" }), makeBatchIngredient({ id: "2" })],
-      { kind: "batch", yield_g: 200, portion_g: 100 },
-    );
+      expect(draft.eaten_at_estimated).toBe(false);
+    });
 
-    const realNow = new Date(2026, 6, 27, 23, 0); // 23:00 on the 27th
-    const chosenAt = new Date(2026, 6, 28, 0, 30); // 00:30 on the 28th
+    it("midnight-crossing: picking tomorrow 00:30 while it's 23:00 tonight lands on tomorrow, planned", () => {
+      const composition = makeComposition(
+        [makeBatchIngredient({ id: "1" }), makeBatchIngredient({ id: "2" })],
+        { kind: "batch", yield_g: 200, portion_g: 100 },
+      );
 
-    const draft = draftsFromBatch(
-      composition,
-      { date: "2026-07-27" }, // target.date doesn't matter — chosenAt wins
-      realNow,
-      chosenAt,
-    );
+      const realNow = new Date(2026, 6, 27, 23, 0); // 23:00 BST on the 27th
+      const chosenAt = new Date(2026, 6, 28, 0, 30); // 00:30 BST on the 28th
 
-    const d = new Date(draft.eaten_at);
-    expect(d.getDate()).toBe(28);
-    expect(d.getHours()).toBe(0);
-    expect(d.getMinutes()).toBe(30);
-    expect(draft.eaten_at_estimated).toBe(true); // 90 minutes out — planned
+      const draft = draftsFromBatch(
+        composition,
+        { date: "2026-07-27" }, // target.date doesn't matter — chosenAt wins
+        realNow,
+        chosenAt,
+      );
+
+      const d = new Date(draft.eaten_at);
+      expect(d.getDate()).toBe(28);
+      expect(d.getHours()).toBe(0);
+      expect(d.getMinutes()).toBe(30);
+      expect(draft.eaten_at_estimated).toBe(true); // 90 minutes out — planned
+    });
   });
 
   it("throws if the composition isn't kind='batch' — refuses rather than silently misreading a bundle", () => {

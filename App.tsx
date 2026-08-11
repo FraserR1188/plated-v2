@@ -5,7 +5,8 @@ import * as Sentry from "@sentry/react-native";
 // confirm a symbolicated event reaches the EU project, then flip back to false.
 const SENTRY_SMOKE_TEST = false;
 
-const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const UUID_RE =
+  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 function scrubUrl(url?: string): string | undefined {
   if (!url) return url;
@@ -94,7 +95,8 @@ export default function App() {
 
   // ── Sentry smoke test (Phase 1) ─────────────────────────────
   useEffect(() => {
-    if (SENTRY_SMOKE_TEST) Sentry.captureException(new Error("sentry-smoke-test"));
+    if (SENTRY_SMOKE_TEST)
+      Sentry.captureException(new Error("sentry-smoke-test"));
   }, []);
 
   // ── Auth ────────────────────────────────────────────────────
@@ -269,64 +271,64 @@ function AuthScreen() {
 
 const styles = StyleSheet.create(
   withDefaultFont({
-  splash: {
-    flex: 1,
-    backgroundColor: Colors.bg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  splashName: {
-    fontSize: Typography.hero,
-    fontWeight: Typography.bold,
-    color: Colors.green,
-    letterSpacing: -2,
-  },
-  authSafe: { flex: 1, backgroundColor: Colors.bg },
-  authWrap: { flex: 1, padding: Spacing.lg, justifyContent: "center" },
-  authName: {
-    fontSize: Typography.hero - 8,
-    fontWeight: Typography.bold,
-    color: Colors.green,
-    letterSpacing: -1.5,
-    marginBottom: Spacing.xs,
-  },
-  authSub: {
-    fontSize: Typography.base,
-    color: Colors.textMuted,
-    marginBottom: Spacing.xl,
-  },
-  authCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.card,
-    padding: Spacing.lg,
-  },
-  authTitle: {
-    fontSize: Typography.lg,
-    fontWeight: Typography.bold,
-    color: Colors.text,
-    marginBottom: Spacing.md,
-  },
-  input: {
-    backgroundColor: Colors.surface2,
-    borderRadius: Radius.control,
-    padding: Spacing.md,
-    fontSize: Typography.base,
-    color: Colors.text,
-    marginBottom: Spacing.sm,
-  },
-  submitBtn: {
-    backgroundColor: Colors.green,
-    borderRadius: Radius.pill,
-    paddingVertical: 14,
-    alignItems: "center",
-    marginTop: Spacing.sm,
-  },
-  submitText: {
-    fontSize: Typography.base,
-    fontWeight: Typography.bold,
-    color: Colors.bg,
-  },
-  switchBtn: { paddingVertical: Spacing.md, alignItems: "center" },
-  switchText: { fontSize: Typography.sm, color: Colors.textMuted },
+    splash: {
+      flex: 1,
+      backgroundColor: Colors.bg,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    splashName: {
+      fontSize: Typography.hero,
+      fontWeight: Typography.bold,
+      color: Colors.green,
+      letterSpacing: -2,
+    },
+    authSafe: { flex: 1, backgroundColor: Colors.bg },
+    authWrap: { flex: 1, padding: Spacing.lg, justifyContent: "center" },
+    authName: {
+      fontSize: Typography.hero - 8,
+      fontWeight: Typography.bold,
+      color: Colors.green,
+      letterSpacing: -1.5,
+      marginBottom: Spacing.xs,
+    },
+    authSub: {
+      fontSize: Typography.base,
+      color: Colors.textMuted,
+      marginBottom: Spacing.xl,
+    },
+    authCard: {
+      backgroundColor: Colors.surface,
+      borderRadius: Radius.card,
+      padding: Spacing.lg,
+    },
+    authTitle: {
+      fontSize: Typography.lg,
+      fontWeight: Typography.bold,
+      color: Colors.text,
+      marginBottom: Spacing.md,
+    },
+    input: {
+      backgroundColor: Colors.surface2,
+      borderRadius: Radius.control,
+      padding: Spacing.md,
+      fontSize: Typography.base,
+      color: Colors.text,
+      marginBottom: Spacing.sm,
+    },
+    submitBtn: {
+      backgroundColor: Colors.green,
+      borderRadius: Radius.pill,
+      paddingVertical: 14,
+      alignItems: "center",
+      marginTop: Spacing.sm,
+    },
+    submitText: {
+      fontSize: Typography.base,
+      fontWeight: Typography.bold,
+      color: Colors.bg,
+    },
+    switchBtn: { paddingVertical: Spacing.md, alignItems: "center" },
+    switchText: { fontSize: Typography.sm, color: Colors.textMuted },
   }),
 );

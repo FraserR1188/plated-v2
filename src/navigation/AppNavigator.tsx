@@ -16,11 +16,15 @@
 //   └── CopyConfirm       (push)             ← NEW
 // ============================================================
 
-import React from "react";
+import React, { useRef } from "react";
 import { Text } from "react-native";
-import { NavigationContainer } from "@react-navigation/native";
+import {
+  NavigationContainer,
+  useNavigationContainerRef,
+} from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import * as Sentry from "@sentry/react-native";
 
 import { TodayScreen } from "../screens/TodayScreen";
 import { HistoryScreen } from "../screens/HistoryScreen";
@@ -148,8 +152,28 @@ function MainTabs() {
 // ─── Root stack ──────────────────────────────────────────────
 
 export function AppNavigator() {
+  const navigationRef = useNavigationContainerRef<RootStackParamList>();
+  const routeNameRef = useRef<string | undefined>(undefined);
+
   return (
-    <NavigationContainer theme={NavTheme}>
+    <NavigationContainer
+      theme={NavTheme}
+      ref={navigationRef}
+      onReady={() => {
+        routeNameRef.current = navigationRef.getCurrentRoute()?.name;
+      }}
+      onStateChange={() => {
+        const current = navigationRef.getCurrentRoute()?.name;
+        if (current && routeNameRef.current !== current) {
+          Sentry.addBreadcrumb({
+            category: "navigation",
+            message: current,
+            level: "info",
+          });
+          routeNameRef.current = current;
+        }
+      }}
+    >
       <Stack.Navigator
         screenOptions={{
           headerStyle: { backgroundColor: Colors.surface },

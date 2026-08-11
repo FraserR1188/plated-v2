@@ -110,10 +110,10 @@ function App() {
     return () => sub.remove();
   }, [session]);
 
+  let content: React.ReactNode;
   if (loading || !fontsLoaded) {
-    return (
+    content = (
       <View style={styles.splash}>
-        <StatusBar style="light" />
         <Text style={styles.splashName}>plated.</Text>
         <ActivityIndicator
           color={Colors.green}
@@ -121,28 +121,21 @@ function App() {
         />
       </View>
     );
-  }
-
-  if (session) {
-    return (
-      <SafeAreaProvider>
-        <Sentry.ErrorBoundary
-          fallback={({ resetError }) => (
-            <ErrorFallback onReset={resetError} />
-          )}
-        >
-          {CRASH_TEST ? <Bomb /> : null}
-          <AppNavigator />
-        </Sentry.ErrorBoundary>
-        <StatusBar style="light" />
-      </SafeAreaProvider>
-    );
+  } else if (session) {
+    content = <AppNavigator />;
+  } else {
+    content = <AuthScreen />;
   }
 
   return (
     <SafeAreaProvider>
+      <Sentry.ErrorBoundary
+        fallback={({ resetError }) => <ErrorFallback onReset={resetError} />}
+      >
+        {CRASH_TEST ? <Bomb /> : null}
+        {content}
+      </Sentry.ErrorBoundary>
       <StatusBar style="light" />
-      <AuthScreen />
     </SafeAreaProvider>
   );
 }

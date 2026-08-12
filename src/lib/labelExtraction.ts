@@ -15,6 +15,7 @@
 // ============================================================
 
 import { supabase } from "./supabase";
+import { reportError } from "./reportError";
 
 // ⚠️  MIRROR OF supabase/functions/_shared/types.ts.
 //     Deno and RN have separate tsconfigs; sharing one file across that
@@ -123,7 +124,8 @@ export async function extractNutritionLabel(
     // Shape-check rather than trusting the cast. If the contract ever
     // drifts, fail loudly here instead of rendering `undefined` macros.
     if (!data || typeof data !== "object" || (data as any).ok !== true) {
-      console.warn("extractNutritionLabel: unexpected payload", data);
+      console.warn("extractNutritionLabel: unexpected payload", Object.keys(data ?? {}));
+      reportError("extractNutritionLabel:unexpected_payload", new Error("unexpected_payload"));
       return GENERIC_FAILURE;
     }
 

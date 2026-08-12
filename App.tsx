@@ -26,6 +26,7 @@ import {
   withDefaultFont,
 } from "./src/theme/tokens";
 import { syncWhoop } from "./src/lib/whoop";
+import { reportError } from "./src/lib/reportError";
 
 const CRASH_TEST = false; // Phase-2 verify: flip true, build, launch once, then revert.
 function Bomb(): never {
@@ -102,10 +103,20 @@ function App() {
   useEffect(() => {
     if (!session) return;
 
-    syncWhoop().catch(() => {});
+    syncWhoop().catch((e) =>
+      reportError("whoopBackgroundSync", e, {
+        fingerprint: ["whoop-background-sync"],
+      }),
+    );
 
     const sub = AppState.addEventListener("change", (next) => {
-      if (next === "active") syncWhoop().catch(() => {});
+      if (next === "active") {
+        syncWhoop().catch((e) =>
+          reportError("whoopBackgroundSync", e, {
+            fingerprint: ["whoop-background-sync"],
+          }),
+        );
+      }
     });
     return () => sub.remove();
   }, [session]);

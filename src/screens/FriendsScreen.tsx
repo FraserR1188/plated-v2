@@ -275,7 +275,10 @@ export function FriendsScreen() {
       );
       setFollowing(enriched);
     } catch (err) {
-      console.error("loadFollowing error:", err);
+      console.error(
+        "loadFollowing error:",
+        err instanceof Error ? err.message : String(err),
+      );
     } finally {
       setLoadingList(false);
       setRefreshing(false);

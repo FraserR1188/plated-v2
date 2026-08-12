@@ -12,6 +12,7 @@
 
 import { supabase } from "./supabase";
 import { FoodProduct } from "../types";
+import { reportError } from "./reportError";
 
 // ⚠️  MIRROR OF supabase/functions/scan-meal-photo/index.ts.
 //     Deno and RN have separate tsconfigs; sharing one file across that
@@ -116,7 +117,8 @@ export async function scanMealPhoto(
     }
 
     if (!isMealScanSuccessShape(data)) {
-      console.warn("scanMealPhoto: unexpected payload", data);
+      console.warn("scanMealPhoto: unexpected payload", Object.keys(data ?? {}));
+      reportError("scanMealPhoto:unexpected_payload", new Error("unexpected_payload"));
       return GENERIC_FAILURE;
     }
 

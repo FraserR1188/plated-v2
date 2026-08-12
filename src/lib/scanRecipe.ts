@@ -15,6 +15,7 @@
 // ============================================================
 
 import { supabase } from "./supabase";
+import { reportError } from "./reportError";
 
 // ⚠️  MIRROR OF supabase/functions/scan-recipe/index.ts.
 //     Deno and RN have separate tsconfigs; sharing one file across that
@@ -98,7 +99,8 @@ async function invoke(body: Record<string, unknown>): Promise<RecipeScanResponse
     }
 
     if (!isRecipeScanSuccessShape(data)) {
-      console.warn("scanRecipe: unexpected payload", data);
+      console.warn("scanRecipe: unexpected payload", Object.keys(data ?? {}));
+      reportError("scanRecipe:unexpected_payload", new Error("unexpected_payload"));
       return GENERIC_FAILURE;
     }
 

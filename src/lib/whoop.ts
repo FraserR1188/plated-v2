@@ -30,6 +30,7 @@
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { supabase } from "./supabase";
+import { reportError } from "./reportError";
 
 // Must match _shared/whoop.ts and the WHOOP dashboard, character for
 // character. No trailing slash.
@@ -173,7 +174,8 @@ export async function connectWhoop(): Promise<ConnectResponse> {
       typeof data !== "object" ||
       typeof (data as any).authorizeUrl !== "string"
     ) {
-      console.warn("whoop-auth-start: unexpected payload", data);
+      console.warn("whoop-auth-start: unexpected payload", Object.keys(data ?? {}));
+      reportError("whoopAuthStart:unexpected_payload", new Error("unexpected_payload"));
       return GENERIC_FAILURE;
     }
 
@@ -246,7 +248,8 @@ export async function connectWhoop(): Promise<ConnectResponse> {
     }
 
     if (!data || typeof data !== "object" || (data as any).ok !== true) {
-      console.warn("whoop-auth-callback: unexpected payload", data);
+      console.warn("whoop-auth-callback: unexpected payload", Object.keys(data ?? {}));
+      reportError("whoopAuthCallback:unexpected_payload", new Error("unexpected_payload"));
       return GENERIC_FAILURE;
     }
 
@@ -299,7 +302,8 @@ export async function syncWhoop(
     }
 
     if (!data || typeof data !== "object") {
-      console.warn("whoop-sync: unexpected payload", data);
+      console.warn("whoop-sync: unexpected payload", Object.keys(data ?? {}));
+      reportError("whoopSync:unexpected_payload", new Error("unexpected_payload"));
       return GENERIC_FAILURE;
     }
 
@@ -356,7 +360,8 @@ export async function disconnectWhoop(): Promise<DisconnectResponse> {
     }
 
     if (!data || typeof data !== "object" || (data as any).ok !== true) {
-      console.warn("whoop-disconnect: unexpected payload", data);
+      console.warn("whoop-disconnect: unexpected payload", Object.keys(data ?? {}));
+      reportError("whoopDisconnect:unexpected_payload", new Error("unexpected_payload"));
       return GENERIC_FAILURE;
     }
 

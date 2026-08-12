@@ -20,3 +20,15 @@ vi.mock("./src/lib/supabase", () => ({
     },
   },
 }));
+
+// @sentry/react-native transitively imports the real react-native package,
+// whose index.js is Flow syntax — Vite's transform can't parse it, so any
+// test that imports reportError.ts (which imports @sentry/react-native)
+// would fail at transform time, not just fail an assertion, without this.
+vi.mock("@sentry/react-native", () => ({
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+  addBreadcrumb: vi.fn(),
+  init: vi.fn(),
+  wrap: (c: unknown) => c,
+}));

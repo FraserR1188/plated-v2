@@ -560,7 +560,7 @@ export interface Workout {
   strain: number | null;
   averageHeartRate: number | null;
   maxHeartRate: number | null;
-  energyKilojoule: number | null; // NOT rendered in v1 — see dayStream/TodayScreen
+  energyKilojoule: number | null; // kJ. Converted to kcal only at render, via lib/energy.kjToKcal — see WorkoutCard
   distanceMeter: number | null;
   strainScoreState: string | null;
 }

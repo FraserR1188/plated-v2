@@ -32,6 +32,7 @@ import { draftsFromDay, sharedMealType } from "../lib/entries";
 import { roundSalt } from "../lib/macros";
 import { dayHeaderInfo } from "../lib/dayHeader";
 import { buildDayStream, BAND_LABELS } from "../lib/dayStream";
+import { kjToKcal } from "../lib/energy";
 import {
   formatTime,
   formatDayLabel,
@@ -2668,10 +2669,12 @@ function StreamFoodRow({
 // Read-only, cyan (Colors.whoop). Deliberately NOT a Pressable: no tap-to-
 // edit, no long-press-to-select, no checkbox — a workout isn't a MealEntry,
 // it's never counted by select-all (which only ever walks dayEntries' ids),
-// and there is nothing here to edit or delete. energyKilojoule is
-// intentionally never rendered — sitting a WHOOP calorie figure next to the
-// ring invites a burned-vs-eaten netting model, which is exactly what the
-// still-deferred gross-to-net add-back formula exists to gate.
+// and there is nothing here to edit or delete. energyKilojoule IS rendered,
+// as a plain descriptive metric of the session (kcal, alongside strain/
+// distance/duration) — but it stays inside this card, never in a daily
+// total and never adjacent to the intake ring. Netting burned against eaten
+// is still gated by the deferred gross-to-net add-back formula; this is
+// display only.
 
 function WorkoutCard({
   workout,
@@ -2691,6 +2694,8 @@ function WorkoutCard({
 
   const distanceKm =
     workout.distanceMeter != null ? (workout.distanceMeter / 1000).toFixed(2) : null;
+
+  const kcal = kjToKcal(workout.energyKilojoule);
 
   return (
     <View style={[workoutStyles.row, bordered && streamStyles.rowBorder]}>
@@ -2712,6 +2717,9 @@ function WorkoutCard({
         <Text style={workoutStyles.meta}>
           {formatTime(workout.workoutStart)} · {durationLabel}
           {distanceKm ? ` · ${distanceKm} km` : ""}
+          {kcal != null && (
+            <Text style={workoutStyles.kcal}> · {kcal} kcal</Text>
+          )}
         </Text>
       </View>
 
@@ -2777,6 +2785,11 @@ const workoutStyles = StyleSheet.create({
     marginTop: 3,
     fontWeight: Typography.medium,
     fontFamily: Fonts.mono.medium,
+  },
+  kcal: {
+    fontWeight: Typography.medium,
+    fontFamily: Fonts.mono.medium,
+    color: Colors.whoop,
   },
   strain: {
     fontSize: Typography.sm,

@@ -176,7 +176,7 @@ interface AppState {
    * the UI can't see is a screen that closes as if it saved. Callers must check.
    */
   updateEntry: (id: string, patch: MealEntryPatch) => Promise<WriteResult>;
-  saveGoals: (goals: Goals) => Promise<void>;
+  saveGoals: (goals: Goals) => Promise<WriteResult>;
 
   /** "Yes, I ate these." Optionally correct the time while confirming. */
   confirmEntries: (
@@ -1069,7 +1069,7 @@ export const useStore = create<AppState>((set, get) => ({
 
   saveGoals: async (goals) => {
     const { userId } = get();
-    if (!userId) return;
+    if (!userId) return { error: null };
     const { error } = await supabase.from("goals").upsert({
       user_id: userId,
       calories: goals.calories,
@@ -1082,8 +1082,12 @@ export const useStore = create<AppState>((set, get) => ({
       sugar: goals.sugar,
       updated_at: new Date().toISOString(),
     });
-    if (error) reportError("saveGoals", error, { level: "error" });
+    if (error) {
+      reportError("saveGoals", error, { level: "error" });
+      return { error: "Couldn't save your goals. Check your connection." };
+    }
     set({ goals });
+    return { error: null };
   },
 
   saveIngredient: async (product) => {
@@ -1106,7 +1110,10 @@ export const useStore = create<AppState>((set, get) => ({
         .from("saved_ingredients")
         .update({ use_count: existing.use_count + 1 })
         .eq("id", existing.id);
-      if (error) reportError("saveIngredient", error, { level: "error" });
+      if (error) {
+        reportError("saveIngredient", error, { level: "error" });
+        return null;
+      }
       const updated = { ...existing, use_count: existing.use_count + 1 };
       set((s) => ({
         savedIngredients: s.savedIngredients.map((i) =>
@@ -1151,7 +1158,12 @@ export const useStore = create<AppState>((set, get) => ({
       .from("saved_ingredients")
       .delete()
       .eq("id", id);
-    if (error) reportError("deleteIngredient", error, { level: "error" });
+    if (error) {
+      // Do NOT drop it locally. A failed delete that vanishes from the UI
+      // comes back on the next fetchSavedIngredients(), which looks like a ghost.
+      reportError("deleteIngredient", error, { level: "error" });
+      return;
+    }
     set((s) => ({
       savedIngredients: s.savedIngredients.filter((i) => i.id !== id),
     }));

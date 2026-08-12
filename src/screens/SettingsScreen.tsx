@@ -282,7 +282,7 @@ export function SettingsScreen() {
 
   const handleSave = async () => {
     setSaving(true);
-    await saveGoals({
+    const { error } = await saveGoals({
       calories: parseInt(values.calories) || 2000,
       protein: parseInt(values.protein) || 150,
       carbs: parseInt(values.carbs) || 200,
@@ -293,6 +293,10 @@ export function SettingsScreen() {
       sugar: parseInt(values.sugar) || 30,
     });
     setSaving(false);
+    if (error) {
+      Alert.alert("Can't save that", error);
+      return;
+    }
     setSaved(true);
   };
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useStore } from "../useStore";
 import { supabase } from "../../lib/supabase";
-import { MealEntry, FoodProduct } from "../../types";
+import { MealEntry, FoodProduct, SavedIngredient } from "../../types";
 
 function makeEntry(overrides: Partial<MealEntry> = {}): MealEntry {
   return {
@@ -290,6 +290,147 @@ describe("useStore.copyEntriesTo", () => {
 
     // Total entry count grew by exactly one.
     expect(entries).toHaveLength(2);
+  });
+});
+
+// ─── Unchecked-write correctness fix ──────────────────────────
+//
+// saveGoals, saveIngredient (existing-item branch), and deleteIngredient used
+// to run their optimistic set() unconditionally, even when the underlying
+// Supabase write failed — painting the UI as saved/updated/removed when
+// nothing actually persisted. The failure case in each block below is the
+// regression test for that: it asserts local state is untouched when the
+// write fails, not just that the write was attempted.
+
+function makeSavedIngredient(
+  overrides: Partial<SavedIngredient> = {},
+): SavedIngredient {
+  return {
+    id: "si-1",
+    user_id: "test-user-id",
+    name: "Porridge",
+    brand: null,
+    cal_per100: 175,
+    protein_per100: 5,
+    carbs_per100: 24,
+    fat_per100: 3.2,
+    sat_fat_per100: 0.8,
+    salt_per100: 0.1,
+    fibre_per100: 2.4,
+    sugar_per100: 1.6,
+    barcode: null,
+    off_id: null,
+    use_count: 1,
+    created_at: "2026-07-20T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+const pgError = { message: "constraint violated", code: "23505" };
+
+describe("useStore.saveGoals", () => {
+  it("on success, updates local goals and returns a null error", async () => {
+    useStore.getState().setUserId("test-user-id");
+    const upsert = vi.fn(async () => ({ error: null }));
+    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ upsert });
+
+    const newGoals = { ...useStore.getState().goals, calories: 2500 };
+    const result = await useStore.getState().saveGoals(newGoals);
+
+    expect(result.error).toBeNull();
+    expect(useStore.getState().goals).toEqual(newGoals);
+  });
+
+  it("on failure, leaves local goals UNCHANGED and returns a non-null error", async () => {
+    useStore.getState().setUserId("test-user-id");
+    const before = useStore.getState().goals;
+    const upsert = vi.fn(async () => ({ error: pgError }));
+    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ upsert });
+
+    const result = await useStore
+      .getState()
+      .saveGoals({ ...before, calories: 2500 });
+
+    expect(result.error).toEqual(expect.any(String));
+    expect(useStore.getState().goals).toEqual(before);
+  });
+});
+
+describe("useStore.saveIngredient (existing-item bump branch)", () => {
+  it("on success, bumps use_count locally and returns the updated ingredient", async () => {
+    const existing = makeSavedIngredient({ use_count: 3 });
+    useStore.setState({ savedIngredients: [existing] });
+    useStore.getState().setUserId("test-user-id");
+
+    const eq = vi.fn(async () => ({ error: null }));
+    const update = vi.fn(() => ({ eq }));
+    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ update });
+
+    const result = await useStore.getState().saveIngredient({
+      name: existing.name,
+      brand: existing.brand ?? "",
+      cal_per100: existing.cal_per100,
+      protein_per100: existing.protein_per100,
+      carbs_per100: existing.carbs_per100,
+      fat_per100: existing.fat_per100,
+    });
+
+    expect(result?.use_count).toBe(4);
+    expect(useStore.getState().savedIngredients[0].use_count).toBe(4);
+  });
+
+  it("on failure, leaves savedIngredients UNCHANGED and returns null", async () => {
+    const existing = makeSavedIngredient({ use_count: 3 });
+    useStore.setState({ savedIngredients: [existing] });
+    useStore.getState().setUserId("test-user-id");
+
+    const eq = vi.fn(async () => ({ error: pgError }));
+    const update = vi.fn(() => ({ eq }));
+    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ update });
+
+    const result = await useStore.getState().saveIngredient({
+      name: existing.name,
+      brand: existing.brand ?? "",
+      cal_per100: existing.cal_per100,
+      protein_per100: existing.protein_per100,
+      carbs_per100: existing.carbs_per100,
+      fat_per100: existing.fat_per100,
+    });
+
+    expect(result).toBeNull();
+    expect(useStore.getState().savedIngredients).toEqual([existing]);
+  });
+});
+
+describe("useStore.deleteIngredient", () => {
+  it("on success, removes the ingredient locally", async () => {
+    const existing = makeSavedIngredient();
+    useStore.setState({ savedIngredients: [existing] });
+
+    const eq = vi.fn(async () => ({ error: null }));
+    const del = vi.fn(() => ({ eq }));
+    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({
+      delete: del,
+    });
+
+    await useStore.getState().deleteIngredient(existing.id);
+
+    expect(useStore.getState().savedIngredients).toEqual([]);
+  });
+
+  it("on failure, the ingredient is still present — no delete-ghost", async () => {
+    const existing = makeSavedIngredient();
+    useStore.setState({ savedIngredients: [existing] });
+
+    const eq = vi.fn(async () => ({ error: pgError }));
+    const del = vi.fn(() => ({ eq }));
+    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({
+      delete: del,
+    });
+
+    await useStore.getState().deleteIngredient(existing.id);
+
+    expect(useStore.getState().savedIngredients).toEqual([existing]);
   });
 });
 

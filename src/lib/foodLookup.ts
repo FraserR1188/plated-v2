@@ -10,6 +10,7 @@ import { supabase } from "./supabase";
 import { lookupBarcode } from "./openfoodfacts";
 import { useStore } from "../store/useStore";
 import { CustomFood, FoodProduct, MealEntry } from "../types";
+import { reportError } from "./reportError";
 
 // ─── Mapping ─────────────────────────────────────────────────
 
@@ -126,6 +127,7 @@ export async function lookupFood(
     if (cf) return { status: "found", product: customFoodToProduct(cf) };
   } catch {
     // Supabase unreachable — fall through and let OFF try anyway.
+    console.warn("lookupFood: custom-barcode lookup failed, falling through");
   }
 
   // 2) Open Food Facts
@@ -136,6 +138,7 @@ export async function lookupFood(
     }
     return { status: "not_found" };
   } catch {
+    console.warn("lookupFood: OFF lookup failed");
     return { status: "network_error" };
   }
 }
@@ -156,7 +159,7 @@ export async function findCustomFoodByBarcode(
     .maybeSingle(); // 0 rows → null, no error thrown
 
   if (error) {
-    console.warn("findCustomFoodByBarcode:", error.message);
+    reportError("findCustomFoodByBarcode", error);
     throw new Error(error.message);
   }
   return (data as CustomFood) ?? null;
@@ -203,7 +206,7 @@ export async function createCustomFood(
     .single();
 
   if (error) {
-    console.warn("createCustomFood:", error.message);
+    reportError("createCustomFood", error);
     // 23505 = unique violation → this barcode already has a custom food
     const msg =
       error.code === "23505"
@@ -249,28 +252,8 @@ export async function setCustomFoodImages(
     .single();
 
   if (error) {
-    console.warn("setCustomFoodImages:", error.message);
+    reportError("setCustomFoodImages", error);
     return { food: null, error: "Couldn't save the photo." };
   }
   return { food: data as CustomFood, error: null };
-}
-
-// For AddIngredientScreen (phase 1b): user's own foods in name search.
-export async function searchCustomFoods(query: string): Promise<CustomFood[]> {
-  const userId = useStore.getState().userId;
-  if (!userId || !query.trim()) return [];
-
-  const { data, error } = await supabase
-    .from("custom_foods")
-    .select("*")
-    .eq("user_id", userId)
-    .ilike("name", `%${query.trim()}%`)
-    .order("created_at", { ascending: false })
-    .limit(10);
-
-  if (error) {
-    console.warn("searchCustomFoods:", error.message);
-    return [];
-  }
-  return (data as CustomFood[]) ?? [];
 }

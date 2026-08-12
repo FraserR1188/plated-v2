@@ -38,6 +38,7 @@ import {
   willBePlanned,
 } from "./time";
 import { applyEntries } from "./entries";
+import { reportError } from "./reportError";
 
 // ─── Reads ───────────────────────────────────────────────────
 
@@ -68,7 +69,7 @@ export async function getCompositions(): Promise<MealCompositionWithItems[]> {
     .order("use_count", { ascending: false });
 
   if (error) {
-    console.warn("getCompositions:", error.message);
+    reportError("getCompositions", error, { level: "error" });
     throw error;
   }
 
@@ -188,7 +189,7 @@ export async function createBundleFromEntries(
     .single();
 
   if (compositionErr || !composition) {
-    console.warn("createBundleFromEntries (composition):", compositionErr?.message);
+    reportError("createBundleFromEntries", compositionErr, { level: "error" });
     throw compositionErr ?? new Error("Couldn't save the bundle.");
   }
 
@@ -228,7 +229,7 @@ export async function createBundleFromEntries(
     .select();
 
   if (itemsErr) {
-    console.warn("createBundleFromEntries (items):", itemsErr.message);
+    reportError("createBundleFromEntries", itemsErr, { level: "error" });
     // Don't strand an empty composition in the user's list.
     await supabase
       .from("meal_compositions")
@@ -296,7 +297,7 @@ export async function appendEntriesToBundle(
     .select();
 
   if (error) {
-    console.warn("appendEntriesToBundle:", error.message);
+    reportError("appendEntriesToBundle", error, { level: "error" });
     throw error;
   }
   return (data ?? []) as MealCompositionItem[];
@@ -318,7 +319,7 @@ export async function renameComposition(
     .single();
 
   if (error) {
-    console.warn("renameComposition:", error.message);
+    reportError("renameComposition", error, { level: "error" });
     throw error;
   }
   return data as MealComposition;
@@ -331,7 +332,7 @@ export async function deleteCompositionItem(itemId: string): Promise<void> {
     .delete()
     .eq("id", itemId);
   if (error) {
-    console.warn("deleteCompositionItem:", error.message);
+    reportError("deleteCompositionItem", error, { level: "error" });
     throw error;
   }
 }
@@ -343,7 +344,7 @@ export async function deleteComposition(compositionId: string): Promise<void> {
     .delete()
     .eq("id", compositionId);
   if (error) {
-    console.warn("deleteComposition:", error.message);
+    reportError("deleteComposition", error, { level: "error" });
     throw error;
   }
 }
@@ -546,7 +547,7 @@ export async function applyComposition(
   const { error } = await supabase.rpc("bump_composition_use", {
     p_composition_id: composition.id,
   });
-  if (error) console.warn("bump_composition_use:", error.message);
+  if (error) reportError("bumpCompositionUse", error);
 
   return inserted;
 }
@@ -753,7 +754,7 @@ export async function applyBatch(
   const { error } = await supabase.rpc("bump_composition_use", {
     p_composition_id: composition.id,
   });
-  if (error) console.warn("bump_composition_use:", error.message);
+  if (error) reportError("bumpCompositionUse", error);
 
   return inserted;
 }
@@ -922,10 +923,7 @@ export async function createBatchFromIngredients(
     .single();
 
   if (compositionErr || !composition) {
-    console.warn(
-      "createBatchFromIngredients (composition):",
-      compositionErr?.message,
-    );
+    reportError("createBatchFromIngredients", compositionErr, { level: "error" });
     throw compositionErr ?? new Error("Couldn't save the batch.");
   }
 
@@ -941,7 +939,7 @@ export async function createBatchFromIngredients(
     .select();
 
   if (itemsErr) {
-    console.warn("createBatchFromIngredients (items):", itemsErr.message);
+    reportError("createBatchFromIngredients", itemsErr, { level: "error" });
     // Don't strand an empty composition in the user's list.
     await supabase
       .from("meal_compositions")
@@ -995,7 +993,7 @@ export async function updateBatch(
     .single();
 
   if (compositionErr || !composition) {
-    console.warn("updateBatch (composition):", compositionErr?.message);
+    reportError("updateBatch", compositionErr, { level: "error" });
     throw compositionErr ?? new Error("Couldn't save the batch.");
   }
 
@@ -1004,7 +1002,7 @@ export async function updateBatch(
     .delete()
     .eq("composition_id", compositionId);
   if (deleteErr) {
-    console.warn("updateBatch (delete old items):", deleteErr.message);
+    reportError("updateBatch", deleteErr, { level: "error" });
     throw deleteErr;
   }
 
@@ -1016,7 +1014,7 @@ export async function updateBatch(
     .select();
 
   if (itemsErr) {
-    console.warn("updateBatch (items):", itemsErr.message);
+    reportError("updateBatch", itemsErr, { level: "error" });
     throw itemsErr;
   }
 

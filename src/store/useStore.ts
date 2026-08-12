@@ -13,6 +13,7 @@ import {
 import { dateKey, TimeOfDay } from "../lib/time";
 import { applyEntries, draftsFromDay, draftsForTarget } from "../lib/entries";
 import * as compositionApi from "../lib/compositions";
+import { reportError } from "../lib/reportError";
 
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
@@ -403,7 +404,7 @@ export const useStore = create<AppState>((set, get) => ({
       .select("*")
       .eq("user_id", userId)
       .order("logged_at", { ascending: false });
-    if (error) console.warn("fetchEntries:", error.message);
+    if (error) reportError("fetchEntries", error);
     if (!error && data) set({ entries: data as MealEntry[] });
     set({ loading: false });
   },
@@ -414,7 +415,7 @@ export const useStore = create<AppState>((set, get) => ({
     try {
       set({ compositions: await compositionApi.getCompositions() });
     } catch (e) {
-      console.warn("fetchCompositions:", msg(e, "unknown"));
+      reportError("fetchCompositions", e);
     }
   },
 
@@ -430,7 +431,7 @@ export const useStore = create<AppState>((set, get) => ({
       .select("*")
       .eq("user_id", userId);
     if (error) {
-      console.warn("fetchWorkouts:", error.message);
+      reportError("fetchWorkouts", error);
       return;
     }
     if (!data) return;
@@ -458,11 +459,12 @@ export const useStore = create<AppState>((set, get) => ({
   fetchGoals: async () => {
     const { userId } = get();
     if (!userId) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("goals")
       .select("*")
       .eq("user_id", userId)
       .single();
+    if (error) reportError("fetchGoals", error, { level: "error" });
     if (data)
       set({
         goals: {
@@ -481,11 +483,12 @@ export const useStore = create<AppState>((set, get) => ({
   fetchSavedIngredients: async () => {
     const { userId } = get();
     if (!userId) return;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("saved_ingredients")
       .select("*")
       .eq("user_id", userId)
       .order("use_count", { ascending: false });
+    if (error) reportError("fetchSavedIngredients", error, { level: "error" });
     if (data) set({ savedIngredients: data as SavedIngredient[] });
   },
 
@@ -542,7 +545,7 @@ export const useStore = create<AppState>((set, get) => ({
       .single();
 
     if (error) {
-      console.warn("addEntry:", error.message);
+      reportError("addEntry", error, { level: "error" });
       return;
     }
     if (data) set((s) => ({ entries: [data as MealEntry, ...s.entries] }));
@@ -553,7 +556,7 @@ export const useStore = create<AppState>((set, get) => ({
     if (error) {
       // Do NOT drop it locally. A failed delete that vanishes from the UI comes
       // back to life on the next fetch, which looks like a ghost.
-      console.warn("deleteEntry:", error.message);
+      reportError("deleteEntry", error, { level: "error" });
       return;
     }
     set((s) => ({ entries: s.entries.filter((e) => e.id !== id) }));
@@ -566,7 +569,7 @@ export const useStore = create<AppState>((set, get) => ({
       .delete()
       .in("id", ids);
     if (error) {
-      console.warn("deleteEntries:", error.message);
+      reportError("deleteEntries", error, { level: "error" });
       return { error: "Couldn't remove those. Check your connection." };
     }
     const gone = new Set(ids);
@@ -591,7 +594,7 @@ export const useStore = create<AppState>((set, get) => ({
       .single();
 
     if (error) {
-      console.warn("updateEntry:", error.message);
+      reportError("updateEntry", error, { level: "error" });
 
       // Migration 5's meal_entries_no_future_logged_bu raises when you try to
       // move a LOGGED meal into the future. That refusal is correct — a plan is
@@ -643,7 +646,7 @@ export const useStore = create<AppState>((set, get) => ({
           .select()
           .single();
         if (error) {
-          console.warn("confirmEntries (corrected):", error.message);
+          reportError("confirmEntries", error, { level: "error" });
           return;
         }
         if (data)
@@ -665,7 +668,7 @@ export const useStore = create<AppState>((set, get) => ({
             .in("id", plainIds)
             .select();
           if (error) {
-            console.warn("confirmEntries:", error.message);
+            reportError("confirmEntries", error, { level: "error" });
             return;
           }
           if (data) {
@@ -694,7 +697,7 @@ export const useStore = create<AppState>((set, get) => ({
       .in("id", ids)
       .select();
     if (error) {
-      console.warn("skipEntries:", error.message);
+      reportError("skipEntries", error, { level: "error" });
       return;
     }
     if (data) {
@@ -737,7 +740,10 @@ export const useStore = create<AppState>((set, get) => ({
           .select()
           .single();
 
-        if (error) return { id, ok: false as const, reason: error.message };
+        if (error) {
+          reportError("retimeEntries", error, { level: "error" });
+          return { id, ok: false as const, reason: error.message };
+        }
         return { id, ok: true as const, row: data as MealEntry };
       }),
     );
@@ -779,6 +785,7 @@ export const useStore = create<AppState>((set, get) => ({
       set((s) => ({ entries: [...inserted, ...s.entries] }));
       return { error: null };
     } catch (e) {
+      reportError("copyEntriesToDay", e, { level: "error" });
       return { error: msg(e, "Couldn't copy those. Check your connection.") };
     }
   },
@@ -793,6 +800,7 @@ export const useStore = create<AppState>((set, get) => ({
       set((s) => ({ entries: [...inserted, ...s.entries] }));
       return { error: null };
     } catch (e) {
+      reportError("copyEntriesTo", e, { level: "error" });
       return { error: msg(e, "Couldn't copy that. Check your connection.") };
     }
   },
@@ -806,6 +814,7 @@ export const useStore = create<AppState>((set, get) => ({
       set((s) => ({ compositions: [composition, ...s.compositions] }));
       return { error: null };
     } catch (e) {
+      reportError("saveBundleFromEntries", e, { level: "error" });
       return { error: msg(e, "Couldn't save the bundle.") };
     }
   },
@@ -830,6 +839,7 @@ export const useStore = create<AppState>((set, get) => ({
       }));
       return { error: null };
     } catch (e) {
+      reportError("addEntriesToBundle", e, { level: "error" });
       return { error: msg(e, "Couldn't add those to the bundle.") };
     }
   },
@@ -864,6 +874,7 @@ export const useStore = create<AppState>((set, get) => ({
       }));
       return { error: null };
     } catch (e) {
+      reportError("applyCompositionToDay", e, { level: "error" });
       return { error: msg(e, "Couldn't apply the bundle.") };
     }
   },
@@ -881,6 +892,7 @@ export const useStore = create<AppState>((set, get) => ({
       }));
       return { error: null };
     } catch (e) {
+      reportError("renameComposition", e, { level: "error" });
       return { error: msg(e, "Couldn't rename that.") };
     }
   },
@@ -897,6 +909,7 @@ export const useStore = create<AppState>((set, get) => ({
       }));
       return { error: null };
     } catch (e) {
+      reportError("removeCompositionItem", e, { level: "error" });
       return { error: msg(e, "Couldn't remove that item.") };
     }
   },
@@ -909,6 +922,7 @@ export const useStore = create<AppState>((set, get) => ({
       }));
       return { error: null };
     } catch (e) {
+      reportError("removeComposition", e, { level: "error" });
       return { error: msg(e, "Couldn't delete that bundle.") };
     }
   },
@@ -921,6 +935,7 @@ export const useStore = create<AppState>((set, get) => ({
       set((s) => ({ compositions: [composition, ...s.compositions] }));
       return { error: null };
     } catch (e) {
+      reportError("saveBatch", e, { level: "error" });
       return { error: msg(e, "Couldn't save the batch.") };
     }
   },
@@ -935,6 +950,7 @@ export const useStore = create<AppState>((set, get) => ({
       }));
       return { error: null };
     } catch (e) {
+      reportError("saveBatchEdits", e, { level: "error" });
       return { error: msg(e, "Couldn't save those changes.") };
     }
   },
@@ -977,6 +993,7 @@ export const useStore = create<AppState>((set, get) => ({
       }));
       return { error: null };
     } catch (e) {
+      reportError("applyBatchNow", e, { level: "error" });
       return { error: msg(e, "Couldn't log that.") };
     }
   },
@@ -1053,7 +1070,7 @@ export const useStore = create<AppState>((set, get) => ({
   saveGoals: async (goals) => {
     const { userId } = get();
     if (!userId) return;
-    await supabase.from("goals").upsert({
+    const { error } = await supabase.from("goals").upsert({
       user_id: userId,
       calories: goals.calories,
       protein: goals.protein,
@@ -1065,6 +1082,7 @@ export const useStore = create<AppState>((set, get) => ({
       sugar: goals.sugar,
       updated_at: new Date().toISOString(),
     });
+    if (error) reportError("saveGoals", error, { level: "error" });
     set({ goals });
   },
 
@@ -1084,10 +1102,11 @@ export const useStore = create<AppState>((set, get) => ({
       // list ORDER, but note that meal_compositions deliberately does NOT do
       // this — it calls the atomic bump_composition_use() RPC instead. If
       // saved_ingredients ever gets an RPC of its own, use it.
-      await supabase
+      const { error } = await supabase
         .from("saved_ingredients")
         .update({ use_count: existing.use_count + 1 })
         .eq("id", existing.id);
+      if (error) reportError("saveIngredient", error, { level: "error" });
       const updated = { ...existing, use_count: existing.use_count + 1 };
       set((s) => ({
         savedIngredients: s.savedIngredients.map((i) =>
@@ -1123,11 +1142,16 @@ export const useStore = create<AppState>((set, get) => ({
       }));
       return data as SavedIngredient;
     }
+    if (error) reportError("saveIngredient", error);
     return null;
   },
 
   deleteIngredient: async (id) => {
-    await supabase.from("saved_ingredients").delete().eq("id", id);
+    const { error } = await supabase
+      .from("saved_ingredients")
+      .delete()
+      .eq("id", id);
+    if (error) reportError("deleteIngredient", error, { level: "error" });
     set((s) => ({
       savedIngredients: s.savedIngredients.filter((i) => i.id !== id),
     }));

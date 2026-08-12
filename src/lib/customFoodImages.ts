@@ -13,6 +13,7 @@
 
 import { supabase } from "./supabase";
 import { useStore } from "../store/useStore";
+import { reportError } from "./reportError";
 
 const BUCKET = "custom-food-images";
 
@@ -107,13 +108,13 @@ export async function uploadCustomFoodImage(
     });
 
     if (error) {
-      console.warn("uploadCustomFoodImage:", error.message);
+      reportError("uploadCustomFoodImage", error);
       return { path: null, error: "Couldn't upload the photo." };
     }
 
     return { path, error: null };
   } catch (e: any) {
-    console.warn("uploadCustomFoodImage:", e?.message ?? e);
+    reportError("uploadCustomFoodImage", e);
     return { path: null, error: "Couldn't upload the photo." };
   }
 }
@@ -135,12 +136,12 @@ export async function getSignedImageUrl(
       .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
 
     if (error || !data?.signedUrl) {
-      console.warn("getSignedImageUrl:", error?.message);
+      reportError("getSignedImageUrl", error);
       return null;
     }
     return data.signedUrl;
   } catch (e: any) {
-    console.warn("getSignedImageUrl:", e?.message ?? e);
+    reportError("getSignedImageUrl", e);
     return null;
   }
 }
@@ -155,6 +156,6 @@ export async function deleteCustomFoodImage(
   try {
     await supabase.storage.from(BUCKET).remove([path]);
   } catch (e: any) {
-    console.warn("deleteCustomFoodImage:", e?.message ?? e);
+    reportError("deleteCustomFoodImage", e);
   }
 }

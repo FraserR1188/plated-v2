@@ -31,6 +31,7 @@
 import { supabase } from "./supabase";
 import { EntryDraft, MealEntry, MealType } from "../types";
 import { dateKey, localHM, sameTimeOnDay, TimeOfDay } from "./time";
+import { reportError } from "./reportError";
 
 /**
  * Insert a set of fully-resolved drafts into the current user's log.
@@ -117,7 +118,7 @@ export async function applyEntries(drafts: EntryDraft[]): Promise<MealEntry[]> {
     .select();
 
   if (error) {
-    console.warn("applyEntries:", error.message);
+    reportError("applyEntries", error, { level: "error" });
     throw error;
   }
 

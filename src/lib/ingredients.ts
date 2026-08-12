@@ -36,6 +36,7 @@
 import { searchFood, singularise } from "./openfoodfacts";
 import { supabase } from "./supabase";
 import type { FoodProduct } from "../types";
+import { reportError } from "./reportError";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -241,6 +242,7 @@ export async function resolveIngredient(
     } catch {
       // A failed OFF search must not cost the user the staple hit they
       // already have — secondaries are a nice-to-have, not load-bearing.
+      console.warn("resolveIngredient: OFF secondary search failed");
     }
 
     return [primary, ...secondaries];
@@ -291,7 +293,7 @@ export async function lookupStapleFromDb(normalizedName: string): Promise<Staple
     .maybeSingle();
 
   if (error) {
-    console.warn("lookupStapleFromDb:", error.message);
+    reportError("lookupStapleFromDb", error);
     return null;
   }
   return (data as StapleRow | null) ?? null;

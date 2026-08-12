@@ -248,7 +248,19 @@ type Collection = {
   map: (userId: string, record: any) => Record<string, unknown>;
 };
 
+// Workouts FIRST: it is the correlation-critical collection (the product's
+// differentiator), so it gets first claim on the shared deadline/time budget
+// below rather than whatever's left after cycles/sleeps/recoveries. Safe to
+// reorder — no FK ties these tables together, see the schema comment on
+// whoop_workouts in 20260712120000_whoop_data.sql.
 const COLLECTIONS: Collection[] = [
+  {
+    name: "workouts",
+    path: "/activity/workout",
+    table: "whoop_workouts",
+    conflict: "user_id,id",
+    map: mapWorkout,
+  },
   {
     name: "cycles",
     path: "/cycle",
@@ -269,13 +281,6 @@ const COLLECTIONS: Collection[] = [
     table: "whoop_recoveries",
     conflict: "user_id,cycle_id",
     map: mapRecovery,
-  },
-  {
-    name: "workouts",
-    path: "/activity/workout",
-    table: "whoop_workouts",
-    conflict: "user_id,id",
-    map: mapWorkout,
   },
 ];
 
@@ -539,19 +544,24 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // ─── 6. Success ────────────────────────────────────────────
   //
-  // A PARTIAL sync does not advance last_sync_at. It is the window anchor: if
-  // it moved to now() while a collection was left half-pulled, that gap would
-  // be permanent. A partial sync is a failed sync that happened to write some
-  // rows.
+  // Reaching this line means every collection returned ok:true — a hard
+  // failure short-circuits to a 503 above (step 5) and correctly leaves
+  // last_sync_at untouched. A PARTIAL result no longer withholds it: an OR'd
+  // partial flag across all four collections meant one collection running
+  // long — e.g. a big recoveries page near the deadline — could freeze the
+  // cursor even though an earlier collection in the loop, workouts above,
+  // had already completed and upserted in full. The unfetched tail of a
+  // partial pull is bounded by MAX_WINDOW_DAYS and re-covered on the next
+  // sync by design; it was never being backfilled by freezing the cursor
+  // either. last_sync_error still records "partial" for observability.
   const syncedAt = new Date().toISOString();
 
   const { error: doneErr } = await admin
     .from("whoop_connections")
-    .update(
-      partial
-        ? { last_sync_error: "partial" }
-        : { last_sync_at: syncedAt, last_sync_error: null },
-    )
+    .update({
+      last_sync_at: syncedAt,
+      last_sync_error: partial ? "partial" : null,
+    })
     .eq("user_id", userId);
 
   if (doneErr) console.error("connection update:", doneErr.message);
@@ -559,7 +569,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   return json({
     ok: true,
     partial,
-    lastSyncAt: partial ? conn.last_sync_at : syncedAt,
+    lastSyncAt: syncedAt,
     window: { start, end },
     counts,
   });

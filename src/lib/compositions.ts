@@ -642,6 +642,83 @@ export function scaleEntryDraftGrams(
   };
 }
 
+// ─── Persisting an apply-time adjustment back to the bundle (Phase 2) ────
+
+/**
+ * One item's post-scaling row, ready for an in-place UPDATE onto
+ * meal_composition_items. Explicit field list, not EntryDraft reused
+ * directly — EntryDraft carries meal_type/eaten_at/source/etc that don't
+ * exist as columns on this table; spreading it into an update payload would
+ * either error on unknown columns or (worse, if Postgrest ever became lax
+ * about it) silently write nonsense. Building this narrow shape at the call
+ * site is what keeps that impossible.
+ */
+export interface CompositionItemQuantityUpdate {
+  itemId: string;
+  serving_g: number;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  sat_fat: number | null;
+  salt: number | null;
+  fibre: number | null;
+  sugar: number | null;
+}
+
+/**
+ * Persist adjusted quantities onto an existing bundle's own items — Phase 2
+ * of apply-time quantity adjustment. The FIRST in-place UPDATE this
+ * codebase issues against meal_composition_items: every prior "edit"
+ * (updateBatch) wholesale deletes and reinserts instead, which is safe
+ * there only because nothing keys off a batch ingredient's row id (see
+ * updateBatch's own comment). A bundle item doesn't get that luxury for
+ * THIS operation — the caller already filtered `updates` down to the
+ * SPECIFIC rows that changed (see useStore.ts's
+ * saveCompositionApplyQuantities), and reinserting the whole set would
+ * needlessly recycle ids for rows nothing here needed to touch. RLS
+ * (meal_composition_items_update_own) is what makes a plain UPDATE safe to
+ * issue directly from the client — no RPC needed, same as every other
+ * composition write in this file.
+ *
+ * ONE UPDATE PER ROW, SEQUENTIAL, STOPS ON THE FIRST FAILURE. Not
+ * Promise.all: that would keep firing the remaining updates even after one
+ * is already known to have failed. Not a single bulk statement either:
+ * Postgrest has no "N different values into N different rows" UPDATE
+ * without an RPC, and this phase doesn't add one. A failure partway through
+ * can leave a real mix — some items updated, one failed, the rest never
+ * attempted — surfaced to the caller as a thrown error, never swallowed.
+ * That partial state is accepted here because this write is independent of,
+ * and runs strictly after, the apply that already logged the meal (see
+ * useStore.ts's saveCompositionApplyQuantities) — retrying is just calling
+ * this again with the same (still-correct) `updates`.
+ */
+export async function updateCompositionItemQuantities(
+  updates: CompositionItemQuantityUpdate[],
+): Promise<void> {
+  for (const u of updates) {
+    const { error } = await supabase
+      .from("meal_composition_items")
+      .update({
+        serving_g: u.serving_g,
+        calories: u.calories,
+        protein: u.protein,
+        carbs: u.carbs,
+        fat: u.fat,
+        sat_fat: u.sat_fat,
+        salt: u.salt,
+        fibre: u.fibre,
+        sugar: u.sugar,
+      })
+      .eq("id", u.itemId);
+
+    if (error) {
+      reportError("updateCompositionItemQuantities", error, { level: "error" });
+      throw error;
+    }
+  }
+}
+
 // ─── Batches ─────────────────────────────────────────────────
 //
 // A batch's ingredients are created through createBatchFromIngredients (a

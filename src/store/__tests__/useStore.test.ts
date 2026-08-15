@@ -5,6 +5,9 @@ import {
   MealEntry,
   FoodProduct,
   SavedIngredientScored,
+  MealCompositionItem,
+  MealCompositionWithItems,
+  EntryDraft,
 } from "../../types";
 
 function makeEntry(overrides: Partial<MealEntry> = {}): MealEntry {
@@ -333,6 +336,235 @@ function makeSavedIngredient(
 }
 
 const pgError = { message: "constraint violated", code: "23505" };
+
+// ─── Apply-time quantity adjustment (Phase 1 apply-draft plumbing, Phase 2
+// save-back-to-definition) ───────────────────────────────────────────────
+
+function makeCompositionItem(
+  overrides: Partial<MealCompositionItem> & { id: string },
+): MealCompositionItem {
+  return {
+    composition_id: "comp-1",
+    user_id: "test-user-id",
+    position: 0,
+    name: "Test food",
+    brand: null,
+    serving_g: 100,
+    calories: 200,
+    protein: 10,
+    carbs: 20,
+    fat: 5,
+    sat_fat: 1,
+    salt: 0.5,
+    fibre: 2,
+    sugar: 3,
+    meal_type: "breakfast",
+    eaten_time: "08:00",
+    barcode: null,
+    off_id: null,
+    image_url: null,
+    image_path: null,
+    custom_food_id: null,
+    ...overrides,
+  };
+}
+
+function makeMealComposition(
+  items: MealCompositionItem[],
+  overrides: Partial<MealCompositionWithItems> = {},
+): MealCompositionWithItems {
+  return {
+    id: "comp-1",
+    user_id: "test-user-id",
+    name: "Test bundle",
+    use_count: 0,
+    last_used_at: null,
+    created_at: "2026-01-01T00:00:00.000Z",
+    kind: "bundle",
+    yield_g: null,
+    portion_g: null,
+    portion_label: null,
+    ...overrides,
+    items,
+  };
+}
+
+function makeEntryDraft(overrides: Partial<EntryDraft> = {}): EntryDraft {
+  return {
+    name: "Test food",
+    brand: null,
+    serving_g: 100,
+    calories: 200,
+    protein: 10,
+    carbs: 20,
+    fat: 5,
+    sat_fat: 1,
+    salt: 0.5,
+    fibre: 2,
+    sugar: 3,
+    meal_type: "breakfast",
+    eaten_at: "2026-07-27T08:00:00.000Z",
+    eaten_at_estimated: true,
+    source: "bundle",
+    barcode: null,
+    off_id: null,
+    image_url: null,
+    image_path: null,
+    custom_food_id: null,
+    ...overrides,
+  };
+}
+
+/** Wire supabase.from("meal_composition_items").update(row).eq("id", id)
+ *  to a single shared mock, so every call in a saveCompositionApplyQuantities
+ *  run (one per changed row, sequential) lands in update.mock.calls /
+ *  eq.mock.calls for inspection. */
+function mockCompositionItemsUpdate() {
+  const eq = vi.fn(async () => ({ error: null }));
+  const update = vi.fn((row: unknown) => {
+    void row;
+    return { eq };
+  });
+  (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ update });
+  return { update, eq };
+}
+
+describe("useStore.saveCompositionApplyQuantities", () => {
+  it("writes only the row(s) whose grams actually changed — an untouched item is left alone", async () => {
+    const unchanged = makeCompositionItem({ id: "unchanged", serving_g: 100 });
+    const changed = makeCompositionItem({
+      id: "changed",
+      serving_g: 25,
+      calories: 100,
+      protein: 8,
+      carbs: 4,
+      fat: 6,
+      sat_fat: 2,
+      salt: 0.1,
+      fibre: 1,
+      sugar: 0.5,
+    });
+    const composition = makeMealComposition([unchanged, changed]);
+    // Seeded exactly as the real app would have it: fetchCompositions()
+    // populates `compositions` well before ApplyBundleSheet ever opens.
+    // saveCompositionApplyQuantities's cache update maps over THIS array.
+    useStore.setState({ compositions: [composition] });
+
+    useStore.getState().startCompositionApplyDraft(composition, "2026-07-27");
+    useStore.getState().setCompositionApplyItemGrams("changed", 10); // 25g → 10g
+
+    const { update, eq } = mockCompositionItemsUpdate();
+
+    const result = await useStore.getState().saveCompositionApplyQuantities();
+
+    expect(result.error).toBeNull();
+    // NOTE: supabase.from is a single mock shared across this whole test
+    // file (never cleared between `it`s — see vitest.setup.ts), so its call
+    // COUNT accumulates across every earlier test. `update`/`eq` are fresh
+    // per test (created by mockCompositionItemsUpdate above) — those are
+    // what call-count assertions must use.
+    expect(update).toHaveBeenCalledTimes(1); // exactly one row written
+    expect(supabase.from).toHaveBeenCalledWith("meal_composition_items");
+    expect(eq).toHaveBeenCalledWith("id", "changed"); // never "unchanged"
+
+    const payload = update.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.serving_g).toBe(10);
+    expect(payload.calories).toBeCloseTo(40); // 100 * (10/25)
+    expect(payload.protein).toBeCloseTo(3.2); // 8 * (10/25)
+
+    // The cache reflects the write immediately — no refetch needed for the
+    // bundle sheet's "N items · Xkcal" subtitle (summed fresh from
+    // bundle.items at render) to show the new total.
+    const cached = useStore
+      .getState()
+      .compositions.find((c) => c.id === "comp-1")!
+      .items.find((i) => i.id === "changed")!;
+    expect(cached.serving_g).toBe(10);
+    expect(cached.calories).toBeCloseTo(40);
+  });
+
+  it("keeps a NULL nutrient NULL in the update payload — never coalesced to 0", async () => {
+    const item = makeCompositionItem({ id: "1", serving_g: 25, fibre: null });
+    const composition = makeMealComposition([item]);
+
+    useStore.getState().startCompositionApplyDraft(composition, "2026-07-27");
+    useStore.getState().setCompositionApplyItemGrams("1", 10);
+
+    const { update } = mockCompositionItemsUpdate();
+
+    await useStore.getState().saveCompositionApplyQuantities();
+
+    const payload = update.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.fibre).toBeNull();
+  });
+
+  it("never includes a non-rescalable item (NULL serving_g), even if a grams change is forced onto it", async () => {
+    const rescalable = makeCompositionItem({ id: "a", serving_g: 25 });
+    const nonRescalable = makeCompositionItem({ id: "b", serving_g: null });
+    const composition = makeMealComposition([rescalable, nonRescalable]);
+
+    useStore.getState().startCompositionApplyDraft(composition, "2026-07-27");
+    useStore.getState().setCompositionApplyItemGrams("a", 10); // real change
+    // "b" has no denominator to scale from — setting it is a no-op the store
+    // must still refuse at save-back time, even though the UI never offers
+    // this control for a non-rescalable item in the first place.
+    useStore.getState().setCompositionApplyItemGrams("b", 50);
+
+    const { update, eq } = mockCompositionItemsUpdate();
+
+    await useStore.getState().saveCompositionApplyQuantities();
+
+    expect(update).toHaveBeenCalledTimes(1); // only "a"
+    expect(eq).toHaveBeenCalledWith("id", "a");
+    expect(eq).not.toHaveBeenCalledWith("id", "b");
+  });
+
+  it("is a no-op (not an error) when nothing changed", async () => {
+    const item = makeCompositionItem({ id: "1", serving_g: 25 });
+    const composition = makeMealComposition([item]);
+
+    useStore.getState().startCompositionApplyDraft(composition, "2026-07-27");
+    // No setCompositionApplyItemGrams call — nothing changed.
+
+    const { update } = mockCompositionItemsUpdate();
+
+    const result = await useStore.getState().saveCompositionApplyQuantities();
+
+    expect(result.error).toBeNull();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("refuses for a batch composition without touching the database at all", async () => {
+    // Constructed directly rather than via startCompositionApplyDraft:
+    // draftsFromComposition assumes bundle-shaped items (non-null
+    // eaten_time) and would throw on a real batch ingredient — this test is
+    // specifically about saveCompositionApplyQuantities's OWN kind guard,
+    // isolated from that unrelated precondition.
+    useStore.setState({
+      compositionApplyDraft: {
+        compositionId: "comp-batch",
+        compositionName: "Test batch",
+        compositionKind: "batch",
+        dayKey: "2026-07-27",
+        items: [
+          {
+            itemId: "1",
+            originalDraft: makeEntryDraft({ serving_g: 25 }),
+            currentGramsG: 25,
+          },
+        ],
+      },
+    });
+    useStore.getState().setCompositionApplyItemGrams("1", 10);
+
+    const { update } = mockCompositionItemsUpdate();
+
+    const result = await useStore.getState().saveCompositionApplyQuantities();
+
+    expect(result.error).not.toBeNull();
+    expect(update).not.toHaveBeenCalled();
+  });
+});
 
 describe("useStore.saveGoals", () => {
   it("on success, updates local goals and returns a null error", async () => {

@@ -36,7 +36,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 
-import { useStore, CompositionApplyDraftItem } from "../store/useStore";
+import {
+  useStore,
+  CompositionApplyDraftItem,
+  compositionApplyItemChanged,
+} from "../store/useStore";
 import { scaleEntryDraftGrams } from "../lib/compositions";
 import { formatTime } from "../lib/time";
 import {
@@ -131,9 +135,15 @@ export function BundleApplyReviewScreen() {
     setCompositionApplyItemGrams,
     resetCompositionApplyDraft,
     applyCompositionDraft,
+    saveCompositionApplyQuantities,
   } = useStore();
 
   const [applying, setApplying] = useState(false);
+
+  // Phase 2: "Also update this bundle." Off by default, local-only (like
+  // BatchEditorScreen's qtyText) — this is a one-shot choice for THIS
+  // confirm, not draft state anything else reads.
+  const [alsoUpdateBundle, setAlsoUpdateBundle] = useState(false);
 
   // Nothing to review — e.g. this screen reached without startCompositionApplyDraft
   // having run first. Bail rather than render against null.
@@ -169,14 +179,46 @@ export function BundleApplyReviewScreen() {
     { calories: 0, protein: 0, carbs: 0, fat: 0 },
   );
 
+  // Save-back is bundle-only (see CompositionApplyDraft.compositionKind)
+  // and only meaningful when at least one item actually changed — an
+  // unrescalable item never counts, same predicate the store action itself
+  // filters on, so the toggle can never promise a write that would end up
+  // doing nothing.
+  const isBundle = compositionApplyDraft.compositionKind === "bundle";
+  const anyChanged = compositionApplyDraft.items.some(compositionApplyItemChanged);
+  const canOfferSaveBack = isBundle && anyChanged;
+
   const handleConfirm = async () => {
     setApplying(true);
-    const { error } = await applyCompositionDraft();
-    setApplying(false);
-    if (error) {
-      Alert.alert("Couldn't apply that bundle", error);
+
+    // Apply runs FIRST, always — it's what makes today a logged day, and it
+    // must neither wait on nor be undone by the (optional, secondary)
+    // save-back below. If it fails, stop here exactly as Phase 1 did: the
+    // draft survives for a retry, and nothing was logged or saved.
+    const { error: applyError } = await applyCompositionDraft();
+    if (applyError) {
+      setApplying(false);
+      Alert.alert("Couldn't apply that bundle", applyError);
       return;
     }
+
+    // The apply already succeeded — the meal IS logged from here on,
+    // regardless of what happens below. Save-back is a separate,
+    // best-effort operation: its failure gets its own distinct message,
+    // never one that could be misread as "nothing happened."
+    if (canOfferSaveBack && alsoUpdateBundle) {
+      const { error: saveError } = await saveCompositionApplyQuantities();
+      setApplying(false);
+      if (saveError) {
+        Alert.alert("Logged, but the bundle wasn't updated", saveError);
+        navigation.popToTop();
+        return;
+      }
+      navigation.popToTop();
+      return;
+    }
+
+    setApplying(false);
     navigation.popToTop();
   };
 
@@ -236,6 +278,40 @@ export function BundleApplyReviewScreen() {
       </ScrollView>
 
       <View style={styles.footer}>
+        {/* Phase 2 — secondary to Confirm: smaller, muted, no button chrome,
+            and never rendered at all for a batch (canOfferSaveBack is false
+            whenever compositionKind !== 'bundle', regardless of anyChanged). */}
+        {isBundle && (
+          <Pressable
+            style={styles.saveBackRow}
+            disabled={!anyChanged}
+            onPress={() => setAlsoUpdateBundle((v) => !v)}
+            hitSlop={8}
+          >
+            <View
+              style={[
+                styles.checkbox,
+                alsoUpdateBundle && anyChanged && styles.checkboxChecked,
+                !anyChanged && styles.checkboxDisabled,
+              ]}
+            >
+              {alsoUpdateBundle && anyChanged && (
+                <Text style={styles.checkboxMark}>✓</Text>
+              )}
+            </View>
+            <Text
+              style={[
+                styles.saveBackLabel,
+                !anyChanged && styles.saveBackLabelDisabled,
+              ]}
+            >
+              {anyChanged
+                ? "Also update this bundle"
+                : "Also update this bundle — change a quantity above first"}
+            </Text>
+          </Pressable>
+        )}
+
         <Pressable
           onPress={handleConfirm}
           disabled={applying}
@@ -419,6 +495,46 @@ const styles = StyleSheet.create(
       fontSize: Typography.base,
       fontWeight: Typography.semibold,
       color: Colors.bg,
+    },
+
+    // Phase 2 — deliberately no button chrome (no background, no border-
+    // radius fill): a checkbox row, not a second button, so it reads as
+    // subordinate to confirmBtn above it rather than a competing action.
+    saveBackRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: Spacing.sm,
+      paddingVertical: Spacing.sm,
+    },
+    checkbox: {
+      width: 18,
+      height: 18,
+      borderRadius: 4,
+      borderWidth: 1,
+      borderColor: Colors.border,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    checkboxChecked: {
+      backgroundColor: Colors.green,
+      borderColor: Colors.green,
+    },
+    checkboxDisabled: {
+      borderColor: Colors.borderSub,
+    },
+    checkboxMark: {
+      fontSize: 12,
+      fontWeight: Typography.bold,
+      color: Colors.bg,
+    },
+    saveBackLabel: {
+      fontSize: Typography.sm,
+      color: Colors.textMuted,
+      flex: 1,
+    },
+    saveBackLabelDisabled: {
+      color: Colors.textMuted,
+      opacity: 0.6,
     },
   }),
 );

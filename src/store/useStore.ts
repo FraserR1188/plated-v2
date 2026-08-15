@@ -11,6 +11,7 @@ import {
   FoodProduct,
   Workout,
   EntryDraft,
+  CompositionKind,
 } from "../types";
 import { dateKey, TimeOfDay } from "../lib/time";
 import { applyEntries, draftsFromDay, draftsForTarget } from "../lib/entries";
@@ -161,8 +162,39 @@ export interface CompositionApplyDraftItem {
 export interface CompositionApplyDraft {
   compositionId: string;
   compositionName: string;
+  /**
+   * Captured from the composition at draft-build time, not re-derived —
+   * Phase 2's save-back-to-definition is bundle-only (changing a batch
+   * ingredient's grams alters the batch's yield/portion maths, a separate
+   * problem — see updateBatch). Storing it here lets both
+   * BundleApplyReviewScreen (whether to render the save-back control) and
+   * saveCompositionApplyQuantities (whether to allow the write at all)
+   * check the SAME captured value rather than trusting the caller twice.
+   */
+  compositionKind: CompositionKind;
   dayKey: string;
   items: CompositionApplyDraftItem[];
+}
+
+/**
+ * True when `item` is rescalable AND its current target differs from the
+ * item's own saved quantity. The single predicate both
+ * saveCompositionApplyQuantities (which rows to write) and
+ * BundleApplyReviewScreen (whether the save-back toggle has anything to do
+ * — disabled when this is false for every item) need to agree on, so it
+ * lives here rather than being reimplemented at each call site.
+ *
+ * Epsilon guard is float-comparison hygiene, not a meaningful gram
+ * threshold: currentGramsG is always either the untouched originalServingG
+ * or a value the user explicitly typed and committed.
+ */
+export function compositionApplyItemChanged(
+  item: CompositionApplyDraftItem,
+): boolean {
+  const originalServingG = item.originalDraft.serving_g;
+  if (originalServingG == null || originalServingG <= 0) return false;
+  const targetGrams = item.currentGramsG ?? originalServingG;
+  return Math.abs(targetGrams - originalServingG) > 1e-9;
 }
 
 /** Fresh key per add — same scheme BatchEditorScreen's local state used
@@ -304,6 +336,17 @@ interface AppState {
    *  the screen doesn't race its own "no draft" guard against a mid-confirm
    *  state change. */
   applyCompositionDraft: () => Promise<WriteResult>;
+  /**
+   * Phase 2: "Also update this bundle." Independent of applyCompositionDraft
+   * — the screen calls this SEPARATELY, after a successful apply (see
+   * BundleApplyReviewScreen's handleConfirm for the ordering and why a
+   * save-back failure must not undo or duplicate the apply). Bundle-only
+   * (checks compositionKind), and only ever writes rows whose grams actually
+   * changed from the item's own saved serving_g — an unrescalable item
+   * (NULL/<=0 serving_g) is never included, same predicate as Phase 1's
+   * read-only "applies unchanged" treatment.
+   */
+  saveCompositionApplyQuantities: () => Promise<WriteResult>;
 
   // ── Batches ──
   /** "Save these ingredients + yield/portion as a batch." */
@@ -983,6 +1026,7 @@ export const useStore = create<AppState>((set, get) => ({
       compositionApplyDraft: {
         compositionId: composition.id,
         compositionName: composition.name,
+        compositionKind: composition.kind,
         dayKey: targetDayKey,
         // 1:1 with drafts — draftsFromComposition maps composition.items in
         // order without filtering, so index i is always item i's own draft.
@@ -1049,6 +1093,90 @@ export const useStore = create<AppState>((set, get) => ({
     } catch (e) {
       reportError("applyCompositionDraft", e, { level: "error" });
       return { error: msg(e, "Couldn't apply the bundle.") };
+    }
+  },
+
+  saveCompositionApplyQuantities: async () => {
+    const draft = get().compositionApplyDraft;
+    if (!draft) return { error: "Nothing to save." };
+
+    // Bundle-only — see the CompositionApplyDraft.compositionKind comment.
+    // Belt-and-braces against BundleApplyReviewScreen's own gating on the
+    // same field, same "don't trust the caller filtered first" posture as
+    // previewComposition's kind check in compositions.ts.
+    if (draft.compositionKind !== "bundle") {
+      return { error: "Only bundles can be updated this way." };
+    }
+
+    // Only rescalable AND actually-changed items — never write a row
+    // nothing changed, and never write a row that was never rescalable in
+    // the first place (no denominator to have scaled from).
+    const updates: compositionApi.CompositionItemQuantityUpdate[] = [];
+    for (const it of draft.items) {
+      if (!compositionApplyItemChanged(it)) continue;
+
+      const originalServingG = it.originalDraft.serving_g as number; // non-null, non-zero — guaranteed by the check above
+      const targetGrams = it.currentGramsG ?? originalServingG;
+
+      const scaled = compositionApi.scaleEntryDraftGrams(
+        it.originalDraft,
+        originalServingG,
+        targetGrams,
+      );
+      updates.push({
+        itemId: it.itemId,
+        serving_g: targetGrams,
+        calories: scaled.calories,
+        protein: scaled.protein,
+        carbs: scaled.carbs,
+        fat: scaled.fat,
+        sat_fat: scaled.sat_fat,
+        salt: scaled.salt,
+        fibre: scaled.fibre,
+        sugar: scaled.sugar,
+      });
+    }
+
+    if (updates.length === 0) return { error: null }; // nothing changed — not an error
+
+    try {
+      await compositionApi.updateCompositionItemQuantities(updates);
+      set((s) => ({
+        // In-place cache update, not a refetch — matches every other
+        // composition write in this store (addEntriesToBundle,
+        // applyCompositionToDay, removeCompositionItem, etc). This is also
+        // what keeps ApplyBundleSheet's "N items · Xkcal" subtitle
+        // (computed fresh from bundle.items at render) correct immediately,
+        // without a round-trip.
+        compositions: s.compositions.map((c) =>
+          c.id === draft.compositionId
+            ? {
+                ...c,
+                items: c.items.map((item) => {
+                  const u = updates.find((x) => x.itemId === item.id);
+                  return u
+                    ? {
+                        ...item,
+                        serving_g: u.serving_g,
+                        calories: u.calories,
+                        protein: u.protein,
+                        carbs: u.carbs,
+                        fat: u.fat,
+                        sat_fat: u.sat_fat,
+                        salt: u.salt,
+                        fibre: u.fibre,
+                        sugar: u.sugar,
+                      }
+                    : item;
+                }),
+              }
+            : c,
+        ),
+      }));
+      return { error: null };
+    } catch (e) {
+      reportError("saveCompositionApplyQuantities", e, { level: "error" });
+      return { error: msg(e, "Couldn't update the bundle.") };
     }
   },
 

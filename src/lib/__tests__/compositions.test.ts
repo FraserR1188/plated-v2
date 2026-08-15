@@ -16,6 +16,8 @@ import {
   draftsFromBatch,
   previewComposition,
   bundlesOnly,
+  scaleNutrient,
+  scaleEntryDraftGrams,
 } from "../compositions";
 import {
   MealComposition,
@@ -480,5 +482,120 @@ describe("previewComposition — degrades, never throws (the crash itself)", () 
       expect(d.getMonth()).toBe(6);
       expect(d.getDate()).toBe(27);
     });
+  });
+});
+
+// ============================================================
+// Apply-time quantity adjustment (Phase 1).
+//
+// scaleNutrient/scaleEntryDraftGrams are ratio scaling off the item's
+// already-absolute macros — never a per-100g reconstruction (that's what
+// mealEntryToProduct does, and it's exactly the lossy, NULL-coalescing
+// round-trip this feature deliberately avoids). See the file-level comment
+// in compositions.ts above scaleNutrient for the full reasoning.
+// ============================================================
+
+describe("scaleNutrient — preserves NULL, never coalesces it", () => {
+  it("NULL in stays NULL out, regardless of ratio", () => {
+    expect(scaleNutrient(null, 2)).toBeNull();
+    expect(scaleNutrient(null, 0.5)).toBeNull();
+    expect(scaleNutrient(undefined, 2)).toBeNull();
+  });
+
+  it("a real zero scales to zero, not NULL — 0 is known, not unknown", () => {
+    expect(scaleNutrient(0, 2.5)).toBe(0);
+  });
+
+  it("multiplies a normal value by the ratio exactly", () => {
+    expect(scaleNutrient(10, 0.4)).toBeCloseTo(4);
+    expect(scaleNutrient(2.5, 2)).toBe(5);
+  });
+});
+
+describe("scaleEntryDraftGrams — ratio scaling off the item's stored absolute macros", () => {
+  const baseItem = makeItem({
+    id: "1",
+    eaten_time: "08:00",
+    meal_type: "breakfast",
+    serving_g: 25,
+    calories: 100,
+    protein: 8,
+    carbs: 4,
+    fat: 6,
+    sat_fat: 2,
+    salt: 0.1,
+    fibre: 1,
+    sugar: 0.5,
+  });
+
+  it("scales every macro and serving_g by newGrams / originalServingG", () => {
+    const composition = makeComposition([baseItem]);
+    const [draft] = draftsFromComposition(composition, "2026-07-27");
+
+    // 25g → 10g, ratio 0.4.
+    const scaled = scaleEntryDraftGrams(draft, 25, 10);
+
+    expect(scaled.serving_g).toBe(10);
+    expect(scaled.calories).toBeCloseTo(40);
+    expect(scaled.protein).toBeCloseTo(3.2);
+    expect(scaled.carbs).toBeCloseTo(1.6);
+    expect(scaled.fat).toBeCloseTo(2.4);
+    expect(scaled.sat_fat).toBeCloseTo(0.8);
+    expect(scaled.salt).toBeCloseTo(0.04);
+    expect(scaled.fibre).toBeCloseTo(0.4);
+    expect(scaled.sugar).toBeCloseTo(0.2);
+  });
+
+  it("a draft built from an item with NULL fibre still has NULL fibre after scaling", () => {
+    const itemWithUnknownFibre = makeItem({
+      id: "2",
+      eaten_time: "08:00",
+      meal_type: "breakfast",
+      serving_g: 25,
+      fibre: null,
+    });
+    const composition = makeComposition([itemWithUnknownFibre]);
+    const [draft] = draftsFromComposition(composition, "2026-07-27");
+
+    expect(draft.fibre).toBeNull(); // sanity: the draft itself carried NULL through
+
+    const scaled = scaleEntryDraftGrams(draft, 25, 10);
+
+    expect(scaled.fibre).toBeNull(); // still NULL after scaling — never coalesced to 0
+  });
+
+  it("does not round the stored value — full precision, never truncated", () => {
+    const composition = makeComposition([baseItem]);
+    const [draft] = draftsFromComposition(composition, "2026-07-27");
+
+    // 25g → 7g: 100 * (7/25) = 28 exactly, but protein 8 * 0.28 = 2.24 —
+    // not a round number, and must survive as such.
+    const scaled = scaleEntryDraftGrams(draft, 25, 7);
+
+    expect(scaled.protein).toBeCloseTo(2.24);
+  });
+
+  it("returns the draft UNCHANGED when originalServingG is NULL — not rescalable, no default weight", () => {
+    const noServingItem = makeItem({
+      id: "3",
+      eaten_time: "08:00",
+      meal_type: "breakfast",
+      serving_g: null,
+    });
+    const composition = makeComposition([noServingItem]);
+    const [draft] = draftsFromComposition(composition, "2026-07-27");
+
+    const scaled = scaleEntryDraftGrams(draft, null, 10);
+
+    expect(scaled).toEqual(draft);
+  });
+
+  it("returns the draft UNCHANGED when originalServingG is zero — no denominator to divide by", () => {
+    const composition = makeComposition([baseItem]);
+    const [draft] = draftsFromComposition(composition, "2026-07-27");
+
+    const scaled = scaleEntryDraftGrams(draft, 0, 10);
+
+    expect(scaled).toEqual(draft);
   });
 });

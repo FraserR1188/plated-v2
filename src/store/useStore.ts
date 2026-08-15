@@ -10,6 +10,7 @@ import {
   MealType,
   FoodProduct,
   Workout,
+  EntryDraft,
 } from "../types";
 import { dateKey, TimeOfDay } from "../lib/time";
 import { applyEntries, draftsFromDay, draftsForTarget } from "../lib/entries";
@@ -115,6 +116,54 @@ const EMPTY_BATCH_DRAFT: BatchDraft = {
   portionSizeG: "",
   portionLabel: "",
 };
+
+/**
+ * One item in an in-progress apply-time quantity review (Phase 1).
+ *
+ * `originalDraft` is exactly what draftsFromComposition produced — anchored
+ * onto the target day/time, but at the item's ORIGINAL saved quantity — and
+ * is never mutated. `currentGramsG` is the user's live target for this
+ * application only; scaleEntryDraftGrams always scales from
+ * `originalDraft.serving_g` (the true denominator), never from a
+ * previously-scaled value, so repeated edits can't compound rounding drift.
+ *
+ * `currentGramsG` starts equal to the item's own serving_g, which is null
+ * for an item with no saved quantity — see scaleEntryDraftGrams's own
+ * NULL/<=0 refusal for why that's what makes such an item "not rescalable,
+ * applies unchanged" rather than needing a separate flag here.
+ */
+export interface CompositionApplyDraftItem {
+  itemId: string;
+  originalDraft: EntryDraft;
+  currentGramsG: number | null;
+}
+
+/**
+ * The in-progress, unsaved apply-time review for ONE bundle application.
+ *
+ * WHY THIS LIVES IN THE STORE, NOT NAVIGATION PARAMS OR SCREEN STATE
+ *   Same reasoning as BatchDraft: React Navigation warns on non-serialisable
+ *   params, and while an EntryDraft[] is itself plain data (unlike
+ *   BatchDraft's old onPick callback), passing it through params would still
+ *   mean a killed-and-restored app trying to rebuild a stack whose param
+ *   blob doesn't round-trip cleanly. Lifting it into the store keeps
+ *   BundleApplyReviewScreen's route paramless — it reads the draft, edits it
+ *   in place via setCompositionApplyItemGrams, and applyCompositionDraft()
+ *   reads it back out at confirm time.
+ *
+ * LIFECYCLE
+ *   Built once by startCompositionApplyDraft, called from ApplyBundleSheet's
+ *   time picker (the anchor step is unchanged — only what happens after it
+ *   changed). Reset on every genuine exit from BundleApplyReviewScreen via a
+ *   `beforeRemove` listener, same as BatchDraft — covers both Cancel (back)
+ *   and a successful Confirm (which pops the screen too).
+ */
+export interface CompositionApplyDraft {
+  compositionId: string;
+  compositionName: string;
+  dayKey: string;
+  items: CompositionApplyDraftItem[];
+}
 
 /** Fresh key per add — same scheme BatchEditorScreen's local state used
  *  before this moved into the store. `i` guards addBatchIngredients: several
@@ -236,6 +285,25 @@ interface AppState {
     itemId: string,
   ) => Promise<WriteResult>;
   removeComposition: (compositionId: string) => Promise<WriteResult>;
+
+  // ── Apply-time quantity review (Phase 1, pre-apply — see CompositionApplyDraft) ──
+  compositionApplyDraft: CompositionApplyDraft | null;
+  /** Builds the draft from draftsFromComposition — same anchor semantics as
+   *  applyCompositionToDay, just deferred a screen. */
+  startCompositionApplyDraft: (
+    composition: MealCompositionWithItems,
+    targetDayKey: string,
+    anchor?: TimeOfDay,
+  ) => void;
+  setCompositionApplyItemGrams: (itemId: string, grams: number) => void;
+  resetCompositionApplyDraft: () => void;
+  /** Scales every item off its own originalDraft/currentGramsG, inserts via
+   *  applyCompositionDrafts, and mirrors the use-count bump locally — same
+   *  shape as applyCompositionToDay. Does NOT clear compositionApplyDraft on
+   *  success; BundleApplyReviewScreen's beforeRemove listener owns that, so
+   *  the screen doesn't race its own "no draft" guard against a mid-confirm
+   *  state change. */
+  applyCompositionDraft: () => Promise<WriteResult>;
 
   // ── Batches ──
   /** "Save these ingredients + yield/portion as a batch." */
@@ -387,6 +455,7 @@ export const useStore = create<AppState>((set, get) => ({
   goals: DEFAULT_GOALS,
   loading: false,
   batchDraft: EMPTY_BATCH_DRAFT,
+  compositionApplyDraft: null,
   manualEntryResult: null,
 
   setUserId: (id) => set({ userId: id }),
@@ -402,6 +471,7 @@ export const useStore = create<AppState>((set, get) => ({
       goals: DEFAULT_GOALS,
       loading: false,
       batchDraft: EMPTY_BATCH_DRAFT,
+      compositionApplyDraft: null,
       manualEntryResult: null,
     }),
 
@@ -899,6 +969,85 @@ export const useStore = create<AppState>((set, get) => ({
       return { error: null };
     } catch (e) {
       reportError("applyCompositionToDay", e, { level: "error" });
+      return { error: msg(e, "Couldn't apply the bundle.") };
+    }
+  },
+
+  startCompositionApplyDraft: (composition, targetDayKey, anchor) => {
+    const drafts = compositionApi.draftsFromComposition(
+      composition,
+      targetDayKey,
+      anchor,
+    );
+    set({
+      compositionApplyDraft: {
+        compositionId: composition.id,
+        compositionName: composition.name,
+        dayKey: targetDayKey,
+        // 1:1 with drafts — draftsFromComposition maps composition.items in
+        // order without filtering, so index i is always item i's own draft.
+        items: composition.items.map((item, i) => ({
+          itemId: item.id,
+          originalDraft: drafts[i],
+          currentGramsG: item.serving_g,
+        })),
+      },
+    });
+  },
+
+  setCompositionApplyItemGrams: (itemId, grams) =>
+    set((s) => {
+      if (!s.compositionApplyDraft) return {};
+      return {
+        compositionApplyDraft: {
+          ...s.compositionApplyDraft,
+          items: s.compositionApplyDraft.items.map((it) =>
+            it.itemId === itemId ? { ...it, currentGramsG: grams } : it,
+          ),
+        },
+      };
+    }),
+
+  resetCompositionApplyDraft: () => set({ compositionApplyDraft: null }),
+
+  applyCompositionDraft: async () => {
+    const draft = get().compositionApplyDraft;
+    if (!draft) return { error: "Nothing to apply." };
+    try {
+      const finalDrafts = draft.items.map((it) =>
+        compositionApi.scaleEntryDraftGrams(
+          it.originalDraft,
+          it.originalDraft.serving_g,
+          it.currentGramsG ?? it.originalDraft.serving_g ?? 0,
+        ),
+      );
+      const inserted = await compositionApi.applyCompositionDrafts(
+        draft.compositionId,
+        finalDrafts,
+      );
+      set((s) => ({
+        entries: [...inserted, ...s.entries],
+        // Mirror the RPC's effect locally, same as applyCompositionToDay.
+        compositions: s.compositions
+          .map((c) =>
+            c.id === draft.compositionId
+              ? {
+                  ...c,
+                  use_count: c.use_count + 1,
+                  last_used_at: new Date().toISOString(),
+                }
+              : c,
+          )
+          .sort((a, z) => {
+            const al = a.last_used_at ?? "";
+            const zl = z.last_used_at ?? "";
+            if (al !== zl) return zl.localeCompare(al);
+            return z.use_count - a.use_count;
+          }),
+      }));
+      return { error: null };
+    } catch (e) {
+      reportError("applyCompositionDraft", e, { level: "error" });
       return { error: msg(e, "Couldn't apply the bundle.") };
     }
   },

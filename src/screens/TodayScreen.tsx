@@ -109,7 +109,7 @@ export function TodayScreen() {
     copyEntriesTo,
     saveBundleFromEntries,
     addEntriesToBundle,
-    applyCompositionToDay,
+    startCompositionApplyDraft,
     fetchEntries,
     fetchCompositions,
     fetchWorkouts,
@@ -524,12 +524,14 @@ export function TodayScreen() {
         bundles={bundles}
         dayKey={selected}
         onClose={() => setSheet(null)}
-        onApply={async (bundle, anchor) => {
-          setBusy(true);
-          const { error } = await applyCompositionToDay(bundle, selected, anchor);
-          setBusy(false);
+        onApply={(bundle, anchor) => {
+          // The anchor step (time picker, inside ApplyBundleSheet) is
+          // unchanged. What used to apply immediately now builds the
+          // review draft and hands off to BundleApplyReviewScreen for
+          // per-item quantity adjustment before anything is inserted.
           setSheet(null);
-          if (error) Alert.alert("Couldn't apply that bundle", error);
+          startCompositionApplyDraft(bundle, selected, anchor);
+          navigation.navigate("BundleApplyReview");
         }}
       />
 

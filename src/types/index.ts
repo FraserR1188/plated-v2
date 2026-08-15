@@ -659,6 +659,15 @@ export type RootStackParamList = {
   BatchEditor: { compositionId?: string };
 
   /**
+   * No params. The bundle being reviewed lives entirely in useStore's
+   * `compositionApplyDraft` slice, set by startCompositionApplyDraft before
+   * this screen is pushed — same "no draft arrays through navigation
+   * params" reasoning as BatchIngredientPicker below, and the same reason
+   * CopyConfirm's approach (an entries array via params) wasn't reused here.
+   */
+  BundleApplyReview: undefined;
+
+  /**
    * No params. USED TO carry `onPick: (product, quantityG) => void` — a
    * function in a navigation param, which React Navigation warns about
    * ("Non-serializable values were found in the navigation state") because

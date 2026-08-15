@@ -13,7 +13,8 @@
 //   ├── Scanner        (full-screen modal)
 //   ├── Product        (modal)
 //   ├── ConnectedUserLog  (push)             ← NEW
-//   └── CopyConfirm       (push)             ← NEW
+//   ├── CopyConfirm       (push)             ← NEW
+//   └── BundleApplyReview (push)             ← NEW (apply-time quantity review)
 // ============================================================
 
 import React, { useRef } from "react";
@@ -35,6 +36,7 @@ import { ProductScreen } from "../screens/ProductScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
 import { BatchesScreen } from "../screens/BatchesScreen";
 import { BatchEditorScreen } from "../screens/BatchEditorScreen";
+import { BundleApplyReviewScreen } from "../screens/BundleApplyReviewScreen";
 import { BatchIngredientPickerScreen } from "../screens/BatchIngredientPickerScreen";
 import { RecipeScanScreen } from "../screens/RecipeScanScreen";
 import { RecipeConfirmScreen } from "../screens/RecipeConfirmScreen";
@@ -272,6 +274,11 @@ export function AppNavigator() {
           name="CopyConfirm"
           component={CopyConfirmScreen}
           options={{ title: "Confirm copy" }}
+        />
+        <Stack.Screen
+          name="BundleApplyReview"
+          component={BundleApplyReviewScreen}
+          options={{ title: "Adjust & apply" }}
         />
       </Stack.Navigator>
     </NavigationContainer>

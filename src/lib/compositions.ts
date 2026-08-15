@@ -522,16 +522,47 @@ export function draftsFromComposition(
 }
 
 /**
- * Apply a bundle to a day. Returns the inserted rows, WITH the trigger's
- * `planned` decision already in them.
- *
- * `anchor`, if given, re-times the whole bundle at once — see
- * draftsFromComposition. Optional so every other caller (none exist today,
- * but the signature shouldn't force one into existing) is unaffected.
+ * Insert already-resolved drafts for a composition and bump its use count.
+ * Shared tail end of both applyComposition (unmodified quantities) and the
+ * apply-time quantity review (Phase 1 — see scaleEntryDraftGrams below),
+ * which builds its own drafts via draftsFromComposition + per-item scaling
+ * and then has nothing left to do but this.
  *
  * The use-count bump happens AFTER the insert succeeds, and its failure is
  * swallowed: a bundle you applied is a bundle you used, and a bundle whose
  * ordering hint didn't increment is not worth failing the user's meal over.
+ */
+export async function applyCompositionDrafts(
+  compositionId: string,
+  drafts: EntryDraft[],
+): Promise<MealEntry[]> {
+  const inserted = await applyEntries(drafts);
+
+  // Atomic, server-side. NOT a read-modify-write off local state the way
+  // saveIngredient does it — that pattern silently loses increments when the
+  // same composition is applied from two devices.
+  const { error } = await supabase.rpc("bump_composition_use", {
+    p_composition_id: compositionId,
+  });
+  if (error) reportError("bumpCompositionUse", error);
+
+  return inserted;
+}
+
+/**
+ * Apply a bundle to a day, using each item's own saved quantity unmodified.
+ * Returns the inserted rows, WITH the trigger's `planned` decision already
+ * in them.
+ *
+ * `anchor`, if given, re-times the whole bundle at once — see
+ * draftsFromComposition.
+ *
+ * No live caller as of Phase 1 (apply-time quantity adjustment) — the
+ * ApplyBundleSheet's Add button now routes through the review screen
+ * (BundleApplyReviewScreen / useStore's compositionApplyDraft slice)
+ * instead. Kept as the lower-level primitive rather than deleted: it's a
+ * legitimate "apply exactly as saved, skip the review step" operation and
+ * may get a caller again.
  */
 export async function applyComposition(
   composition: MealCompositionWithItems,
@@ -539,17 +570,76 @@ export async function applyComposition(
   anchor?: TimeOfDay,
 ): Promise<MealEntry[]> {
   const drafts = draftsFromComposition(composition, targetDayKey, anchor);
-  const inserted = await applyEntries(drafts);
+  return applyCompositionDrafts(composition.id, drafts);
+}
 
-  // Atomic, server-side. NOT a read-modify-write off local state the way
-  // saveIngredient does it — that pattern silently loses increments when the
-  // same composition is applied from two devices.
-  const { error } = await supabase.rpc("bump_composition_use", {
-    p_composition_id: composition.id,
-  });
-  if (error) reportError("bumpCompositionUse", error);
+// ─── Apply-time quantity adjustment (Phase 1) ───────────────────────────
+//
+// Ratio scaling off the item's stored absolute macros, NOT a per-100g
+// reconstruction. meal_composition_items has no per-100g column (see the
+// schema comment on itemFromEntry above) — reconstructing a rate via
+// mealEntryToProduct-style (value / servingG) * 100 rounds on the way out
+// AND on the way back in, eroding precision twice for no reason when the
+// ratio can be applied directly. mealEntryToProduct() itself must never
+// appear in this path for a second reason: its `(v ?? 0) / g` coalesces a
+// NULL nutrient to zero before dividing, which would silently assert "zero
+// fibre" for an item where fibre was genuinely unknown.
 
-  return inserted;
+/**
+ * Scale one nutrient value by a ratio, preserving NULL.
+ *
+ * NULL means "we don't know how much of this the item had" — scaling an
+ * unknown by any ratio is still unknown, never zero. `v == null` (not
+ * strict `===`) catches `undefined` too, same convention as the rest of
+ * this file. Used for every nutrient field, including the NOT-NULL ones
+ * (calories/protein/carbs/fat): those are never actually null, so they
+ * just take the multiply branch — one helper, no special-casing needed.
+ */
+export function scaleNutrient(
+  v: number | null | undefined,
+  ratio: number,
+): number | null {
+  return v == null ? null : v * ratio;
+}
+
+/**
+ * Rescale an EntryDraft's macros (and serving_g) from `originalServingG` to
+ * `targetGrams`. `originalServingG` is the item's TRUE saved quantity — the
+ * denominator the draft's current absolute macros are already for — never
+ * whatever grams the user last typed, so repeated edits in a review screen
+ * always scale from the same fixed basis and never compound rounding drift
+ * (nothing here rounds anyway: full float precision in, full float
+ * precision out — round only at the point of display).
+ *
+ * Not rescalable when `originalServingG` is NULL or <= 0 (no denominator to
+ * divide by): returns `draft` UNCHANGED rather than guessing a default
+ * weight. This is what makes it safe to call unconditionally from a review
+ * screen without a separate "is this item rescalable" branch at every call
+ * site — the function itself refuses silently and correctly.
+ */
+export function scaleEntryDraftGrams(
+  draft: EntryDraft,
+  originalServingG: number | null,
+  targetGrams: number,
+): EntryDraft {
+  if (originalServingG == null || originalServingG <= 0) return draft;
+
+  const ratio = targetGrams / originalServingG;
+
+  return {
+    ...draft,
+    serving_g: targetGrams,
+
+    calories: draft.calories * ratio,
+    protein: draft.protein * ratio,
+    carbs: draft.carbs * ratio,
+    fat: draft.fat * ratio,
+
+    sat_fat: scaleNutrient(draft.sat_fat, ratio),
+    salt: scaleNutrient(draft.salt, ratio),
+    fibre: scaleNutrient(draft.fibre, ratio),
+    sugar: scaleNutrient(draft.sugar, ratio),
+  };
 }
 
 // ─── Batches ─────────────────────────────────────────────────

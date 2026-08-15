@@ -42,6 +42,18 @@ export interface SeedStaple {
   aliases: string[];
   unitGrams?: Record<string, number>; // head staples only; estimates
   densityGPerMl?: number;             // liquids; enables volume fallback
+  /**
+   * Token(s) to prefer among matching CoFID rows, for staples whose
+   * correct recipe-usage state ISN'T "raw" — or where "raw" would be
+   * actively wrong, not just unavailable: tinned pulses/tuna ("canned"),
+   * dried fruit/herbs ("dried"), roasted peanuts ("roasted"), etc. Leave
+   * absent for the great majority of staples, where matchCofid()'s default
+   * raw-preference tie-break already does the right thing. See
+   * matchCofid()'s ranking comment in cofid.ts for exactly how this changes
+   * scoring, and why hinted and unhinted staples are ranked asymmetrically
+   * on purpose.
+   */
+  preparationPreference?: string[];
 }
 
 export const SEED_STAPLES: SeedStaple[] = [
@@ -179,20 +191,36 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'pork-sausage', displayName: 'Pork sausage', aliases: ['sausages', 'bangers'] },
   { slug: 'streaky-bacon', displayName: 'Streaky bacon', aliases: ['bacon', 'smoked bacon'] },
   { slug: 'back-bacon', displayName: 'Back bacon', aliases: ['bacon rashers', 'bacon medallions'] },
-  { slug: 'gammon', displayName: 'Gammon', aliases: ['ham steak'] },
+  // Split from a single 'gammon' entry — a raw gammon joint and cooked/cured
+  // ham are different foods with different macros (moisture loss + curing),
+  // and 'ham steak' was a misplaced alias on the raw entry. gammon stays
+  // unhinted (raw is correct, same as every other raw meat); ham needs the
+  // 'cooked' hint since it's never sold or used raw.
+  { slug: 'gammon', displayName: 'Gammon', aliases: ['gammon joint'] },
+  { slug: 'ham', displayName: 'Ham', aliases: ['ham steak', 'cooked ham', 'sliced ham'], preparationPreference: ['cooked'] },
   { slug: 'rump-steak', displayName: 'Rump steak', aliases: ['beef steak', 'sirloin steak'] },
   { slug: 'salmon-fillet', displayName: 'Salmon fillet', aliases: ['salmon'] },
   { slug: 'cod-fillet', displayName: 'Cod fillet', aliases: ['cod', 'white fish'] },
-  { slug: 'tinned-tuna', displayName: 'Tinned tuna', aliases: ['canned tuna', 'tuna'] },
+  // The bare 'tuna' alias risks matching a raw tuna steak CoFID row instead
+  // of the canned-in-brine/oil product this staple actually means — a very
+  // different food nutritionally. 'canned' pins it down.
+  { slug: 'tinned-tuna', displayName: 'Tinned tuna', aliases: ['canned tuna', 'tuna'], preparationPreference: ['canned'] },
   { slug: 'smoked-salmon', displayName: 'Smoked salmon', aliases: [] },
-  { slug: 'prawns', displayName: 'Prawns', aliases: ['king prawns', 'shrimp'] },
+  // UK retail/recipe convention leans toward the pre-cooked pink prawns from
+  // the chiller cabinet, not raw grey ones — unlike other meat/fish, raw
+  // isn't obviously the safer default here.
+  { slug: 'prawns', displayName: 'Prawns', aliases: ['king prawns', 'shrimp'], preparationPreference: ['boiled'] },
 
   // Legumes & pulses
-  { slug: 'chickpeas', displayName: 'Chickpeas', aliases: ['tinned chickpeas', 'garbanzo beans'] },
-  { slug: 'kidney-beans', displayName: 'Red kidney beans', aliases: ['kidney beans'] },
-  { slug: 'cannellini-beans', displayName: 'Cannellini beans', aliases: ['white beans'] },
-  { slug: 'butter-beans', displayName: 'Butter beans', aliases: ['lima beans'] },
-  { slug: 'black-beans', displayName: 'Black beans', aliases: [] },
+  // A recipe stating "400g chickpeas" means the tinned/cooked weight, not
+  // dry raw weight (400g dry would be an absurd ~1kg cooked) — 'canned' is
+  // the correct disambiguator, not the default 'raw'. Contrast with
+  // red-lentils/green-lentils below, which genuinely ARE dry-weight staples.
+  { slug: 'chickpeas', displayName: 'Chickpeas', aliases: ['tinned chickpeas', 'garbanzo beans'], preparationPreference: ['canned'] },
+  { slug: 'kidney-beans', displayName: 'Red kidney beans', aliases: ['kidney beans'], preparationPreference: ['canned'] },
+  { slug: 'cannellini-beans', displayName: 'Cannellini beans', aliases: ['white beans'], preparationPreference: ['canned'] },
+  { slug: 'butter-beans', displayName: 'Butter beans', aliases: ['lima beans'], preparationPreference: ['canned'] },
+  { slug: 'black-beans', displayName: 'Black beans', aliases: [], preparationPreference: ['canned'] },
   { slug: 'red-lentils', displayName: 'Red lentils', aliases: ['split red lentils'] },
   { slug: 'green-lentils', displayName: 'Green lentils', aliases: ['puy lentils', 'brown lentils'] },
   { slug: 'baked-beans', displayName: 'Baked beans', aliases: ['beans in tomato sauce'] },
@@ -202,7 +230,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'spring-onion', displayName: 'Spring onion', aliases: ['scallion', 'green onion', 'salad onion'] },
   { slug: 'sweet-potato', displayName: 'Sweet potato', aliases: [] },
   { slug: 'cherry-tomatoes', displayName: 'Cherry tomatoes', aliases: ['baby tomatoes'] },
-  { slug: 'chopped-tomatoes', displayName: 'Tinned chopped tomatoes', aliases: ['canned tomatoes', 'plum tomatoes'] },
+  { slug: 'chopped-tomatoes', displayName: 'Tinned chopped tomatoes', aliases: ['canned tomatoes', 'plum tomatoes'], preparationPreference: ['canned'] },
   { slug: 'passata', displayName: 'Passata', aliases: ['sieved tomatoes', 'tomato sauce'], densityGPerMl: 1.05 },
   { slug: 'aubergine', displayName: 'Aubergine', aliases: ['eggplant'] },
   { slug: 'courgette', displayName: 'Courgette', aliases: ['zucchini'] },
@@ -221,7 +249,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'beetroot', displayName: 'Beetroot', aliases: ['beets'] },
   { slug: 'butternut-squash', displayName: 'Butternut squash', aliases: ['squash'] },
   { slug: 'frozen-peas', displayName: 'Peas', aliases: ['frozen peas', 'garden peas'] },
-  { slug: 'sweetcorn', displayName: 'Sweetcorn', aliases: ['corn', 'tinned sweetcorn'] },
+  { slug: 'sweetcorn', displayName: 'Sweetcorn', aliases: ['corn', 'tinned sweetcorn'], preparationPreference: ['canned'] },
   { slug: 'green-beans', displayName: 'Green beans', aliases: ['french beans', 'fine beans'] },
   { slug: 'cabbage', displayName: 'Cabbage', aliases: ['savoy cabbage', 'white cabbage'] },
   { slug: 'brussels-sprouts', displayName: 'Brussels sprouts', aliases: ['sprouts'] },
@@ -241,20 +269,28 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'avocado', displayName: 'Avocado', aliases: [] },
   { slug: 'mango', displayName: 'Mango', aliases: [] },
   { slug: 'pineapple', displayName: 'Pineapple', aliases: [] },
-  { slug: 'raisins', displayName: 'Raisins', aliases: [] },
-  { slug: 'sultanas', displayName: 'Sultanas', aliases: [] },
-  { slug: 'dates', displayName: 'Dates', aliases: ['medjool dates'] },
+  // Dried fruit isn't raw fruit that happens to need a tie-break — it's
+  // literally a different, dehydrated food. 'dried' is the correct
+  // disambiguator, not a preference among otherwise-equal options.
+  { slug: 'raisins', displayName: 'Raisins', aliases: [], preparationPreference: ['dried'] },
+  { slug: 'sultanas', displayName: 'Sultanas', aliases: [], preparationPreference: ['dried'] },
+  { slug: 'dates', displayName: 'Dates', aliases: ['medjool dates'], preparationPreference: ['dried'] },
 
   // Herbs & spices
   { slug: 'coriander', displayName: 'Coriander', aliases: ['cilantro', 'fresh coriander', 'coriander leaves'] },
   { slug: 'parsley', displayName: 'Parsley', aliases: ['flat leaf parsley', 'fresh parsley'] },
   { slug: 'basil', displayName: 'Basil', aliases: ['fresh basil'] },
   { slug: 'mint', displayName: 'Mint', aliases: ['fresh mint'] },
-  { slug: 'thyme', displayName: 'Thyme', aliases: ['fresh thyme', 'dried thyme'] },
-  { slug: 'rosemary', displayName: 'Rosemary', aliases: [] },
-  { slug: 'oregano', displayName: 'Oregano', aliases: ['dried oregano'] },
-  { slug: 'mixed-herbs', displayName: 'Mixed herbs', aliases: ['italian herbs', 'herbes de provence'] },
-  { slug: 'bay-leaves', displayName: 'Bay leaves', aliases: ['bay leaf'] },
+  // thyme carries BOTH 'fresh thyme' and 'dried thyme' as aliases — a real
+  // residual ambiguity, not a clean call. Hinted 'dried' as the more likely
+  // generic-pantry-staple meaning; a recipe wanting fresh sprigs specifically
+  // usually says so. oregano/mixed-herbs/bay-leaves/rosemary are the jar
+  // spice in ordinary UK cooking far more often than the fresh herb.
+  { slug: 'thyme', displayName: 'Thyme', aliases: ['fresh thyme', 'dried thyme'], preparationPreference: ['dried'] },
+  { slug: 'rosemary', displayName: 'Rosemary', aliases: [], preparationPreference: ['dried'] },
+  { slug: 'oregano', displayName: 'Oregano', aliases: ['dried oregano'], preparationPreference: ['dried'] },
+  { slug: 'mixed-herbs', displayName: 'Mixed herbs', aliases: ['italian herbs', 'herbes de provence'], preparationPreference: ['dried'] },
+  { slug: 'bay-leaves', displayName: 'Bay leaves', aliases: ['bay leaf'], preparationPreference: ['dried'] },
   { slug: 'ground-cumin', displayName: 'Ground cumin', aliases: ['cumin'] },
   { slug: 'paprika', displayName: 'Paprika', aliases: [] },
   { slug: 'smoked-paprika', displayName: 'Smoked paprika', aliases: ['pimenton'] },
@@ -271,7 +307,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'ground-almonds', displayName: 'Ground almonds', aliases: ['almond flour', 'almond meal'] },
   { slug: 'walnuts', displayName: 'Walnuts', aliases: [] },
   { slug: 'cashews', displayName: 'Cashew nuts', aliases: ['cashews'] },
-  { slug: 'peanuts', displayName: 'Peanuts', aliases: ['roasted peanuts'] },
+  { slug: 'peanuts', displayName: 'Peanuts', aliases: ['roasted peanuts'], preparationPreference: ['roasted'] },
   { slug: 'pine-nuts', displayName: 'Pine nuts', aliases: [] },
   { slug: 'sesame-seeds', displayName: 'Sesame seeds', aliases: [] },
   { slug: 'sunflower-seeds', displayName: 'Sunflower seeds', aliases: [] },

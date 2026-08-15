@@ -14,6 +14,7 @@ import {
   anchorTimesOfDay,
   sectionForTime,
   minutesSinceLocalMidnight,
+  formatLastUsed,
 } from "../time";
 import type { MealType } from "../../types";
 
@@ -401,5 +402,56 @@ describe("sectionForTime", () => {
         expect(sectionForTime(at(h, m))).not.toBe("snacks");
       }
     }
+  });
+});
+
+describe("formatLastUsed", () => {
+  // Fixed reference instant — every case below is expressed as an offset
+  // from it, not a wall-clock date, since this is an ELAPSED-TIME formatter
+  // (see the function's own comment: it deliberately does not use dateKey()
+  // / calendar-day boundaries, to stay consistent with decay_score's own
+  // continuous-time math).
+  const now = new Date("2026-08-15T12:00:00.000Z");
+  const hoursAgo = (h: number) =>
+    new Date(now.getTime() - h * 3_600_000).toISOString();
+
+  it("null → not logged yet", () => {
+    expect(formatLastUsed(null, now)).toBe("Not logged yet");
+  });
+
+  it("under 24h → today, even close to the boundary", () => {
+    expect(formatLastUsed(hoursAgo(0.1), now)).toBe("Used today");
+    expect(formatLastUsed(hoursAgo(23.9), now)).toBe("Used today");
+  });
+
+  it("24h-48h → yesterday", () => {
+    expect(formatLastUsed(hoursAgo(24), now)).toBe("Used yesterday");
+    expect(formatLastUsed(hoursAgo(47), now)).toBe("Used yesterday");
+  });
+
+  it("2-6 days → Nd ago", () => {
+    expect(formatLastUsed(hoursAgo(48), now)).toBe("Used 2d ago");
+    expect(formatLastUsed(hoursAgo(6 * 24), now)).toBe("Used 6d ago");
+  });
+
+  it("7-34 days → Nw ago", () => {
+    expect(formatLastUsed(hoursAgo(7 * 24), now)).toBe("Used 1w ago");
+    expect(formatLastUsed(hoursAgo(34 * 24), now)).toBe("Used 4w ago");
+  });
+
+  it("35+ days → Nmo ago", () => {
+    expect(formatLastUsed(hoursAgo(35 * 24), now)).toBe("Used 1mo ago");
+    expect(formatLastUsed(hoursAgo(90 * 24), now)).toBe("Used 3mo ago");
+  });
+
+  it("is a pure elapsed-time computation, not a calendar-day one", () => {
+    // 23:59 elapsed, straddling local midnight, still reads "today" — a
+    // dateKey()-based version would say "yesterday" here. This is the
+    // behaviour the function's header comment is pinning down.
+    const lateNight = new Date("2026-08-14T23:59:00.000Z");
+    const justAfterMidnight = new Date("2026-08-15T00:00:30.000Z");
+    expect(formatLastUsed(lateNight.toISOString(), justAfterMidnight)).toBe(
+      "Used today",
+    );
   });
 });

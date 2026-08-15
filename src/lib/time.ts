@@ -330,6 +330,37 @@ export function sameTimeOnDay(t: TimeOfDay, dayKey: string): string {
 }
 
 // ============================================================
+// My Library — recency label for saved_ingredients_scored.last_used_at
+// ============================================================
+
+/**
+ * "Used today" / "Used 3d ago" / "Not logged yet" — the My Library badge.
+ *
+ * Deliberately an ELAPSED-TIME formatter, not a calendar-day one: last_used_at
+ * is a timestamptz instant (meal_entries.eaten_at), and the library's sort key
+ * (decay_score, see 20260815100000_saved_ingredients_decay_score.sql) is
+ * itself a continuous decay over elapsed time, not calendar-day buckets. A
+ * dateKey()-based "Today"/"Yesterday" label would quantise at local-midnight
+ * boundaries the sort doesn't recognise, so this counts hours/days directly
+ * from the instant instead — same reasoning as the SQL side, applied here.
+ */
+export function formatLastUsed(
+  iso: string | null,
+  now: Date = new Date(),
+): string {
+  if (!iso) return "Not logged yet";
+  const hours = (now.getTime() - new Date(iso).getTime()) / 3_600_000;
+  if (hours < 24) return "Used today";
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "Used yesterday";
+  if (days < 7) return `Used ${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `Used ${weeks}w ago`;
+  const months = Math.floor(days / 30);
+  return `Used ${months}mo ago`;
+}
+
+// ============================================================
 // Bundle-apply anchor — re-time a whole bundle at once, preserving spacing
 // ============================================================
 

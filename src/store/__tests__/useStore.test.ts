@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useStore } from "../useStore";
 import { supabase } from "../../lib/supabase";
-import { MealEntry, FoodProduct, SavedIngredient } from "../../types";
+import {
+  MealEntry,
+  FoodProduct,
+  SavedIngredientScored,
+} from "../../types";
 
 function makeEntry(overrides: Partial<MealEntry> = {}): MealEntry {
   return {
@@ -303,8 +307,8 @@ describe("useStore.copyEntriesTo", () => {
 // write fails, not just that the write was attempted.
 
 function makeSavedIngredient(
-  overrides: Partial<SavedIngredient> = {},
-): SavedIngredient {
+  overrides: Partial<SavedIngredientScored> = {},
+): SavedIngredientScored {
   return {
     id: "si-1",
     user_id: "test-user-id",
@@ -322,6 +326,8 @@ function makeSavedIngredient(
     off_id: null,
     use_count: 1,
     created_at: "2026-07-20T12:00:00.000Z",
+    decay_score: 1,
+    last_used_at: "2026-07-20T12:00:00.000Z",
     ...overrides,
   };
 }
@@ -353,6 +359,53 @@ describe("useStore.saveGoals", () => {
 
     expect(result.error).toEqual(expect.any(String));
     expect(useStore.getState().goals).toEqual(before);
+  });
+});
+
+describe("useStore.fetchSavedIngredients", () => {
+  it("queries saved_ingredients_scored ordered by decay_score desc, and stores results in the order returned", async () => {
+    // decay_score, not use_count, is the sort key. use_count 11 sorting
+    // BEHIND use_count 1 here is the point: the client trusts whatever order
+    // the view/DB hands back rather than re-sorting client-side, so a
+    // zero-decay item lands wherever the query put it — last, if the query
+    // is correct.
+    const frequent = makeSavedIngredient({
+      id: "frequent-but-stale",
+      use_count: 11,
+      decay_score: 0.4,
+    });
+    const recent = makeSavedIngredient({
+      id: "recent",
+      use_count: 1,
+      decay_score: 3.2,
+    });
+    const neverLogged = makeSavedIngredient({
+      id: "never-logged",
+      use_count: 2,
+      decay_score: 0,
+      last_used_at: null,
+    });
+    // Pre-sorted, as the real `.order("decay_score", { ascending: false })`
+    // query would return it.
+    const dbOrder = [recent, frequent, neverLogged];
+
+    const order = vi.fn(async () => ({ data: dbOrder, error: null }));
+    const eq = vi.fn(() => ({ order }));
+    const select = vi.fn(() => ({ eq }));
+    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ select });
+
+    useStore.getState().setUserId("test-user-id");
+    await useStore.getState().fetchSavedIngredients();
+
+    expect(supabase.from).toHaveBeenCalledWith("saved_ingredients_scored");
+    expect(select).toHaveBeenCalledWith("*");
+    expect(eq).toHaveBeenCalledWith("user_id", "test-user-id");
+    expect(order).toHaveBeenCalledWith("decay_score", { ascending: false });
+    expect(useStore.getState().savedIngredients.map((i) => i.id)).toEqual([
+      "recent",
+      "frequent-but-stale",
+      "never-logged",
+    ]);
   });
 });
 

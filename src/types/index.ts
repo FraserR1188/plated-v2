@@ -439,6 +439,16 @@ export interface SavedIngredient {
   created_at: string;
 }
 
+// Mirrors public.saved_ingredients_scored — see
+// 20260815100000_saved_ingredients_decay_score.sql. What fetchSavedIngredients
+// actually selects from: SavedIngredient's columns plus a recency-decayed
+// score computed server-side from meal_entries. decay_score is 0 (never
+// use_count) for a saved item with no matching meal_entries.
+export interface SavedIngredientScored extends SavedIngredient {
+  decay_score: number;
+  last_used_at: string | null;
+}
+
 export interface Goals {
   calories: number;
   protein: number;

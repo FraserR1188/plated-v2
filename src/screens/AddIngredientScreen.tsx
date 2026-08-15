@@ -8,7 +8,7 @@
 // custom_foods row. One path, one behaviour.
 // ============================================================
 
-import React, { useState, useRef } from "react";
+import React, { useMemo, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -29,7 +29,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { searchFood } from "../lib/openfoodfacts";
 import { useStore } from "../store/useStore";
 import { captureAndScanMealPhoto } from "../lib/mealPhotoCapture";
-import { sectionForTime } from "../lib/time";
+import { sectionForTime, formatLastUsed } from "../lib/time";
+import { filterSavedIngredients } from "../lib/library";
 import {
   Colors,
   Spacing,
@@ -68,6 +69,16 @@ export function AddIngredientScreen() {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState(false);
   const [scanningMeal, setScanningMeal] = useState(false);
+
+  // My Library tab only — a filter over the already-in-memory savedIngredients
+  // array. Not a query: all of it is already loaded, so this is just an
+  // in-memory substring match, completely separate from the Search tab's
+  // debounced remote OFF lookup above.
+  const [librarySearch, setLibrarySearch] = useState("");
+  const filteredLibrary = useMemo(
+    () => filterSavedIngredients(savedIngredients, librarySearch),
+    [savedIngredients, librarySearch],
+  );
 
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Monotonic stamp for the in-flight request. A ref (not state) because the
@@ -475,53 +486,84 @@ export function AddIngredientScreen() {
                 </Text>
               </View>
             ) : (
-              <View style={styles.resultsList}>
-                {savedIngredients.map((item, i) => (
-                  <Pressable
-                    key={item.id}
-                    style={({ pressed }) => [
-                      styles.resultRow,
-                      i < savedIngredients.length - 1 && styles.resultBorder,
-                      pressed && { backgroundColor: Colors.surface2 },
-                    ]}
-                    onPress={() => handleLibrarySelect(item)}
-                  >
-                    <View style={styles.resultBody}>
-                      <Text style={styles.resultName}>{item.name}</Text>
-                      {item.brand ? (
-                        <Text style={styles.resultBrand}>{item.brand}</Text>
-                      ) : null}
-                      <View style={styles.macroRow}>
-                        <MacroPill
-                          value={`${Math.round(item.cal_per100)}`}
-                          unit="kcal"
-                          color={Colors.green}
-                        />
-                        <MacroPill
-                          value={`${item.protein_per100}`}
-                          label="P"
-                          unit="g"
-                          color={MacroColor.protein}
-                        />
-                        <MacroPill
-                          value={`${item.carbs_per100}`}
-                          label="C"
-                          unit="g"
-                          color={MacroColor.carbs}
-                        />
-                        <MacroPill
-                          value={`${item.fat_per100}`}
-                          label="F"
-                          unit="g"
-                          color={MacroColor.fat}
-                        />
-                        <Text style={styles.per100}>· {item.use_count}×</Text>
-                      </View>
-                    </View>
-                    <Text style={styles.chevron}>›</Text>
-                  </Pressable>
-                ))}
-              </View>
+              <>
+                <View style={styles.searchBox}>
+                  <Text style={styles.searchIcon}>⌕</Text>
+                  <TextInput
+                    style={styles.searchInput}
+                    value={librarySearch}
+                    onChangeText={setLibrarySearch}
+                    placeholder="Filter your library…"
+                    placeholderTextColor={Colors.textMuted}
+                    returnKeyType="search"
+                  />
+                  {librarySearch.length > 0 && (
+                    <Pressable onPress={() => setLibrarySearch("")} hitSlop={8}>
+                      <Text style={styles.clearBtn}>✕</Text>
+                    </Pressable>
+                  )}
+                </View>
+
+                {filteredLibrary.length === 0 ? (
+                  <View style={styles.emptyState}>
+                    <Text style={styles.emptyEmoji}>🔍</Text>
+                    <Text style={styles.emptyTitle}>No matches</Text>
+                    <Text style={styles.emptySub}>
+                      Nothing in your library matches "{librarySearch.trim()}".
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.resultsList}>
+                    {filteredLibrary.map((item, i) => (
+                      <Pressable
+                        key={item.id}
+                        style={({ pressed }) => [
+                          styles.resultRow,
+                          i < filteredLibrary.length - 1 && styles.resultBorder,
+                          pressed && { backgroundColor: Colors.surface2 },
+                        ]}
+                        onPress={() => handleLibrarySelect(item)}
+                      >
+                        <View style={styles.resultBody}>
+                          <Text style={styles.resultName}>{item.name}</Text>
+                          {item.brand ? (
+                            <Text style={styles.resultBrand}>{item.brand}</Text>
+                          ) : null}
+                          <View style={styles.macroRow}>
+                            <MacroPill
+                              value={`${Math.round(item.cal_per100)}`}
+                              unit="kcal"
+                              color={Colors.green}
+                            />
+                            <MacroPill
+                              value={`${item.protein_per100}`}
+                              label="P"
+                              unit="g"
+                              color={MacroColor.protein}
+                            />
+                            <MacroPill
+                              value={`${item.carbs_per100}`}
+                              label="C"
+                              unit="g"
+                              color={MacroColor.carbs}
+                            />
+                            <MacroPill
+                              value={`${item.fat_per100}`}
+                              label="F"
+                              unit="g"
+                              color={MacroColor.fat}
+                            />
+                            <Text style={styles.per100}>
+                              · {formatLastUsed(item.last_used_at)}
+                            </Text>
+                          </View>
+                        </View>
+                        <Text style={styles.chevron}>›</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                )}
+              </>
             ))}
 
           <View style={{ height: Spacing.xxl }} />

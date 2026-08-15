@@ -4,6 +4,7 @@ import {
   MealEntry,
   MealCompositionWithItems,
   SavedIngredient,
+  SavedIngredientScored,
   Goals,
   DayTotals,
   MealType,
@@ -141,7 +142,7 @@ interface AppState {
   /** Read-only WHOOP workout spine — see fetchWorkouts. Never written here. */
   workouts: Workout[];
   compositions: MealCompositionWithItems[];
-  savedIngredients: SavedIngredient[];
+  savedIngredients: SavedIngredientScored[];
   goals: Goals;
   loading: boolean;
 
@@ -294,7 +295,7 @@ interface AppState {
   /** Returns the pending result AND clears it in the same call. */
   consumeManualEntryResult: () => FoodProduct | null;
 
-  saveIngredient: (product: FoodProduct) => Promise<SavedIngredient | null>;
+  saveIngredient: (product: FoodProduct) => Promise<SavedIngredientScored | null>;
   deleteIngredient: (id: string) => Promise<void>;
 
   /** Counts toward goals: logged + confirmed + unconfirmed-planned. Excludes skipped. */
@@ -503,13 +504,16 @@ export const useStore = create<AppState>((set, get) => ({
   fetchSavedIngredients: async () => {
     const { userId } = get();
     if (!userId) return;
+    // saved_ingredients_scored, not the base table — adds decay_score
+    // (recency-decayed use, computed from meal_entries) and last_used_at.
+    // See 20260815100000_saved_ingredients_decay_score.sql.
     const { data, error } = await supabase
-      .from("saved_ingredients")
+      .from("saved_ingredients_scored")
       .select("*")
       .eq("user_id", userId)
-      .order("use_count", { ascending: false });
+      .order("decay_score", { ascending: false });
     if (error) reportError("fetchSavedIngredients", error, { level: "error" });
-    if (data) set({ savedIngredients: data as SavedIngredient[] });
+    if (data) set({ savedIngredients: data as SavedIngredientScored[] });
   },
 
   addEntry: async (entry) => {
@@ -1171,10 +1175,18 @@ export const useStore = create<AppState>((set, get) => ({
       .single();
 
     if (!error && data) {
+      // Written straight to the base table, not the scored view — a brand
+      // new save has no meal_entries yet, so it starts exactly where any
+      // zero-match row does: decay_score 0, never logged.
+      const inserted: SavedIngredientScored = {
+        ...(data as SavedIngredient),
+        decay_score: 0,
+        last_used_at: null,
+      };
       set((s) => ({
-        savedIngredients: [data as SavedIngredient, ...s.savedIngredients],
+        savedIngredients: [inserted, ...s.savedIngredients],
       }));
-      return data as SavedIngredient;
+      return inserted;
     }
     if (error) reportError("saveIngredient", error);
     return null;

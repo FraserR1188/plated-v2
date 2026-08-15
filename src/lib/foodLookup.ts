@@ -22,10 +22,15 @@ export function customFoodToProduct(cf: CustomFood): FoodProduct {
     protein_per100: cf.protein_per100,
     carbs_per100: cf.carbs_per100,
     fat_per100: cf.fat_per100,
-    sat_fat_per100: cf.sat_fat_per100,
-    salt_per100: cf.salt_per100,
-    fibre_per100: cf.fibre_per100,
-    sugar_per100: cf.sugar_per100,
+    // CustomFood's small-four are `number | null` (DB is nullable — see
+    // 20260814100000_custom_foods_null_not_zero.sql); FoodProduct's are
+    // `number | undefined`. This is a sentinel translation, not a coercion —
+    // a real NULL must still read as "we don't know" on the other side, not
+    // become 0.
+    sat_fat_per100: cf.sat_fat_per100 ?? undefined,
+    salt_per100: cf.salt_per100 ?? undefined,
+    fibre_per100: cf.fibre_per100 ?? undefined,
+    sugar_per100: cf.sugar_per100 ?? undefined,
     barcode: cf.barcode ?? undefined,
     serving_g: cf.serving_g ?? undefined,
     serving_label: cf.serving_label ?? undefined,
@@ -193,10 +198,14 @@ export async function createCustomFood(
       protein_per100: input.protein_per100,
       carbs_per100: input.carbs_per100,
       fat_per100: input.fat_per100,
-      sat_fat_per100: input.sat_fat_per100,
-      salt_per100: input.salt_per100,
-      fibre_per100: input.fibre_per100,
-      sugar_per100: input.sugar_per100,
+      // `?? null`, NOT `?? 0` — see 20260814100000_custom_foods_null_not_zero.sql.
+      // The column has no default any more, so an omitted key would also
+      // land NULL, but explicit beats implicit: this is the same discipline
+      // applyEntries()/addEntry() already use for meal_entries' small-four.
+      sat_fat_per100: input.sat_fat_per100 ?? null,
+      salt_per100: input.salt_per100 ?? null,
+      fibre_per100: input.fibre_per100 ?? null,
+      sugar_per100: input.sugar_per100 ?? null,
       serving_g: input.serving_g,
       serving_label: input.serving_label,
       image_url: input.image_url ?? null,

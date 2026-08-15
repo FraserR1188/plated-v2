@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -10,7 +10,12 @@ import {
   Alert,
   Image,
 } from "react-native";
-import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
+import {
+  useNavigation,
+  useRoute,
+  useFocusEffect,
+  RouteProp,
+} from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -44,7 +49,11 @@ import {
 } from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
 import { scanMealPhoto, mealScanToFoodProduct, MacroKey } from "../lib/mealRecognition";
-import { computeServingTotals } from "../lib/macros";
+import {
+  computeServingTotals,
+  needsManualEntry,
+  canSubmitProduct,
+} from "../lib/macros";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Product">;
 type Route = RouteProp<RootStackParamList, "Product">;
@@ -80,6 +89,14 @@ type MacroMeta = {
   color: string;
   get: (p: FoodProduct) => number;
   set: (p: FoodProduct, v: number) => FoodProduct;
+  // Energy/protein/carbs/fat: the Phase 2 "no usable nutrition" detector
+  // gates ALL FOUR of these together (needsManualEntry), never individually.
+  bigFour?: boolean;
+  // Sat-fat/salt/fibre/sugar: genuinely nullable per-100g fields (Phase 1).
+  // `raw` reads the UNCOALESCED value so the grid can tell "known 0" apart
+  // from "we don't have this" — `get` above always coalesces to 0 and can't
+  // make that distinction, it exists only to seed the editable TextInput.
+  raw?: (p: FoodProduct) => number | undefined;
 };
 
 const MACRO_META: MacroMeta[] = [
@@ -90,6 +107,7 @@ const MACRO_META: MacroMeta[] = [
     color: Colors.green,
     get: (p) => p.cal_per100,
     set: (p, v) => ({ ...p, cal_per100: v }),
+    bigFour: true,
   },
   {
     key: "protein",
@@ -98,6 +116,7 @@ const MACRO_META: MacroMeta[] = [
     color: MacroColor.protein,
     get: (p) => p.protein_per100,
     set: (p, v) => ({ ...p, protein_per100: v }),
+    bigFour: true,
   },
   {
     key: "carbs",
@@ -106,6 +125,7 @@ const MACRO_META: MacroMeta[] = [
     color: MacroColor.carbs,
     get: (p) => p.carbs_per100,
     set: (p, v) => ({ ...p, carbs_per100: v }),
+    bigFour: true,
   },
   {
     key: "fat",
@@ -114,6 +134,7 @@ const MACRO_META: MacroMeta[] = [
     color: MacroColor.fat,
     get: (p) => p.fat_per100,
     set: (p, v) => ({ ...p, fat_per100: v }),
+    bigFour: true,
   },
   {
     key: "satFat",
@@ -122,6 +143,7 @@ const MACRO_META: MacroMeta[] = [
     color: MacroColor.satFat,
     get: (p) => p.sat_fat_per100 ?? 0,
     set: (p, v) => ({ ...p, sat_fat_per100: v }),
+    raw: (p) => p.sat_fat_per100,
   },
   {
     key: "salt",
@@ -130,6 +152,7 @@ const MACRO_META: MacroMeta[] = [
     color: MacroColor.salt,
     get: (p) => p.salt_per100 ?? 0,
     set: (p, v) => ({ ...p, salt_per100: v }),
+    raw: (p) => p.salt_per100,
   },
   {
     key: "fibre",
@@ -138,6 +161,7 @@ const MACRO_META: MacroMeta[] = [
     color: MacroColor.fibre,
     get: (p) => p.fibre_per100 ?? 0,
     set: (p, v) => ({ ...p, fibre_per100: v }),
+    raw: (p) => p.fibre_per100,
   },
   {
     key: "sugar",
@@ -146,8 +170,25 @@ const MACRO_META: MacroMeta[] = [
     color: MacroColor.sugar,
     get: (p) => p.sugar_per100 ?? 0,
     set: (p, v) => ({ ...p, sugar_per100: v }),
+    raw: (p) => p.sugar_per100,
   },
 ];
+
+/**
+ * Should this cell render "—" instead of a value? Big-four cells are gated
+ * together on the Phase 2 detector (never individually — a legitimate
+ * single-zero, e.g. 0g protein in a pure-fat oil, must still show "0", not
+ * "—"); sat-fat/salt/fibre/sugar are gated individually on their own
+ * genuine NULL (Phase 1), independent of the big-four detector.
+ */
+function isMacroCellMissing(
+  m: MacroMeta,
+  product: FoodProduct,
+  bigFourMissing: boolean,
+): boolean {
+  if (m.bigFour) return bigFourMissing;
+  return m.raw ? m.raw(product) == null : false;
+}
 
 function initMacroText(product: FoodProduct): Record<MacroKey, string> {
   const out = {} as Record<MacroKey, string>;
@@ -207,6 +248,7 @@ export function ProductScreen() {
     initialEatenAt,
   } = useRoute<Route>().params;
   const { addEntry, updateEntry, deleteEntry, saveIngredient } = useStore();
+  const consumeManualEntryResult = useStore((s) => s.consumeManualEntryResult);
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
 
@@ -282,6 +324,31 @@ export function ProductScreen() {
     }
   };
 
+  // Phase 3: consumes CreateFoodScreen's write-once handoff (see
+  // useStore.ts's manualEntryResult comment) when this screen regains
+  // focus after an "Enter nutrition manually" round-trip. useFocusEffect,
+  // not a plain useEffect watching the store value, is what scopes this to
+  // the CURRENTLY FOCUSED ProductScreen instance — CreateFood opened from
+  // Scanner or AddIngredient never writes to the slice (returnToOpener is
+  // never set on those routes), so this is already a no-op for those flows
+  // regardless of focus, but focus-scoping is also what stops a
+  // backgrounded/unfocused ProductScreen instance from reacting to a
+  // result meant for whichever instance the user is actually looking at.
+  //
+  // Deliberately NOT the full runReestimate swap: setServing is skipped.
+  // Re-estimate replaces the food's IDENTITY, so resetting the serving to
+  // the new product's own default makes sense there; manual entry only
+  // supplies nutrition data for the SAME already-chosen food and portion —
+  // the grams the user already typed must survive untouched.
+  useFocusEffect(
+    useCallback(() => {
+      const result = consumeManualEntryResult();
+      if (!result) return;
+      setDraft(result);
+      setMacroText(initMacroText(result));
+    }, [consumeManualEntryResult]),
+  );
+
   const updateMacro = (meta: MacroMeta, text: string) => {
     setMacroText((prev) => ({ ...prev, [meta.key]: text }));
     const parsed = parseFloat(text.replace(",", "."));
@@ -341,6 +408,22 @@ export function ProductScreen() {
   const g = parseFloat(serving) || 0;
   const f = g / 100;
   const satFat100 = draft.sat_fat_per100 ?? 0;
+
+  // Phase 2 guard: energy + protein + carbs + fat all zero ⇒ no usable
+  // nutrition (see lib/macros.ts needsManualEntry — a genuine OFF
+  // crowd-sourced zero and a pre-Phase-1 null-coerced zero are
+  // indistinguishable by this point, and both need the same treatment).
+  // needsManualEntry additionally exempts `source: "custom"` products —
+  // Phase 3: a custom food's big-four were necessarily human-typed already
+  // (CreateFoodScreen won't save one otherwise), so a manually-entered
+  // all-zero (water) must not trip this again the moment it comes back
+  // from CreateFoodScreen — see that function's own comment for why.
+  //
+  // Scoped to the CREATE flow only. `isEditing`'s `draft` comes from
+  // mealEntryToProduct() on an already-confirmed MealEntry — re-litigating
+  // already-logged history here (e.g. blocking a genuine 0-kcal water entry
+  // from being re-saved) would be a regression this phase isn't asked to fix.
+  const bigFourMissing = !isEditing && needsManualEntry(draft);
 
   // What the DB trigger will decide. ADVISORY — the database is the authority;
   // this only lets the UI tell the truth about what it's about to do.
@@ -526,62 +609,95 @@ export function ProductScreen() {
   };
 
   const mealLabel = MEAL_LABELS[mealType];
-  const canSubmit = g > 0;
+  const canSubmit = canSubmitProduct(draft, g, isEditing);
   const dayLabel = formatDayLabel(dateKey(eatenAt));
+
+  // Phase 3: the escape hatch for the Phase 2 no-usable-nutrition gate.
+  // Opens CreateFoodScreen as a sheet over this screen (CreateFood is
+  // already `presentation: "modal"` in AppNavigator, same as this screen —
+  // no new modal infra needed) prefilled with whatever identity we have.
+  // Macros are deliberately left for the user to type — CreateFoodScreen's
+  // grid starts empty (EMPTY_MACROS), never prefilled with OFF's
+  // untrustworthy zeros. `returnToOpener: true` is what tells
+  // CreateFoodScreen's handleSave to hand the result back via the store
+  // and goBack() instead of replacing this screen — see that flag's
+  // comment on the CreateFood route param.
+  const handleEnterManually = () => {
+    navigation.navigate("CreateFood", {
+      date: dateKey(eatenAt),
+      mealType,
+      eatenAt: eatenAt.toISOString(),
+      barcode: draft.barcode,
+      initialName: draft.name || undefined,
+      initialBrand: draft.brand || undefined,
+      returnToOpener: true,
+    });
+  };
 
   const previewRows: {
     label: string;
     value: string;
     unit: string;
     color: string;
+    missing: boolean;
   }[] = [
     {
       label: "Calories",
       value: String(preview.calories),
       unit: "kcal",
       color: Colors.green,
+      missing: bigFourMissing,
     },
     {
       label: "Protein",
       value: String(preview.protein),
       unit: "g",
       color: MacroColor.protein,
+      missing: bigFourMissing,
     },
     {
       label: "Carbs",
       value: String(preview.carbs),
       unit: "g",
       color: MacroColor.carbs,
+      missing: bigFourMissing,
     },
     {
       label: "Fat",
       value: String(preview.fat),
       unit: "g",
       color: MacroColor.fat,
+      missing: bigFourMissing,
     },
     {
       label: "Sat fat",
       value: String(preview.satFat),
       unit: "g",
       color: MacroColor.satFat,
+      // Orthogonal NULL-display fix: gated on this field's OWN nullness,
+      // independent of the big-four detector above.
+      missing: draft.sat_fat_per100 == null,
     },
     {
       label: "Salt",
       value: String(preview.salt),
       unit: "g",
       color: MacroColor.salt,
+      missing: draft.salt_per100 == null,
     },
     {
       label: "Fibre",
       value: String(preview.fibre),
       unit: "g",
       color: MacroColor.fibre,
+      missing: draft.fibre_per100 == null,
     },
     {
       label: "Sugar",
       value: String(preview.sugar),
       unit: "g",
       color: MacroColor.sugar,
+      missing: draft.sugar_per100 == null,
     },
   ];
 
@@ -846,6 +962,8 @@ export function ProductScreen() {
                       {m.unit}
                     </Text>
                   </View>
+                ) : isMacroCellMissing(m, draft, bigFourMissing) ? (
+                  <Text style={styles.macroCellValMissing}>—</Text>
                 ) : (
                   <Text style={[styles.macroCellVal, { color: m.color }]}>
                     {m.get(draft)}
@@ -998,22 +1116,50 @@ export function ProductScreen() {
               <Text style={styles.previewServingText}>for {g || 0}g</Text>
             </View>
           </View>
-          <View style={styles.calRow}>
-            <Text style={styles.calValue}>{preview.calories}</Text>
-            <Text style={styles.calUnit}>kcal</Text>
-          </View>
+          {bigFourMissing ? (
+            <Text style={styles.calValueMissing}>No data</Text>
+          ) : (
+            <View style={styles.calRow}>
+              <Text style={styles.calValue}>{preview.calories}</Text>
+              <Text style={styles.calUnit}>kcal</Text>
+            </View>
+          )}
           <View style={styles.cardDivider} />
           <View style={styles.previewGrid}>
             {previewRows.slice(1).map((m) => (
               <View key={m.label} style={styles.previewCell}>
-                <Text style={[styles.previewCellVal, { color: m.color }]}>
-                  {m.value}
-                  <Text style={styles.previewCellUnit}>{m.unit}</Text>
-                </Text>
+                {m.missing ? (
+                  <Text style={styles.previewCellValMissing}>—</Text>
+                ) : (
+                  <Text style={[styles.previewCellVal, { color: m.color }]}>
+                    {m.value}
+                    <Text style={styles.previewCellUnit}>{m.unit}</Text>
+                  </Text>
+                )}
                 <Text style={styles.previewCellLabel}>{m.label}</Text>
               </View>
             ))}
           </View>
+          {bigFourMissing && (
+            <>
+              <Text style={styles.noDataCaption}>
+                This product has no usable nutrition data from Open Food
+                Facts, so it can't be logged yet.
+              </Text>
+              <Pressable
+                onPress={handleEnterManually}
+                hitSlop={8}
+                style={({ pressed }) => [
+                  styles.manualEntryLink,
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={styles.manualEntryLinkText}>
+                  Enter nutrition manually
+                </Text>
+              </Pressable>
+            </>
+          )}
         </View>
 
         <View style={{ height: isEditing ? 160 : 100 }} />
@@ -1386,6 +1532,14 @@ const styles = StyleSheet.create(
     fontFamily: Fonts.mono.bold,
     letterSpacing: -0.2,
   },
+  // Phase 2: a genuinely-unknown value (either the whole product has no
+  // usable nutrition, or this one field is individually NULL) — never "0".
+  macroCellValMissing: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
+    color: Colors.textDim,
+  },
   macroCellValueRow: {
     flexDirection: "row",
     alignItems: "baseline",
@@ -1574,6 +1728,12 @@ const styles = StyleSheet.create(
     letterSpacing: -2,
     lineHeight: Typography.hero * 1.0,
   },
+  calValueMissing: {
+    fontSize: Typography.lg,
+    fontWeight: Typography.semibold,
+    color: Colors.textMuted,
+    paddingVertical: Spacing.xs,
+  },
   calUnit: {
     fontSize: Typography.md,
     fontWeight: Typography.semibold,
@@ -1596,6 +1756,27 @@ const styles = StyleSheet.create(
     fontWeight: Typography.bold,
     fontFamily: Fonts.mono.bold,
     letterSpacing: -0.3,
+  },
+  previewCellValMissing: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
+    color: Colors.textDim,
+  },
+  noDataCaption: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: Spacing.sm,
+    lineHeight: Typography.xs * 1.4,
+  },
+  manualEntryLink: {
+    marginTop: Spacing.sm,
+    alignSelf: "flex-start",
+  },
+  manualEntryLinkText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.semibold,
+    color: Colors.green,
   },
   previewCellUnit: {
     fontSize: Typography.xs,

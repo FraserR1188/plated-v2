@@ -74,6 +74,8 @@ import {
   type ExtractSuccess,
   type MacroKey,
 } from "../lib/labelExtraction";
+import { numOrNull, canSaveCustomFood } from "../lib/macros";
+import { useStore } from "../store/useStore";
 import {
   LabelConfirmSheet,
   type LabelConfirmApply,
@@ -179,17 +181,31 @@ const num = (s: string): number => {
   return Number.isFinite(v) && v >= 0 ? v : 0;
 };
 
+// numOrNull() (blank/garbage/negative → null) lives in lib/macros.ts —
+// shared with canSaveCustomFood below and with ProductScreen's Phase 2
+// gate. Used here for sat-fat/salt/fibre/sugar (custom_foods' nullable
+// small-four — 20260814100000_custom_foods_null_not_zero.sql) at the
+// createCustomFood() call in handleSave.
+
 // Which cards we scroll-to-focus. Keyed so the y offsets survive re-renders.
 type CardKey = "identity" | "nutrition" | "serving";
 
 export function CreateFoodScreen() {
   const navigation = useNavigation<Nav>();
-  const { date, mealType, eatenAt, barcode, initialName } =
-    useRoute<Route>().params;
+  const {
+    date,
+    mealType,
+    eatenAt,
+    barcode,
+    initialName,
+    initialBrand,
+    returnToOpener,
+  } = useRoute<Route>().params;
   const insets = useSafeAreaInsets();
+  const setManualEntryResult = useStore((s) => s.setManualEntryResult);
 
   const [name, setName] = useState(initialName ?? "");
-  const [brand, setBrand] = useState("");
+  const [brand, setBrand] = useState(initialBrand ?? "");
   const [code, setCode] = useState(barcode ?? "");
   const [macros, setMacros] = useState<Record<MacroKey, string>>(EMPTY_MACROS);
   const [servingG, setServingG] = useState("");
@@ -270,15 +286,16 @@ export function CreateFoodScreen() {
   const setPhoto = (kind: PhotoKind, photo: PendingPhoto | undefined) =>
     setPhotos((p) => ({ ...p, [kind]: photo }));
 
-  // Name + a REAL calorie figure are the minimum for a useful entry.
-  //
-  // Session B checked only `macros.cal.trim().length > 0`, but num("abc")
-  // returns 0 — so typing junk in the calorie box enabled Save and
-  // persisted a 0 kcal food. That gets likelier now the grid arrives
-  // pre-filled and users are editing populated cells rather than empty ones.
+  // Name + all four big-four macros PRESENT (not merely positive) are the
+  // minimum for a useful entry. See canSaveCustomFood's own comment
+  // (lib/macros.ts) for why this isn't `num(macros.cal) > 0` (rejects a
+  // genuine 0-kcal food) or `>= 0` on the parsed value (lets an entirely
+  // blank grid save as fabricated zeros) — pulled into lib/macros.ts so
+  // the actual decision is unit-tested, not a component-side approximation
+  // of it (same reasoning as ProductScreen's canSubmitProduct).
   const canSave = useMemo(
-    () => name.trim().length > 0 && num(macros.cal) > 0 && !saving,
-    [name, macros.cal, saving],
+    () => canSaveCustomFood(name, macros, saving),
+    [name, macros, saving],
   );
 
   const mealLabel = MEAL_LABELS[mealType];
@@ -478,10 +495,10 @@ export function CreateFoodScreen() {
       protein_per100: num(macros.protein),
       carbs_per100: num(macros.carbs),
       fat_per100: num(macros.fat),
-      sat_fat_per100: num(macros.satFat),
-      salt_per100: num(macros.salt),
-      fibre_per100: num(macros.fibre),
-      sugar_per100: num(macros.sugar),
+      sat_fat_per100: numOrNull(macros.satFat),
+      salt_per100: numOrNull(macros.salt),
+      fibre_per100: numOrNull(macros.fibre),
+      sugar_per100: numOrNull(macros.sugar),
       serving_g: sg > 0 ? sg : null,
       serving_label: servingLabel.trim() ? servingLabel.trim() : null,
     });
@@ -524,8 +541,25 @@ export function CreateFoodScreen() {
 
     setSaving(false);
 
+    const product = customFoodToProduct(saved);
+
+    // Opened from ProductScreen's "Enter nutrition manually" (Phase 2's
+    // no-usable-nutrition affordance): that ProductScreen is still mounted
+    // underneath, mid-session (serving typed, meal-type tag chosen, time
+    // possibly touched) — replacing it with a fresh instance would discard
+    // all of that. Hand the result back through the store instead and
+    // return to it, rather than navigating past it.
+    if (returnToOpener) {
+      setManualEntryResult(product);
+      navigation.goBack();
+      return;
+    }
+
+    // The other two entry points (Scanner's "Add manually", AddIngredient's
+    // "Create food") have no ProductScreen to return to — this IS the first
+    // one, so replace is correct here, unchanged from before Phase 3.
     navigation.replace("Product", {
-      product: customFoodToProduct(saved),
+      product,
       date,
       mealType,
       initialEatenAt: eatenAt,

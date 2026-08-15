@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rankResults, singularise } from "../openfoodfacts";
+import { rankResults, singularise, parseProduct } from "../openfoodfacts";
 import { FoodProduct } from "../../types";
 
 function makeProduct(overrides: Partial<FoodProduct> = {}): FoodProduct {
@@ -113,6 +113,115 @@ describe("rankResults", () => {
     const original = [...products];
     rankResults(products, "apple");
     expect(products).toEqual(original);
+  });
+});
+
+describe("parseProduct — NULL vs zero (Phase 0/1: absent nutriments must not become fake zeros)", () => {
+  // Raw nutriments for barcode 5060853641220 ("Fibre & Protein Bar", Bio &
+  // me), captured live from the OFF API. This is the exact product from the
+  // zero-data bug report: energy/protein/carbs/fat are GENUINELY 0 in OFF's
+  // own data (a bad crowd-sourced entry — OFF even flags it with its own "~"
+  // approximate modifier), while saturated-fat/salt/fibre/sugar/sodium keys
+  // are ENTIRELY ABSENT. Both facts are real and must be preserved exactly:
+  // the adapter should not invent zeros for the second group.
+  const zeroDataProduct = {
+    product_name: "Fibre & Protein Bar",
+    brands: "Bio & me",
+    code: "5060853641220",
+    nutriments: {
+      carbohydrates: 0,
+      carbohydrates_100g: 0,
+      "energy-kcal": 0,
+      "energy-kcal_100g": 0,
+      energy: 0,
+      energy_100g: 0,
+      fat: 0,
+      fat_100g: 0,
+      proteins: 0,
+      proteins_100g: 0,
+      // NOTE: no saturated-fat_100g, salt_100g, sodium_100g, fiber_100g,
+      // fibre_100g, or sugars_100g keys — this is the real OFF payload shape.
+    },
+  };
+
+  it("passes through a genuine OFF zero for energy/protein/carbs/fat unchanged (not a coercion bug — OFF's own data)", () => {
+    const product = parseProduct(zeroDataProduct);
+    expect(product).not.toBeNull();
+    expect(product!.cal_per100).toBe(0);
+    expect(product!.protein_per100).toBe(0);
+    expect(product!.carbs_per100).toBe(0);
+    expect(product!.fat_per100).toBe(0);
+  });
+
+  it("preserves NULL (undefined) for sat-fat/salt/fibre/sugar when their OFF keys are entirely absent", () => {
+    const product = parseProduct(zeroDataProduct);
+    expect(product).not.toBeNull();
+    expect(product!.sat_fat_per100).toBeUndefined();
+    expect(product!.salt_per100).toBeUndefined();
+    expect(product!.fibre_per100).toBeUndefined();
+    expect(product!.sugar_per100).toBeUndefined();
+  });
+
+  it("still reports a genuine OFF-supplied 0 for a small-four nutrient as 0, not undefined", () => {
+    const product = parseProduct({
+      product_name: "Test product",
+      nutriments: {
+        "energy-kcal_100g": 100,
+        proteins_100g: 5,
+        carbohydrates_100g: 10,
+        fat_100g: 2,
+        "saturated-fat_100g": 0,
+        salt_100g: 0,
+        fiber_100g: 0,
+        sugars_100g: 0,
+      },
+    });
+    expect(product!.sat_fat_per100).toBe(0);
+    expect(product!.salt_per100).toBe(0);
+    expect(product!.fibre_per100).toBe(0);
+    expect(product!.sugar_per100).toBe(0);
+  });
+
+  it("derives salt from sodium × 2.5 when only sodium is present", () => {
+    const product = parseProduct({
+      product_name: "Test product",
+      nutriments: {
+        "energy-kcal_100g": 100,
+        proteins_100g: 5,
+        carbohydrates_100g: 10,
+        fat_100g: 2,
+        sodium_100g: 0.208,
+      },
+    });
+    expect(product!.salt_per100).toBeCloseTo(0.52, 2);
+  });
+
+  it("leaves salt as undefined (not NaN, not 0) when neither salt nor sodium keys are present", () => {
+    const product = parseProduct({
+      product_name: "Test product",
+      nutriments: {
+        "energy-kcal_100g": 100,
+        proteins_100g: 5,
+        carbohydrates_100g: 10,
+        fat_100g: 2,
+      },
+    });
+    expect(product!.salt_per100).toBeUndefined();
+  });
+
+  it("prefers an explicit salt_100g over deriving from sodium", () => {
+    const product = parseProduct({
+      product_name: "Test product",
+      nutriments: {
+        "energy-kcal_100g": 100,
+        proteins_100g: 5,
+        carbohydrates_100g: 10,
+        fat_100g: 2,
+        salt_100g: 1.1,
+        sodium_100g: 0.1, // would derive to 0.25 — must be ignored
+      },
+    });
+    expect(product!.salt_per100).toBe(1.1);
   });
 });
 

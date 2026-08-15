@@ -276,6 +276,24 @@ interface AppState {
   updateBatchIngredientQuantity: (key: string, quantityG: number) => void;
   resetBatchDraft: () => void;
 
+  /**
+   * Cross-screen handoff for CreateFoodScreen → ProductScreen, opened as a
+   * `returnToOpener` sheet from Phase 3's "Enter nutrition manually"
+   * affordance. Exists because CLAUDE.md forbids functions through
+   * navigation params — CreateFoodScreen can't just hand ProductScreen a
+   * `setDraft` callback, so it writes the result here instead and
+   * `goBack()`s; ProductScreen reads it back on refocus.
+   *
+   * Write-once / read-once / clear-on-read BY CONSTRUCTION:
+   * consumeManualEntryResult() is the only way to read this, and it always
+   * clears on the way out — there is no plain getter, so a stale value
+   * can't be read twice or leak into an unrelated later session.
+   */
+  manualEntryResult: FoodProduct | null;
+  setManualEntryResult: (product: FoodProduct) => void;
+  /** Returns the pending result AND clears it in the same call. */
+  consumeManualEntryResult: () => FoodProduct | null;
+
   saveIngredient: (product: FoodProduct) => Promise<SavedIngredient | null>;
   deleteIngredient: (id: string) => Promise<void>;
 
@@ -368,6 +386,7 @@ export const useStore = create<AppState>((set, get) => ({
   goals: DEFAULT_GOALS,
   loading: false,
   batchDraft: EMPTY_BATCH_DRAFT,
+  manualEntryResult: null,
 
   setUserId: (id) => set({ userId: id }),
 
@@ -382,6 +401,7 @@ export const useStore = create<AppState>((set, get) => ({
       goals: DEFAULT_GOALS,
       loading: false,
       batchDraft: EMPTY_BATCH_DRAFT,
+      manualEntryResult: null,
     }),
 
   // NOTE: still unbounded. ~2,200 rows/year today; planning pushed that up and
@@ -1064,6 +1084,13 @@ export const useStore = create<AppState>((set, get) => ({
     })),
 
   resetBatchDraft: () => set({ batchDraft: EMPTY_BATCH_DRAFT }),
+
+  setManualEntryResult: (product) => set({ manualEntryResult: product }),
+  consumeManualEntryResult: () => {
+    const product = get().manualEntryResult;
+    if (product) set({ manualEntryResult: null });
+    return product;
+  },
 
   // ─── Saved ingredients ─────────────────────────────────────
 

@@ -475,10 +475,14 @@ export interface CustomFood {
   protein_per100: number;
   carbs_per100: number;
   fat_per100: number;
-  sat_fat_per100: number;
-  salt_per100: number;
-  fibre_per100: number;
-  sugar_per100: number;
+  // NULL = unknown (left blank at manual entry) — never coalesced to 0. See
+  // 20260814100000_custom_foods_null_not_zero.sql. cal/protein/carbs/fat
+  // above stay non-nullable by design: hasUsableNutrition()/
+  // canSubmitProduct() (src/lib/macros.ts) are the guarantee for those.
+  sat_fat_per100: number | null;
+  salt_per100: number | null;
+  fibre_per100: number | null;
+  sugar_per100: number | null;
   serving_g: number | null;
   serving_label: string | null; // e.g. "1 bowl (45g)"
   created_at: string;
@@ -625,6 +629,20 @@ export type RootStackParamList = {
     eatenAt: string;
     barcode?: string;
     initialName?: string;
+    initialBrand?: string;
+    /**
+     * True only when opened from ProductScreen's Phase 2 "no usable
+     * nutrition" affordance. Changes handleSave's exit: instead of
+     * `navigation.replace("Product", {...})` (this screen's other two
+     * entry points — Scanner, AddIngredient — have no ProductScreen to
+     * return to), it writes the saved product to
+     * useStore's manualEntryResult and calls `goBack()`, so the ALREADY
+     * -mounted ProductScreen underneath (with its own in-progress
+     * serving/time/meal-type state intact) picks it up on refocus. Data
+     * only, never a function — see useStore.ts's manualEntryResult comment
+     * for why this can't be a callback prop instead.
+     */
+    returnToOpener?: boolean;
   };
 
   /** Create when compositionId is omitted; edit that batch when given. */

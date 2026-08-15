@@ -591,3 +591,42 @@ describe("useStore batch draft", () => {
     expect(useStore.getState().batchDraft.ingredients).toEqual([]);
   });
 });
+
+describe("useStore.manualEntryResult (Phase 3 cross-screen handoff — write-once/read-once/clear-on-read)", () => {
+  it("starts empty", () => {
+    expect(useStore.getState().manualEntryResult).toBeNull();
+  });
+
+  it("consumeManualEntryResult returns null when nothing is pending", () => {
+    expect(useStore.getState().consumeManualEntryResult()).toBeNull();
+  });
+
+  it("setManualEntryResult makes the value readable via getState directly", () => {
+    const product = makeProduct({ name: "Water" });
+    useStore.getState().setManualEntryResult(product);
+    expect(useStore.getState().manualEntryResult).toEqual(product);
+  });
+
+  it("consumeManualEntryResult returns the pending value AND clears it in the same call", () => {
+    const product = makeProduct({ name: "Water" });
+    useStore.getState().setManualEntryResult(product);
+
+    const consumed = useStore.getState().consumeManualEntryResult();
+
+    expect(consumed).toEqual(product);
+    expect(useStore.getState().manualEntryResult).toBeNull();
+  });
+
+  it("a second consume after the first returns null — read-once, not re-readable", () => {
+    useStore.getState().setManualEntryResult(makeProduct());
+    useStore.getState().consumeManualEntryResult();
+
+    expect(useStore.getState().consumeManualEntryResult()).toBeNull();
+  });
+
+  it("reset() (sign-out) also clears a pending manual-entry result", () => {
+    useStore.getState().setManualEntryResult(makeProduct());
+    useStore.getState().reset();
+    expect(useStore.getState().manualEntryResult).toBeNull();
+  });
+});

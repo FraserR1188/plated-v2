@@ -193,7 +193,7 @@ function pickImages(p: any): {
   return { image_url, image_thumb_url };
 }
 
-function parseProduct(p: any): FoodProduct | null {
+export function parseProduct(p: any): FoodProduct | null {
   const n = p.nutriments ?? {};
 
   // Try kcal fields first; energy_100g is kJ and needs converting
@@ -208,8 +208,15 @@ function parseProduct(p: any): FoodProduct | null {
   // Only reject if name is missing — allow 0-cal products (water, veg etc)
   if (!name) return null;
 
+  // Salt: null-safe two-step derivation (UK label convention: salt(g) =
+  // sodium(g) × 2.5). Absent sodium must short-circuit to `undefined` BEFORE
+  // the multiplication — not 0 (a fabricated zero) and not NaN
+  // (`null * 2.5`). This is the one spot where null-preservation and a
+  // derivation collide, so it can't just be a `?? 0` → `?? undefined` swap
+  // like the other four below.
   const salt =
-    n["salt_100g"] ?? (n["sodium_100g"] != null ? n["sodium_100g"] * 2.5 : 0);
+    n["salt_100g"] ??
+    (n["sodium_100g"] != null ? n["sodium_100g"] * 2.5 : undefined);
 
   // ── Serving portion. serving_quantity is grams (may arrive as a string);
   //    serving_size is the display string e.g. "45 g (1 bowl)".
@@ -239,6 +246,17 @@ function parseProduct(p: any): FoodProduct | null {
 
   const scans = parseInt(p.unique_scans_n, 10);
 
+  // Sat-fat/salt/fibre/sugar: genuinely absent from OFF (no key at all) must
+  // stay `undefined`, matching FoodProduct's optional typing — never `?? 0`.
+  // A missing nutrient and a verified zero are different facts; coalescing
+  // here would assert the zero permanently into every downstream total and
+  // the WHOOP correlation. Energy/protein/carbs/fat are NOT changed here:
+  // OFF itself sometimes reports those as a genuine (if low-quality) 0,
+  // which the adapter must pass through faithfully — see Phase 0 findings.
+  const satFat100g = n["saturated-fat_100g"];
+  const fibre100g = n["fiber_100g"] ?? n["fibre_100g"];
+  const sugars100g = n["sugars_100g"];
+
   return {
     name,
     brand: (p.brands ?? "").split(",")[0].trim(),
@@ -246,12 +264,13 @@ function parseProduct(p: any): FoodProduct | null {
     protein_per100: parseFloat((n["proteins_100g"] ?? 0).toFixed(1)),
     carbs_per100: parseFloat((n["carbohydrates_100g"] ?? 0).toFixed(1)),
     fat_per100: parseFloat((n["fat_100g"] ?? 0).toFixed(1)),
-    sat_fat_per100: parseFloat((n["saturated-fat_100g"] ?? 0).toFixed(1)),
-    salt_per100: parseFloat((salt ?? 0).toFixed(2)),
-    fibre_per100: parseFloat(
-      (n["fiber_100g"] ?? n["fibre_100g"] ?? 0).toFixed(1),
-    ),
-    sugar_per100: parseFloat((n["sugars_100g"] ?? 0).toFixed(1)),
+    sat_fat_per100:
+      satFat100g != null ? parseFloat(satFat100g.toFixed(1)) : undefined,
+    salt_per100: salt != null ? parseFloat(salt.toFixed(2)) : undefined,
+    fibre_per100:
+      fibre100g != null ? parseFloat(fibre100g.toFixed(1)) : undefined,
+    sugar_per100:
+      sugars100g != null ? parseFloat(sugars100g.toFixed(1)) : undefined,
     barcode: p.code,
     off_id: p._id ?? p.id,
     serving_g,

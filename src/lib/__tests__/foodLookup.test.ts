@@ -1,6 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { mealEntryToProduct } from "../foodLookup";
-import { MealEntry } from "../../types";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  mealEntryToProduct,
+  createCustomFood,
+  customFoodToProduct,
+} from "../foodLookup";
+import { MealEntry, CustomFood } from "../../types";
+import { supabase } from "../supabase";
+import { useStore } from "../../store/useStore";
 
 function makeEntry(overrides: Partial<MealEntry> = {}): MealEntry {
   return {
@@ -33,6 +39,45 @@ function makeEntry(overrides: Partial<MealEntry> = {}): MealEntry {
     eaten_at_estimated: false,
     ...overrides,
   };
+}
+
+function makeCustomFood(overrides: Partial<CustomFood> = {}): CustomFood {
+  return {
+    id: "cf1",
+    user_id: "test-user-id",
+    name: "Homemade granola",
+    brand: null,
+    barcode: null,
+    cal_per100: 450,
+    protein_per100: 10,
+    carbs_per100: 60,
+    fat_per100: 15,
+    sat_fat_per100: null,
+    salt_per100: null,
+    fibre_per100: null,
+    sugar_per100: null,
+    serving_g: null,
+    serving_label: null,
+    created_at: "2026-08-14T00:00:00.000Z",
+    image_url: null,
+    label_image_url: null,
+    ...overrides,
+  };
+}
+
+/** Wire supabase.from("custom_foods").insert(row).select().single() to
+ *  capture the row it was called with and hand back a canned RETURNING row.
+ *  Mirrors useStore.test.ts's mockInsertSingle for meal_entries. */
+function mockCustomFoodInsertSingle(returning: unknown) {
+  const capture: { row?: unknown } = {};
+  const single = vi.fn(async () => ({ data: returning, error: null }));
+  const select = vi.fn(() => ({ single }));
+  const insert = vi.fn((row: unknown) => {
+    capture.row = row;
+    return { select };
+  });
+  (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ insert });
+  return capture;
 }
 
 describe("mealEntryToProduct", () => {
@@ -91,5 +136,89 @@ describe("mealEntryToProduct", () => {
   it("maps every non-custom source to 'off'", () => {
     const product = mealEntryToProduct(makeEntry({ source: "barcode" }))!;
     expect(product.source).toBe("off");
+  });
+});
+
+describe("createCustomFood (custom_foods NULL-not-zero — 20260814100000_custom_foods_null_not_zero.sql)", () => {
+  beforeEach(() => {
+    useStore.getState().setUserId("test-user-id");
+  });
+
+  const baseInput = {
+    name: "Test food",
+    brand: null,
+    barcode: null,
+    cal_per100: 100,
+    protein_per100: 5,
+    carbs_per100: 10,
+    fat_per100: 2,
+    serving_g: null,
+    serving_label: null,
+  };
+
+  it("persists a blank small-macro field (null) as NULL through the insert row, not 0", async () => {
+    const capture = mockCustomFoodInsertSingle(makeCustomFood());
+    await createCustomFood({
+      ...baseInput,
+      sat_fat_per100: null,
+      salt_per100: null,
+      fibre_per100: null,
+      sugar_per100: null,
+    });
+
+    const row = capture.row as Record<string, unknown>;
+    expect(row.sat_fat_per100).toBeNull();
+    expect(row.salt_per100).toBeNull();
+    expect(row.fibre_per100).toBeNull();
+    expect(row.sugar_per100).toBeNull();
+  });
+
+  it("persists a genuine typed 0 as 0, not NULL", async () => {
+    const capture = mockCustomFoodInsertSingle(makeCustomFood());
+    await createCustomFood({
+      ...baseInput,
+      sat_fat_per100: 0,
+      salt_per100: 0,
+      fibre_per100: 0,
+      sugar_per100: 0,
+    });
+
+    const row = capture.row as Record<string, unknown>;
+    expect(row.sat_fat_per100).toBe(0);
+    expect(row.salt_per100).toBe(0);
+    expect(row.fibre_per100).toBe(0);
+    expect(row.sugar_per100).toBe(0);
+  });
+});
+
+describe("customFoodToProduct", () => {
+  it("maps a NULL small-macro to undefined on FoodProduct, not 0", () => {
+    const cf = makeCustomFood({
+      sat_fat_per100: null,
+      salt_per100: null,
+      fibre_per100: null,
+      sugar_per100: null,
+    });
+    const product = customFoodToProduct(cf);
+
+    expect(product.sat_fat_per100).toBeUndefined();
+    expect(product.salt_per100).toBeUndefined();
+    expect(product.fibre_per100).toBeUndefined();
+    expect(product.sugar_per100).toBeUndefined();
+  });
+
+  it("maps a genuine 0 small-macro to 0, not undefined", () => {
+    const cf = makeCustomFood({
+      sat_fat_per100: 0,
+      salt_per100: 0,
+      fibre_per100: 0,
+      sugar_per100: 0,
+    });
+    const product = customFoodToProduct(cf);
+
+    expect(product.sat_fat_per100).toBe(0);
+    expect(product.salt_per100).toBe(0);
+    expect(product.fibre_per100).toBe(0);
+    expect(product.sugar_per100).toBe(0);
   });
 });

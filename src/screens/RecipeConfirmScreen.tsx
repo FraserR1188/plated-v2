@@ -38,6 +38,9 @@ import {
   type GramsConfidence,
 } from "../lib/ingredients";
 import { searchFood } from "../lib/openfoodfacts";
+import { captureAndScanLabel } from "../lib/labelCapture";
+import { labelExtractionToFoodProduct, type ExtractSuccess } from "../lib/labelExtraction";
+import { LabelConfirmSheet, type LabelConfirmApply } from "../components/LabelConfirmSheet";
 import { useStore } from "../store/useStore";
 import { Colors, Spacing, Radius, Typography, Fonts, withDefaultFont } from "../theme/tokens";
 import { FoodProduct, RootStackParamList } from "../types";
@@ -312,6 +315,14 @@ function IngredientRow({
   const [searching, setSearching] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
+  // ── Label scan state — mirrors CreateFoodScreen's own extraction-state
+  // cluster, minus the photo/upload bookkeeping this screen has no use for
+  // (nothing here is ever saved to custom_foods or Storage).
+  const [labelSheetVisible, setLabelSheetVisible] = useState(false);
+  const [labelExtracting, setLabelExtracting] = useState(false);
+  const [labelResult, setLabelResult] = useState<ExtractSuccess | null>(null);
+  const [labelError, setLabelError] = useState<string | null>(null);
+
   const runSearch = (q: string) => {
     clearTimeout(timer.current);
     const trimmed = q.trim();
@@ -354,134 +365,229 @@ function IngredientRow({
     navigation.navigate("Scanner", { onScanned: (product) => onUpdate({ product }) });
   };
 
+  // captureAndScanLabel() bundles permission + camera + prepare + extract
+  // into one call (mirrors captureAndScanMealPhoto), so the sheet is opened
+  // BEFORE awaiting it — the native camera UI covers the screen regardless
+  // of what's rendered underneath, and by the time control returns to this
+  // app the sheet is already there to show either a spinner or a result.
+  // Permission/prep failures are capture-level problems, not "the label
+  // scanner read a bad photo" — those get an Alert like
+  // BatchIngredientPickerScreen.handleScanMeal, not the sheet's own error
+  // state, which is reserved for a genuine extraction failure.
+  const handleScanLabel = async () => {
+    if (labelExtracting) return;
+    setLabelSheetVisible(true);
+    setLabelExtracting(true);
+    setLabelResult(null);
+    setLabelError(null);
+
+    const capture = await captureAndScanLabel();
+
+    switch (capture.status) {
+      case "cancelled":
+        setLabelSheetVisible(false);
+        setLabelExtracting(false);
+        return;
+      case "permission_denied":
+        setLabelSheetVisible(false);
+        setLabelExtracting(false);
+        Alert.alert("Camera access needed", "Allow camera access to scan a nutrition label.");
+        return;
+      case "prep_failed":
+        setLabelSheetVisible(false);
+        setLabelExtracting(false);
+        Alert.alert("Couldn't process that photo", "Try taking it again.");
+        return;
+      case "scan_failed":
+        setLabelExtracting(false);
+        setLabelError(capture.message);
+        return;
+      case "ok":
+        setLabelExtracting(false);
+        setLabelResult(capture.result);
+        return;
+    }
+  };
+
+  const dismissLabelSheet = () => {
+    setLabelSheetVisible(false);
+    setLabelExtracting(false);
+    setLabelResult(null);
+    setLabelError(null);
+  };
+
+  // requireAllMacros guarantees the sheet's apply button is disabled
+  // whenever any of the big four is missing, so `!coerced.ok` here is
+  // unreachable in practice — defensive only, never a user-facing path.
+  const handleApplyLabel = (payload: LabelConfirmApply) => {
+    const coerced = labelExtractionToFoodProduct(
+      payload.productName,
+      payload.per100g,
+      payload.servingG,
+      payload.servingLabel,
+    );
+    if (!coerced.ok) return;
+    onUpdate({ product: coerced.product });
+    dismissLabelSheet();
+  };
+
   return (
-    <View style={[rowStyles.card, row.confidence === "unknown" && rowStyles.cardUnknown]}>
-      <View style={rowStyles.topRow}>
-        {row.raw ? (
-          <Text style={rowStyles.raw} numberOfLines={2}>
-            "{row.raw}"
-          </Text>
-        ) : (
-          <Text style={rowStyles.raw}>Added by hand</Text>
-        )}
-        <Switch
-          value={row.included}
-          onValueChange={(v) => onUpdate({ included: v })}
-          trackColor={{ false: Colors.border, true: Colors.green }}
-        />
-      </View>
-
-      <Pressable onPress={() => setExpanded((e) => !e)} style={rowStyles.matchRow}>
-        {row.resolving ? (
-          <ActivityIndicator size="small" color={Colors.textSub} />
-        ) : row.product ? (
-          <View style={{ flex: 1 }}>
-            <Text style={rowStyles.matchName} numberOfLines={1}>
-              {row.product.name}
+    <>
+      <View style={[rowStyles.card, row.confidence === "unknown" && rowStyles.cardUnknown]}>
+        <View style={rowStyles.topRow}>
+          {row.raw ? (
+            <Text style={rowStyles.raw} numberOfLines={2}>
+              "{row.raw}"
             </Text>
-            {row.product.brand ? <Text style={rowStyles.matchBrand}>{row.product.brand}</Text> : null}
-          </View>
-        ) : (
-          <Text style={rowStyles.noMatch}>No match — tap to search</Text>
-        )}
-        <Text style={rowStyles.chevron}>{expanded ? "︿" : "﹀"}</Text>
-      </Pressable>
+          ) : (
+            <Text style={rowStyles.raw}>Added by hand</Text>
+          )}
+          <Switch
+            value={row.included}
+            onValueChange={(v) => onUpdate({ included: v })}
+            trackColor={{ false: Colors.border, true: Colors.green }}
+          />
+        </View>
 
-      {expanded && (
-        <View style={rowStyles.expandPanel}>
-          {row.candidates.map((c, i) => (
-            <Pressable
-              key={i}
-              style={({ pressed }) => [rowStyles.candidateRow, pressed && { backgroundColor: Colors.surface2 }]}
-              onPress={() => selectCandidate(c)}
-            >
-              <Text style={rowStyles.candidateName} numberOfLines={1}>
-                {c.product.name}
-                {c.product.brand ? ` — ${c.product.brand}` : ""}
+        <Pressable onPress={() => setExpanded((e) => !e)} style={rowStyles.matchRow}>
+          {row.resolving ? (
+            <ActivityIndicator size="small" color={Colors.textSub} />
+          ) : row.product ? (
+            <View style={{ flex: 1 }}>
+              <Text style={rowStyles.matchName} numberOfLines={1}>
+                {row.product.name}
               </Text>
-            </Pressable>
-          ))}
-          <Pressable
-            style={({ pressed }) => [rowStyles.scanBtn, pressed && { opacity: 0.75 }]}
-            onPress={handleScanBarcode}
-          >
-            <Text style={rowStyles.scanBtnIcon}>⌗</Text>
-            <Text style={rowStyles.scanBtnText}>Scan barcode</Text>
-          </Pressable>
+              {row.product.brand ? <Text style={rowStyles.matchBrand}>{row.product.brand}</Text> : null}
+            </View>
+          ) : (
+            <Text style={rowStyles.noMatch}>No match — tap to search</Text>
+          )}
+          <Text style={rowStyles.chevron}>{expanded ? "︿" : "﹀"}</Text>
+        </Pressable>
+
+        {expanded && (
+          <View style={rowStyles.expandPanel}>
+            {row.candidates.map((c, i) => (
+              <Pressable
+                key={i}
+                style={({ pressed }) => [rowStyles.candidateRow, pressed && { backgroundColor: Colors.surface2 }]}
+                onPress={() => selectCandidate(c)}
+              >
+                <Text style={rowStyles.candidateName} numberOfLines={1}>
+                  {c.product.name}
+                  {c.product.brand ? ` — ${c.product.brand}` : ""}
+                </Text>
+              </Pressable>
+            ))}
+            <View style={rowStyles.scanBtnRow}>
+              <Pressable
+                style={({ pressed }) => [rowStyles.scanBtn, pressed && { opacity: 0.75 }]}
+                onPress={handleScanBarcode}
+              >
+                <Text style={rowStyles.scanBtnIcon}>⌗</Text>
+                <Text style={rowStyles.scanBtnText}>Scan barcode</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [rowStyles.scanBtn, pressed && { opacity: 0.75 }]}
+                onPress={handleScanLabel}
+                disabled={labelExtracting}
+              >
+                {labelExtracting ? (
+                  <ActivityIndicator size="small" color={Colors.textSub} />
+                ) : (
+                  <>
+                    <Text style={rowStyles.scanBtnIcon}>📷</Text>
+                    <Text style={rowStyles.scanBtnText}>Scan label</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+            <TextInput
+              style={rowStyles.searchInput}
+              value={searchQuery}
+              onChangeText={(t) => {
+                setSearchQuery(t);
+                runSearch(t);
+              }}
+              placeholder="Search for a different product…"
+              placeholderTextColor={Colors.textMuted}
+            />
+            {searching && <ActivityIndicator size="small" color={Colors.textSub} style={{ marginVertical: 4 }} />}
+            {searchResults.map((p, i) => (
+              <Pressable
+                key={i}
+                style={({ pressed }) => [rowStyles.candidateRow, pressed && { backgroundColor: Colors.surface2 }]}
+                onPress={() => selectSearchResult(p)}
+              >
+                <Text style={rowStyles.candidateName} numberOfLines={1}>
+                  {p.name}
+                  {p.brand ? ` — ${p.brand}` : ""}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+
+        <View style={rowStyles.fieldsRow}>
           <TextInput
-            style={rowStyles.searchInput}
-            value={searchQuery}
-            onChangeText={(t) => {
-              setSearchQuery(t);
-              runSearch(t);
-            }}
-            placeholder="Search for a different product…"
+            style={[rowStyles.fieldInput, { flex: 2 }]}
+            value={row.name}
+            onChangeText={(t) => onUpdate({ name: t })}
+            placeholder="Name"
             placeholderTextColor={Colors.textMuted}
           />
-          {searching && <ActivityIndicator size="small" color={Colors.textSub} style={{ marginVertical: 4 }} />}
-          {searchResults.map((p, i) => (
-            <Pressable
-              key={i}
-              style={({ pressed }) => [rowStyles.candidateRow, pressed && { backgroundColor: Colors.surface2 }]}
-              onPress={() => selectSearchResult(p)}
-            >
-              <Text style={rowStyles.candidateName} numberOfLines={1}>
-                {p.name}
-                {p.brand ? ` — ${p.brand}` : ""}
-              </Text>
-            </Pressable>
-          ))}
+          <TextInput
+            style={[rowStyles.fieldInput, { flex: 1 }]}
+            value={row.quantity}
+            onChangeText={(t) => onUpdate({ quantity: t })}
+            placeholder="Qty"
+            placeholderTextColor={Colors.textMuted}
+            keyboardType="decimal-pad"
+          />
+          <TextInput
+            style={[rowStyles.fieldInput, { flex: 1 }]}
+            value={row.unit}
+            onChangeText={(t) => onUpdate({ unit: t })}
+            placeholder="Unit"
+            placeholderTextColor={Colors.textMuted}
+          />
         </View>
-      )}
 
-      <View style={rowStyles.fieldsRow}>
-        <TextInput
-          style={[rowStyles.fieldInput, { flex: 2 }]}
-          value={row.name}
-          onChangeText={(t) => onUpdate({ name: t })}
-          placeholder="Name"
-          placeholderTextColor={Colors.textMuted}
-        />
-        <TextInput
-          style={[rowStyles.fieldInput, { flex: 1 }]}
-          value={row.quantity}
-          onChangeText={(t) => onUpdate({ quantity: t })}
-          placeholder="Qty"
-          placeholderTextColor={Colors.textMuted}
-          keyboardType="decimal-pad"
-        />
-        <TextInput
-          style={[rowStyles.fieldInput, { flex: 1 }]}
-          value={row.unit}
-          onChangeText={(t) => onUpdate({ unit: t })}
-          placeholder="Unit"
-          placeholderTextColor={Colors.textMuted}
-        />
+        <View style={rowStyles.gramsRow}>
+          <TextInput
+            style={rowStyles.gramsInput}
+            value={row.grams}
+            // A manual edit is the most trustworthy source there is — once the
+            // human types a number, this row's null-grams contract is
+            // satisfied, so the badge should stop demanding a tap.
+            onChangeText={(t) => onUpdate({ grams: t, confidence: "exact" })}
+            placeholder="0"
+            placeholderTextColor={Colors.textMuted}
+            keyboardType="decimal-pad"
+          />
+          <Text style={rowStyles.gramsUnit}>g</Text>
+          <View style={[rowStyles.confidencePill, { backgroundColor: `${CONFIDENCE_COLOR[row.confidence]}18` }]}>
+            <Text style={[rowStyles.confidencePillText, { color: CONFIDENCE_COLOR[row.confidence] }]}>
+              {CONFIDENCE_LABEL[row.confidence]}
+            </Text>
+          </View>
+          <Pressable onPress={onRemove} hitSlop={8} style={{ marginLeft: "auto" }}>
+            <Text style={rowStyles.removeText}>Remove</Text>
+          </Pressable>
+        </View>
       </View>
 
-      <View style={rowStyles.gramsRow}>
-        <TextInput
-          style={rowStyles.gramsInput}
-          value={row.grams}
-          // A manual edit is the most trustworthy source there is — once the
-          // human types a number, this row's null-grams contract is
-          // satisfied, so the badge should stop demanding a tap.
-          onChangeText={(t) => onUpdate({ grams: t, confidence: "exact" })}
-          placeholder="0"
-          placeholderTextColor={Colors.textMuted}
-          keyboardType="decimal-pad"
-        />
-        <Text style={rowStyles.gramsUnit}>g</Text>
-        <View style={[rowStyles.confidencePill, { backgroundColor: `${CONFIDENCE_COLOR[row.confidence]}18` }]}>
-          <Text style={[rowStyles.confidencePillText, { color: CONFIDENCE_COLOR[row.confidence] }]}>
-            {CONFIDENCE_LABEL[row.confidence]}
-          </Text>
-        </View>
-        <Pressable onPress={onRemove} hitSlop={8} style={{ marginLeft: "auto" }}>
-          <Text style={rowStyles.removeText}>Remove</Text>
-        </Pressable>
-      </View>
-    </View>
+      <LabelConfirmSheet
+        visible={labelSheetVisible}
+        loading={labelExtracting}
+        error={labelError}
+        result={labelResult}
+        onApply={handleApplyLabel}
+        onDismiss={dismissLabelSheet}
+        onRetry={handleScanLabel}
+        requireAllMacros
+      />
+    </>
   );
 }
 
@@ -592,7 +698,9 @@ const rowStyles = StyleSheet.create(
     },
     candidateRow: { paddingVertical: 8, paddingHorizontal: Spacing.sm, borderRadius: Radius.control },
     candidateName: { fontSize: Typography.sm, color: Colors.text },
+    scanBtnRow: { flexDirection: "row", gap: Spacing.xs, marginTop: 2 },
     scanBtn: {
+      flex: 1,
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",
@@ -602,7 +710,7 @@ const rowStyles = StyleSheet.create(
       backgroundColor: Colors.surface,
       borderWidth: 1,
       borderColor: Colors.border,
-      marginTop: 2,
+      minHeight: 34,
     },
     scanBtnIcon: { fontSize: Typography.sm, color: Colors.textSub, fontWeight: Typography.bold },
     scanBtnText: { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.textSub },

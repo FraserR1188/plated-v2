@@ -16,6 +16,7 @@
 
 import { supabase } from "./supabase";
 import { reportError } from "./reportError";
+import type { FoodProduct } from "../types";
 
 // ⚠️  MIRROR OF supabase/functions/_shared/types.ts.
 //     Deno and RN have separate tsconfigs; sharing one file across that
@@ -210,4 +211,59 @@ export function macroSetToFields(set: MacroSet): Record<MacroKey, string> {
     out[key] = v == null ? "" : String(v);
   }
   return out;
+}
+
+// ─── MacroSet -> FoodProduct (recipe-scan label button) ──────
+//
+// mealScanToFoodProduct()'s sibling (src/lib/mealRecognition.ts), but that
+// function never had to handle a missing macro — scan-meal-photo's schema
+// requires every one of the eight fields. A label scan doesn't have that
+// luxury: any of the eight, including the four FoodProduct treats as
+// required non-optional numbers, can come back null when the label simply
+// doesn't print it. The staple resolver hit this exact problem first (see
+// ingredients.ts's stapleToProduct()) and settled it there: never coalesce
+// a missing required macro to 0 — that's the "estimate as zero" bug this
+// project keeps re-fixing. This function takes the same narrow way out:
+// if cal/protein/carbs/fat aren't ALL present, it refuses and names what's
+// missing, rather than handing back a FoodProduct with a fabricated 0.
+
+/** The FoodProduct macros with no honest fallback — see the section header. */
+const REQUIRED_MACROS: MacroKey[] = ["cal", "protein", "carbs", "fat"];
+
+export type LabelToProductResult =
+  | { ok: true; product: FoodProduct }
+  | { ok: false; missing: MacroKey[] };
+
+/**
+ * `per100g` must already be resolved to a per-100g basis — either
+ * ExtractSuccess.per100g directly, or scaleTo100g(perServing, enteredWeight)
+ * for the needsServingWeight case. This function does no scaling itself,
+ * same division of labour LabelConfirmSheet's own `applicable` memo uses.
+ */
+export function labelExtractionToFoodProduct(
+  productName: string | null,
+  per100g: MacroSet,
+  servingG: number | null,
+  servingLabel: string | null,
+): LabelToProductResult {
+  const missing = REQUIRED_MACROS.filter((k) => per100g[k].value == null);
+  if (missing.length > 0) return { ok: false, missing };
+
+  return {
+    ok: true,
+    product: {
+      name: productName?.trim() || "Scanned ingredient",
+      brand: "",
+      cal_per100: per100g.cal.value!,
+      protein_per100: per100g.protein.value!,
+      carbs_per100: per100g.carbs.value!,
+      fat_per100: per100g.fat.value!,
+      sat_fat_per100: per100g.satFat.value ?? undefined,
+      salt_per100: per100g.salt.value ?? undefined,
+      fibre_per100: per100g.fibre.value ?? undefined,
+      sugar_per100: per100g.sugar.value ?? undefined,
+      serving_g: servingG ?? undefined,
+      serving_label: servingLabel ?? undefined,
+    },
+  };
 }

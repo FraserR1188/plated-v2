@@ -84,7 +84,22 @@ type Props = {
   onApply: (payload: LabelConfirmApply) => void;
   onDismiss: () => void;
   onRetry: () => void;
+  /**
+   * Opt-in gate for callers that need a FoodProduct out of this sheet (a
+   * scanned label has no honest fallback for a macro it never printed —
+   * see labelExtractionToFoodProduct()'s comment in lib/labelExtraction.ts,
+   * which is the same rule stapleToProduct() already applies for staples).
+   * CreateFoodScreen doesn't pass this — it only ever fills its own form
+   * fields, and a blank required field there is caught later, at Save, by
+   * canSaveCustomFood(). Undefined/false leaves this sheet's behaviour
+   * exactly as it was before this prop existed.
+   */
+  requireAllMacros?: boolean;
 };
+
+/** The FoodProduct macros with no honest fallback — mirrors the identical
+ *  list in lib/labelExtraction.ts's labelExtractionToFoodProduct(). */
+const REQUIRED_MACROS: MacroKey[] = ["cal", "protein", "carbs", "fat"];
 
 export function LabelConfirmSheet({
   visible,
@@ -94,6 +109,7 @@ export function LabelConfirmSheet({
   onApply,
   onDismiss,
   onRetry,
+  requireAllMacros,
 }: Props) {
   const insets = useSafeAreaInsets();
 
@@ -126,8 +142,18 @@ export function LabelConfirmSheet({
 
   const hasBothColumns = !!(result?.per100g && result?.perServing);
 
+  // Only meaningful once `applicable` exists — checked against the SAME
+  // per100g set handleApply is about to hand back, not `displayed` (which
+  // can be showing the per-serving column purely for verification).
+  const missingRequired: MacroKey[] = useMemo(() => {
+    if (!requireAllMacros || !applicable) return [];
+    return REQUIRED_MACROS.filter((k) => applicable[k].value == null);
+  }, [requireAllMacros, applicable]);
+
+  const blockedOnMissingMacros = requireAllMacros && missingRequired.length > 0;
+
   const handleApply = () => {
-    if (!result || !applicable) return;
+    if (!result || !applicable || blockedOnMissingMacros) return;
     onApply({
       per100g: applicable,
       // If the user typed the weight, that's the serving weight.
@@ -286,6 +312,26 @@ export function LabelConfirmSheet({
                 </View>
               )}
 
+              {/* Hard blocker, opt-in via requireAllMacros — a caller that
+                  needs a real FoodProduct out of this sheet cannot accept
+                  one with a fabricated zero where a macro was never
+                  printed. There is no per-macro edit field on this sheet
+                  (that's CreateFoodScreen's own form, which this caller
+                  doesn't have), so the only honest way out is naming what's
+                  missing and pointing back at Discard. */}
+              {blockedOnMissingMacros && (
+                <View style={styles.missingPrompt}>
+                  <Text style={styles.weightPromptTitle}>
+                    This label didn't give me {formatMissingList(missingRequired)}
+                  </Text>
+                  <Text style={styles.weightPromptText}>
+                    I can't use this scan without{" "}
+                    {missingRequired.length > 1 ? "those values" : "that value"}. Discard it
+                    and pick a product from the search box instead.
+                  </Text>
+                </View>
+              )}
+
               {/* Serving, if the label gave us one */}
               {result.servingG != null && (
                 <Text style={styles.servingNote}>
@@ -333,16 +379,16 @@ export function LabelConfirmSheet({
                   style={({ pressed }) => [
                     styles.primaryBtn,
                     styles.flex1,
-                    !applicable && styles.primaryBtnDisabled,
-                    pressed && applicable && { opacity: 0.88 },
+                    (!applicable || blockedOnMissingMacros) && styles.primaryBtnDisabled,
+                    pressed && applicable && !blockedOnMissingMacros && { opacity: 0.88 },
                   ]}
                   onPress={handleApply}
-                  disabled={!applicable}
+                  disabled={!applicable || blockedOnMissingMacros}
                 >
                   <Text
                     style={[
                       styles.primaryBtnText,
-                      !applicable && styles.primaryBtnTextDisabled,
+                      (!applicable || blockedOnMissingMacros) && styles.primaryBtnTextDisabled,
                     ]}
                   >
                     Use per-100g values
@@ -362,6 +408,14 @@ export function LabelConfirmSheet({
 }
 
 // ─── Pieces ──────────────────────────────────────────────────
+
+/** ["cal","protein"] -> "calories and protein". Used only in the
+ *  requireAllMacros warning, so plural/list phrasing beats a raw key dump. */
+function formatMissingList(keys: MacroKey[]): string {
+  const labels = keys.map((k) => MACRO_META[k].label.toLowerCase());
+  if (labels.length === 1) return labels[0];
+  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+}
 
 function hasUncertainty(set: MacroSet): boolean {
   return MACRO_KEYS.some(
@@ -537,6 +591,19 @@ const styles = StyleSheet.create(
     fontSize: Typography.xs,
     color: Colors.textSub,
     lineHeight: 17,
+  },
+
+  // ── Missing-required-macro prompt (requireAllMacros only) — Colors.danger,
+  // not WARN: unlike the weight prompt this one is a hard stop, not a "fill
+  // this in and we'll get you a number" ask.
+  missingPrompt: {
+    backgroundColor: `${Colors.danger}12`,
+    borderRadius: Radius.control,
+    borderWidth: 1,
+    borderColor: `${Colors.danger}35`,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    gap: 6,
   },
   weightRow: {
     flexDirection: "row",

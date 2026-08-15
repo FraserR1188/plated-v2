@@ -8,6 +8,7 @@
     "build:dev": "eas build -p android --profile development --local",
     "build:preview": "eas build -p android --profile preview",
     "postinstall": "patch-package",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "check:functions": "deno check --node-modules-dir=none --no-lock supabase/functions/*/index.ts"

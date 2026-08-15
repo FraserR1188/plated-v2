@@ -305,6 +305,7 @@ function IngredientRow({
   onUpdate: (patch: Partial<ConfirmRow>) => void;
   onRemove: () => void;
 }) {
+  const navigation = useNavigation<Nav>();
   const [expanded, setExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<FoodProduct[]>([]);
@@ -342,6 +343,15 @@ function IngredientRow({
     setExpanded(false);
     setSearchQuery("");
     setSearchResults([]);
+  };
+
+  // Third onScanned call site (see AddIngredientScreen and
+  // BatchIngredientPickerScreen for the other two) — a fresh closure per
+  // row, same as the candidate/search picks above: only `product` is ever
+  // touched. grams/confidence are this row's own business and must survive
+  // a product swap from any source untouched.
+  const handleScanBarcode = () => {
+    navigation.navigate("Scanner", { onScanned: (product) => onUpdate({ product }) });
   };
 
   return (
@@ -391,6 +401,13 @@ function IngredientRow({
               </Text>
             </Pressable>
           ))}
+          <Pressable
+            style={({ pressed }) => [rowStyles.scanBtn, pressed && { opacity: 0.75 }]}
+            onPress={handleScanBarcode}
+          >
+            <Text style={rowStyles.scanBtnIcon}>⌗</Text>
+            <Text style={rowStyles.scanBtnText}>Scan barcode</Text>
+          </Pressable>
           <TextInput
             style={rowStyles.searchInput}
             value={searchQuery}
@@ -575,6 +592,20 @@ const rowStyles = StyleSheet.create(
     },
     candidateRow: { paddingVertical: 8, paddingHorizontal: Spacing.sm, borderRadius: Radius.control },
     candidateName: { fontSize: Typography.sm, color: Colors.text },
+    scanBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      paddingVertical: 8,
+      borderRadius: Radius.control,
+      backgroundColor: Colors.surface,
+      borderWidth: 1,
+      borderColor: Colors.border,
+      marginTop: 2,
+    },
+    scanBtnIcon: { fontSize: Typography.sm, color: Colors.textSub, fontWeight: Typography.bold },
+    scanBtnText: { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.textSub },
     searchInput: {
       marginTop: 4,
       backgroundColor: Colors.surface,

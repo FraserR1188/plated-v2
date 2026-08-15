@@ -407,7 +407,6 @@ export function ProductScreen() {
 
   const g = parseFloat(serving) || 0;
   const f = g / 100;
-  const satFat100 = draft.sat_fat_per100 ?? 0;
 
   // Phase 2 guard: energy + protein + carbs + fat all zero ⇒ no usable
   // nutrition (see lib/macros.ts needsManualEntry — a genuine OFF
@@ -493,16 +492,22 @@ export function ProductScreen() {
     //
     // (This is also why createBundleFromEntries snapshots MealEntry →
     // meal_composition_items directly and never routes through FoodProduct.)
+    // NULL-not-zero: an unknown per-100g value (draft.X_per100 == null — the
+    // same condition previewRows' `missing` flags below key off) must stay
+    // NULL through the scale-to-serving step, not get coalesced into a
+    // fabricated 0. That 0 would be indistinguishable from a real zero the
+    // instant it lands in meal_entries, permanently — see the WRITING rule
+    // on MealEntry in src/types/index.ts.
     const macros = {
       serving_g: g,
       calories: draft.cal_per100 * f,
       protein: draft.protein_per100 * f,
       carbs: draft.carbs_per100 * f,
       fat: draft.fat_per100 * f,
-      sat_fat: satFat100 * f,
-      salt: (draft.salt_per100 ?? 0) * f,
-      fibre: (draft.fibre_per100 ?? 0) * f,
-      sugar: (draft.sugar_per100 ?? 0) * f,
+      sat_fat: draft.sat_fat_per100 != null ? draft.sat_fat_per100 * f : null,
+      salt: draft.salt_per100 != null ? draft.salt_per100 * f : null,
+      fibre: draft.fibre_per100 != null ? draft.fibre_per100 * f : null,
+      sugar: draft.sugar_per100 != null ? draft.sugar_per100 * f : null,
       eaten_at,
     };
 

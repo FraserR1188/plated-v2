@@ -18,6 +18,8 @@ import {
   bundlesOnly,
   scaleNutrient,
   scaleEntryDraftGrams,
+  scaleCompositionItem,
+  batchPortionCalories,
 } from "../compositions";
 import {
   MealComposition,
@@ -597,5 +599,154 @@ describe("scaleEntryDraftGrams — ratio scaling off the item's stored absolute 
     const scaled = scaleEntryDraftGrams(draft, 0, 10);
 
     expect(scaled).toEqual(draft);
+  });
+});
+
+// ============================================================
+// scaleCompositionItem — BatchEditorScreen's exact-precision replacement
+// for the old .toFixed()-rounded rate reconstruction. Same contract as
+// scaleEntryDraftGrams, operating on a MealCompositionItem directly instead
+// of an EntryDraft — see its comment in compositions.ts.
+// ============================================================
+
+describe("scaleCompositionItem — ratio scaling a MealCompositionItem directly", () => {
+  const baseIngredient = makeBatchIngredient({
+    id: "1",
+    serving_g: 25,
+    calories: 100,
+    protein: 8,
+    carbs: 4,
+    fat: 6,
+    sat_fat: 2,
+    salt: 0.1,
+    fibre: 1,
+    sugar: 0.5,
+  });
+
+  it("scales every macro and serving_g by targetGrams / item.serving_g", () => {
+    const scaled = scaleCompositionItem(baseIngredient, 10); // 25g -> 10g
+
+    expect(scaled.serving_g).toBe(10);
+    expect(scaled.calories).toBeCloseTo(40);
+    expect(scaled.protein).toBeCloseTo(3.2);
+    expect(scaled.carbs).toBeCloseTo(1.6);
+    expect(scaled.fat).toBeCloseTo(2.4);
+    expect(scaled.sat_fat).toBeCloseTo(0.8);
+    expect(scaled.salt).toBeCloseTo(0.04);
+    expect(scaled.fibre).toBeCloseTo(0.4);
+    expect(scaled.sugar).toBeCloseTo(0.2);
+  });
+
+  it("a NULL nutrient stays NULL after scaling — never coalesced to 0", () => {
+    const withUnknownFibre = makeBatchIngredient({
+      id: "2",
+      serving_g: 25,
+      fibre: null,
+    });
+
+    const scaled = scaleCompositionItem(withUnknownFibre, 10);
+
+    expect(scaled.fibre).toBeNull();
+  });
+
+  it("does not round the stored value — full precision, never truncated", () => {
+    // 25g -> 7g: protein 8 * (7/25) = 2.24 — not a round number.
+    const scaled = scaleCompositionItem(baseIngredient, 7);
+
+    expect(scaled.protein).toBeCloseTo(2.24);
+  });
+
+  it("scaling to 100g reproduces the exact per-100g rate with no intermediate rounding", () => {
+    // This is exactly what productFromItem does — scaleCompositionItem(item, 100).
+    // 25g at 100 cal -> rate is 400 cal/100g, exactly, not toFixed()'d.
+    const rate = scaleCompositionItem(baseIngredient, 100);
+
+    expect(rate.calories).toBe(400);
+    expect(rate.protein).toBe(32);
+    expect(rate.salt).toBeCloseTo(0.4);
+  });
+
+  it("round-trips exactly: scale to a rate, then back to a DIFFERENT quantity, matches a direct scale", () => {
+    // Reconstruct a rate (as productFromItem does), then apply it to a new
+    // quantity (as itemFromIngredient does) — must equal scaling directly
+    // from the original item to the new quantity in one step. This is the
+    // property that made the OLD .toFixed()-rounded version lossy.
+    const rate = scaleCompositionItem(baseIngredient, 100);
+    const viaRate = scaleCompositionItem(rate, 40); // rate is itself "a 100g item"
+    const direct = scaleCompositionItem(baseIngredient, 40);
+
+    expect(viaRate.calories).toBeCloseTo(direct.calories, 10);
+    expect(viaRate.protein).toBeCloseTo(direct.protein, 10);
+    expect(viaRate.salt).toBeCloseTo(direct.salt!, 10);
+  });
+
+  it("returns the item UNCHANGED when serving_g is NULL — not rescalable, no default weight", () => {
+    const noServing = makeBatchIngredient({ id: "3", serving_g: null });
+
+    const scaled = scaleCompositionItem(noServing, 10);
+
+    expect(scaled).toEqual(noServing);
+  });
+
+  it("returns the item UNCHANGED when serving_g is zero — no denominator to divide by", () => {
+    const zeroServing = makeBatchIngredient({ id: "4", serving_g: 0 });
+
+    const scaled = scaleCompositionItem(zeroServing, 10);
+
+    expect(scaled).toEqual(zeroServing);
+  });
+});
+
+describe("scaleCompositionItem + draftsFromBatch — an edited ingredient's per-serving figures stay correct", () => {
+  it("rescaling one ingredient before saving changes the batch's per-portion kcal correctly", () => {
+    // Two ingredients, yield_g = sum of their raw weights, portion_g = 100.
+    const flour = makeBatchIngredient({
+      id: "flour",
+      serving_g: 100,
+      calories: 350,
+      protein: 10,
+      carbs: 70,
+      fat: 2,
+    });
+    const butter = makeBatchIngredient({
+      id: "butter",
+      serving_g: 50,
+      calories: 350,
+      protein: 0,
+      carbs: 0,
+      fat: 40,
+    });
+
+    const before = makeComposition([flour, butter], {
+      kind: "batch",
+      yield_g: 150, // 100 + 50
+      portion_g: 100,
+    });
+    const kcalBefore = batchPortionCalories(before);
+    expect(kcalBefore).toBe(Math.round(((350 + 350) * 100) / 150)); // 467
+
+    // Edit: double the butter, 50g -> 100g. BatchEditorScreen would call
+    // scaleCompositionItem(butter, 100) and (per its own YIELD-ON-EDIT rule)
+    // require yield_g to be re-confirmed — simulated here by updating it to
+    // the new raw sum, same as the "use raw ingredient weight" suggestion chip.
+    const butterDoubled = scaleCompositionItem(butter, 100);
+    expect(butterDoubled.calories).toBeCloseTo(700);
+
+    const after = makeComposition([flour, butterDoubled], {
+      kind: "batch",
+      yield_g: 200, // 100 + 100
+      portion_g: 100,
+    });
+    const kcalAfter = batchPortionCalories(after);
+
+    // (350 + 700) * 100 / 200 = 525 — reflects the doubled butter exactly,
+    // not the old (350+350)/150 figure.
+    expect(kcalAfter).toBe(525);
+    expect(kcalAfter).not.toBe(kcalBefore);
+
+    // draftsFromBatch (what actually gets logged when this batch is applied)
+    // agrees with the same figure batchPortionCalories shows in the list.
+    const draft = draftsFromBatch(after, { date: "2026-07-27" }, new Date(2026, 6, 27, 8, 0));
+    expect(draft.calories).toBe(kcalAfter);
   });
 });

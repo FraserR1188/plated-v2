@@ -60,7 +60,7 @@ import { useFocusEffect, useNavigation, useRoute, RouteProp } from "@react-navig
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore, BatchDraftIngredient } from "../store/useStore";
-import { BatchIngredientInput } from "../lib/compositions";
+import { BatchIngredientInput, scaleCompositionItem } from "../lib/compositions";
 import {
   Colors,
   Spacing,
@@ -75,42 +75,42 @@ type Nav = NativeStackNavigationProp<RootStackParamList, "BatchEditor">;
 type Route = RouteProp<RootStackParamList, "BatchEditor">;
 
 /**
- * Reconstruct an approximate FoodProduct (per-100g rates) from an already-
- * saved batch item's ABSOLUTE macros, so an existing ingredient's quantity
- * can be edited the same way a freshly-picked one can.
+ * Reconstruct a per-100g FoodProduct rate from an already-saved batch
+ * item's ABSOLUTE macros, so an existing ingredient's quantity can be
+ * edited the same way a freshly-picked one can.
  *
- * ⚠ LOSSY, same shape and same caveat as foodLookup.mealEntryToProduct: the
- * round-trip (rate → absolute at save → rate again on next edit) does not
- * commute exactly, because of rounding at each step. Accepted here for the
- * same reason it's accepted there — the alternative is refusing to let an
- * existing ingredient's quantity be edited at all — but unlike that screen,
- * the user directly SEES and can correct the reconstructed numbers (via the
- * quantity/macros they're actively editing) before anything saves, so the
- * failure mode is "slightly off, visibly," not "silently wrong."
+ * EXACT, not lossy: scaleCompositionItem(item, 100) — "what would this
+ * item's macros be at exactly 100g" — is a single ratio-scale with no
+ * intermediate rounding, so the round-trip (rate → absolute at save → rate
+ * again on next edit) commutes exactly. This used to divide by serving_g
+ * and round to display precision (.toFixed(dp)) here directly, the same
+ * round-trip-erodes-precision trap foodLookup.mealEntryToProduct's own
+ * comment warns about — see scaleCompositionItem's comment in
+ * lib/compositions.ts for why the FIX is an exact rate rather than
+ * abandoning the FoodProduct shape: BatchEditorScreen's save path
+ * (itemFromIngredient) genuinely needs one, for every ingredient, on every
+ * Save, not just this one.
  */
 function productFromItem(item: MealCompositionItem): FoodProduct | null {
   if (item.serving_g == null || item.serving_g <= 0) return null;
-  const g = item.serving_g;
-  const rate = (v: number, dp: number) => +((v / g) * 100).toFixed(dp);
-  const rateOptional = (v: number | null, dp: number): number | undefined =>
-    v == null ? undefined : rate(v, dp);
+  const rate = scaleCompositionItem(item, 100);
 
   return {
-    name: item.name,
-    brand: item.brand ?? "",
-    cal_per100: Math.round(rate(item.calories, 0)),
-    protein_per100: rate(item.protein, 1),
-    carbs_per100: rate(item.carbs, 1),
-    fat_per100: rate(item.fat, 1),
-    sat_fat_per100: rateOptional(item.sat_fat, 1),
-    salt_per100: rateOptional(item.salt, 2),
-    fibre_per100: rateOptional(item.fibre, 1),
-    sugar_per100: rateOptional(item.sugar, 1),
-    barcode: item.barcode ?? undefined,
-    off_id: item.off_id ?? undefined,
-    image_url: item.image_url ?? undefined,
-    image_path: item.image_path ?? undefined,
-    custom_food_id: item.custom_food_id ?? undefined,
+    name: rate.name,
+    brand: rate.brand ?? "",
+    cal_per100: rate.calories,
+    protein_per100: rate.protein,
+    carbs_per100: rate.carbs,
+    fat_per100: rate.fat,
+    sat_fat_per100: rate.sat_fat ?? undefined,
+    salt_per100: rate.salt ?? undefined,
+    fibre_per100: rate.fibre ?? undefined,
+    sugar_per100: rate.sugar ?? undefined,
+    barcode: rate.barcode ?? undefined,
+    off_id: rate.off_id ?? undefined,
+    image_url: rate.image_url ?? undefined,
+    image_path: rate.image_path ?? undefined,
+    custom_food_id: rate.custom_food_id ?? undefined,
   };
 }
 

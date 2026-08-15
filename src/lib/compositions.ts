@@ -579,6 +579,41 @@ export function scaleNutrient(
 }
 
 /**
+ * The eight macro fields, shared shape between EntryDraft and
+ * MealCompositionItem (both are absolute-macros-for-a-quantity rows — see
+ * itemFromEntry's doc comment above for why that's not a coincidence).
+ * scaleEntryDraftGrams and scaleCompositionItem are two thin wrappers around
+ * the SAME ratio arithmetic on this shape — this is the "shared arithmetic"
+ * both scale to, so there is exactly one place that multiplies a macro by a
+ * ratio, not two copies that could drift.
+ */
+interface ScalableMacros {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  sat_fat: number | null;
+  salt: number | null;
+  fibre: number | null;
+  sugar: number | null;
+}
+
+function scaleMacros<T extends ScalableMacros>(macros: T, ratio: number): T {
+  return {
+    ...macros,
+    calories: macros.calories * ratio,
+    protein: macros.protein * ratio,
+    carbs: macros.carbs * ratio,
+    fat: macros.fat * ratio,
+
+    sat_fat: scaleNutrient(macros.sat_fat, ratio),
+    salt: scaleNutrient(macros.salt, ratio),
+    fibre: scaleNutrient(macros.fibre, ratio),
+    sugar: scaleNutrient(macros.sugar, ratio),
+  };
+}
+
+/**
  * Rescale an EntryDraft's macros (and serving_g) from `originalServingG` to
  * `targetGrams`. `originalServingG` is the item's TRUE saved quantity — the
  * denominator the draft's current absolute macros are already for — never
@@ -599,23 +634,43 @@ export function scaleEntryDraftGrams(
   targetGrams: number,
 ): EntryDraft {
   if (originalServingG == null || originalServingG <= 0) return draft;
-
   const ratio = targetGrams / originalServingG;
+  return { ...scaleMacros(draft, ratio), serving_g: targetGrams };
+}
 
-  return {
-    ...draft,
-    serving_g: targetGrams,
-
-    calories: draft.calories * ratio,
-    protein: draft.protein * ratio,
-    carbs: draft.carbs * ratio,
-    fat: draft.fat * ratio,
-
-    sat_fat: scaleNutrient(draft.sat_fat, ratio),
-    salt: scaleNutrient(draft.salt, ratio),
-    fibre: scaleNutrient(draft.fibre, ratio),
-    sugar: scaleNutrient(draft.sugar, ratio),
-  };
+/**
+ * Rescale a MealCompositionItem's macros (and serving_g) to `targetGrams`,
+ * from the item's OWN serving_g — there is no anchor-shifting concept for a
+ * standalone item the way a bundle-apply anchor exists for an EntryDraft, so
+ * unlike scaleEntryDraftGrams there is nothing else the denominator could
+ * legitimately be.
+ *
+ * Same contract as scaleEntryDraftGrams in every other respect: NULL in,
+ * NULL out (via scaleNutrient); full float precision, no rounding — round
+ * only at display; refuses (returns `item` UNCHANGED) when serving_g is
+ * NULL or <= 0.
+ *
+ * THE REASON THIS EXISTS: BatchEditorScreen's productFromItem used to
+ * reconstruct a per-100g rate from a saved batch ingredient by dividing by
+ * serving_g and rounding to display precision (.toFixed(dp)) — the exact
+ * round-trip-erodes-precision trap this file's Phase 1 comment already
+ * warns about for mealEntryToProduct, reintroduced by a different route.
+ * `scaleCompositionItem(item, 100)` replaces that: an EXACT ratio-scale to
+ * a 100g basis with no intermediate rounding, reshaped into FoodProduct by
+ * the caller. The FoodProduct shape itself is still genuinely needed there
+ * — BatchEditorScreen's save path (itemFromIngredient) re-derives EVERY
+ * ingredient's absolute macros from rate × quantity on every Save, edited
+ * or not (updateBatch wholesale-replaces, never diffs) — so this is a
+ * narrower fix than returning a MealCompositionItem there would be: what
+ * changes is that the rate is now exact, not that the rate goes away.
+ */
+export function scaleCompositionItem(
+  item: MealCompositionItem,
+  targetGrams: number,
+): MealCompositionItem {
+  if (item.serving_g == null || item.serving_g <= 0) return item;
+  const ratio = targetGrams / item.serving_g;
+  return { ...scaleMacros(item, ratio), serving_g: targetGrams };
 }
 
 // ─── Persisting an apply-time adjustment back to the bundle (Phase 2) ────

@@ -273,28 +273,111 @@ function nameTokens(s: string): string[] {
   return normalize(s).split(" ").filter(Boolean).map(singularise);
 }
 
-export function matchCofid(staple: SeedStaple, rows: CofidRow[]): CofidMatch | null {
-  const queries = [staple.displayName, ...staple.aliases];
+/** One (row, query) pair that satisfied token containment — every
+ *  staple.displayName/alias is still tried against every row, same as
+ *  before this file gained a ranking step; this just materialises the full
+ *  candidate set instead of reducing it inline, so the ranking function
+ *  used can vary per staple (see below). */
+interface Candidate {
+  row: CofidRow;
+  rowTokens: Set<string>;
+  extraWords: number;
+}
 
-  let best: { row: CofidRow; extraWords: number } | null = null;
+function candidatesFor(staple: SeedStaple, rows: CofidRow[]): Candidate[] {
+  const queries = [staple.displayName, ...staple.aliases];
+  const out: Candidate[] = [];
 
   for (const row of rows) {
     const rowTokens = new Set(nameTokens(row.foodName));
     for (const query of queries) {
       const qTokens = nameTokens(query);
       if (qTokens.length === 0) continue;
-      const allPresent = qTokens.every((t) => rowTokens.has(t));
-      if (!allPresent) continue;
-
-      // Prefer the row whose name has the fewest words beyond the query —
-      // "Flour, white, plain" beats "Flour, white, plain, fortified" for
-      // the query "plain flour".
-      const extraWords = rowTokens.size - qTokens.length;
-      if (!best || extraWords < best.extraWords) {
-        best = { row, extraWords };
-      }
+      if (!qTokens.every((t) => rowTokens.has(t))) continue;
+      // Fewest words beyond the query — "Flour, white, plain" beats
+      // "Flour, white, plain, fortified" for the query "plain flour".
+      out.push({ row, rowTokens, extraWords: rowTokens.size - qTokens.length });
     }
   }
+  return out;
+}
+
+// ─── Ranking — deliberately asymmetric between hinted and unhinted staples ──
+//
+// UNHINTED (staple.preparationPreference absent — the great majority of
+// SEED_STAPLES): extraWords stays the PRIMARY key, and "does this row
+// contain 'raw'" is only a TIE-BREAK between rows that are otherwise
+// EQUALLY specific. This is the conservative choice, and deliberately so:
+// most staples really are correctly matched by raw (fresh veg, raw meat/
+// fish, dry grains/pulses weighed uncooked), so a same-tier tie-break fixes
+// the one real bug that existed before this change — several raw/grilled/
+// roasted variants tying on extraWords and falling to whatever order the
+// CoFID CSV happened to list them in — without ever letting "contains raw"
+// override a row that's a textually BETTER match. Where no candidate row
+// contains "raw" at all, this is byte-identical to the old behaviour: the
+// first candidate seen at the best extraWords tier still wins.
+//
+// HINTED (staple.preparationPreference present): the hint token becomes the
+// PRIMARY key, ranked ABOVE extraWords — not merely a tie-break, and not
+// "raw" with a different word substituted in. The reason it has to rank
+// above extraWords, not alongside it: for a tinned pulse or tinned tuna,
+// the CORRECT CoFID row ("Chick peas, canned, drained") is inherently
+// LONGER than the WRONG one it needs to beat ("Chick peas, raw"), so a
+// same-tier tie-break would never even fire — the wrong row already wins
+// outright on extraWords, with no tie for a tie-break to catch. Only
+// promoting the hint above extraWords fixes that.
+//
+// Why the two cases get different treatment, not just different tokens:
+// a hint is opt-in and per-staple — a human looked at THIS one ingredient
+// and asserted "the CoFID category I actually want is canned/dried/
+// roasted", which is a narrow, reviewed claim about a single food. That is
+// a fundamentally different risk from promoting "prefer canned" (or
+// anything else) above specificity GLOBALLY, which would be wrong for the
+// ~170 staples where raw genuinely is correct. The asymmetry is what makes
+// it safe to let a hint be this aggressive.
+//
+// FALLBACK: if a hinted staple has no candidate row containing any of its
+// hint tokens (this CoFID export just doesn't have a "canned" row for it,
+// say), matchCofid() falls back to the unhinted ranking over the FULL
+// candidate set — not just the non-hinted remainder — rather than treating
+// the staple as unresolved. A missing hint category is not evidence the
+// staple has no usable match at all.
+
+function bestByExtraWordsThenRaw(candidates: Candidate[]): Candidate | null {
+  let best: Candidate | null = null;
+  for (const c of candidates) {
+    if (!best || c.extraWords < best.extraWords) {
+      best = c;
+      continue;
+    }
+    // Tie-break only — this can never let "raw" beat a MORE specific row,
+    // only decide between two that are equally specific.
+    if (c.extraWords === best.extraWords && c.rowTokens.has("raw") && !best.rowTokens.has("raw")) {
+      best = c;
+    }
+  }
+  return best;
+}
+
+function bestByHint(candidates: Candidate[], hintTokens: string[]): Candidate | null {
+  const hinted = candidates.filter((c) => hintTokens.some((t) => c.rowTokens.has(t)));
+  if (hinted.length === 0) return null; // signals "fall back to the unhinted path"
+
+  let best: Candidate | null = null;
+  for (const c of hinted) {
+    if (!best || c.extraWords < best.extraWords) best = c;
+  }
+  return best;
+}
+
+export function matchCofid(staple: SeedStaple, rows: CofidRow[]): CofidMatch | null {
+  const candidates = candidatesFor(staple, rows);
+  if (candidates.length === 0) return null;
+
+  const hintTokens = staple.preparationPreference;
+  const best =
+    (hintTokens && hintTokens.length > 0 ? bestByHint(candidates, hintTokens) : null) ??
+    bestByExtraWordsThenRaw(candidates);
 
   if (!best) return null;
   return {

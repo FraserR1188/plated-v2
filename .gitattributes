@@ -1,0 +1,21 @@
+# Normalize line endings to LF for this repo regardless of the machine's
+# global core.autocrlf — added after a CRLF flip in several source files
+# transiently broke src/lib/__tests__/mealEntriesInsertSites.test.ts, whose
+# structural check regexes assume bare \n. See that incident's cleanup
+# commit for the full story.
+* text=auto eol=lf
+
+# Binary assets — never run line-ending conversion on these; doing so
+# corrupts the file.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.jks binary
+*.keystore binary

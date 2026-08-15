@@ -373,7 +373,8 @@ function bundleItemTime(item: MealCompositionItem): TimeOfDay {
 
 /**
  * A composition item, resolved against a target day. What the UI previews
- * BEFORE it commits, and what applyComposition actually inserts.
+ * BEFORE it commits, and (once scaled per-item — see draftsFromComposition,
+ * scaleEntryDraftGrams) what actually gets inserted.
  */
 export interface CompositionItemPreview {
   item: MealCompositionItem;
@@ -403,9 +404,9 @@ export interface CompositionItemPreview {
  *
  * ⚠ DELIBERATELY UN-ANCHORED. This always previews the bundle's SAVED times,
  * never a picked apply-time anchor — there is no "preview with the new
- * anchor" step in the apply flow. The anchor (see draftsFromComposition,
- * applyComposition) only exists between tapping Add and the picker resolving;
- * it never becomes UI state this function could read.
+ * anchor" step in the apply flow. The anchor (see draftsFromComposition)
+ * only exists between tapping Add and the picker resolving; it never
+ * becomes UI state this function could read.
  *
  * ⚠ RENDER PATH — DEGRADES, NEVER THROWS.
  *
@@ -523,10 +524,9 @@ export function draftsFromComposition(
 
 /**
  * Insert already-resolved drafts for a composition and bump its use count.
- * Shared tail end of both applyComposition (unmodified quantities) and the
- * apply-time quantity review (Phase 1 — see scaleEntryDraftGrams below),
- * which builds its own drafts via draftsFromComposition + per-item scaling
- * and then has nothing left to do but this.
+ * The only caller is useStore's applyCompositionDraft — the review flow
+ * builds its own drafts via draftsFromComposition + per-item scaling (see
+ * scaleEntryDraftGrams below) and then has nothing left to do but this.
  *
  * The use-count bump happens AFTER the insert succeeds, and its failure is
  * swallowed: a bundle you applied is a bundle you used, and a bundle whose
@@ -547,30 +547,6 @@ export async function applyCompositionDrafts(
   if (error) reportError("bumpCompositionUse", error);
 
   return inserted;
-}
-
-/**
- * Apply a bundle to a day, using each item's own saved quantity unmodified.
- * Returns the inserted rows, WITH the trigger's `planned` decision already
- * in them.
- *
- * `anchor`, if given, re-times the whole bundle at once — see
- * draftsFromComposition.
- *
- * No live caller as of Phase 1 (apply-time quantity adjustment) — the
- * ApplyBundleSheet's Add button now routes through the review screen
- * (BundleApplyReviewScreen / useStore's compositionApplyDraft slice)
- * instead. Kept as the lower-level primitive rather than deleted: it's a
- * legitimate "apply exactly as saved, skip the review step" operation and
- * may get a caller again.
- */
-export async function applyComposition(
-  composition: MealCompositionWithItems,
-  targetDayKey: string,
-  anchor?: TimeOfDay,
-): Promise<MealEntry[]> {
-  const drafts = draftsFromComposition(composition, targetDayKey, anchor);
-  return applyCompositionDrafts(composition.id, drafts);
 }
 
 // ─── Apply-time quantity adjustment (Phase 1) ───────────────────────────
@@ -692,12 +668,22 @@ export interface CompositionItemQuantityUpdate {
  * and runs strictly after, the apply that already logged the meal (see
  * useStore.ts's saveCompositionApplyQuantities) — retrying is just calling
  * this again with the same (still-correct) `updates`.
+ *
+ * ⚠ A ZERO-ROW RESULT IS A FAILURE, NOT SUCCESS. Manually verified against
+ * the real table: a foreign auth.uid() attempting this same UPDATE gets NO
+ * error — meal_composition_items_update_own's USING clause just filters the
+ * row out of the update set, so Postgrest reports normal success with zero
+ * rows affected. Without `.select("id")` here, that's indistinguishable
+ * from every row genuinely being updated: the caller would believe an edit
+ * saved when nothing was written at all. `.select("id")` gets the affected
+ * row(s) back in the response, so an empty result can be checked for and
+ * thrown on explicitly, same as any other failure.
  */
 export async function updateCompositionItemQuantities(
   updates: CompositionItemQuantityUpdate[],
 ): Promise<void> {
   for (const u of updates) {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("meal_composition_items")
       .update({
         serving_g: u.serving_g,
@@ -710,11 +696,26 @@ export async function updateCompositionItemQuantities(
         fibre: u.fibre,
         sugar: u.sugar,
       })
-      .eq("id", u.itemId);
+      .eq("id", u.itemId)
+      .select("id");
 
     if (error) {
       reportError("updateCompositionItemQuantities", error, { level: "error" });
       throw error;
+    }
+
+    if (!data || data.length === 0) {
+      const zeroRowError = new Error(
+        `updateCompositionItemQuantities: item ${u.itemId} matched zero rows. ` +
+          `Not necessarily an error from Postgrest's point of view (RLS can ` +
+          `filter a row out of an UPDATE's target set without raising one), ` +
+          `but nothing was actually saved — treated as a failure rather than ` +
+          `silent success.`,
+      );
+      reportError("updateCompositionItemQuantities", zeroRowError, {
+        level: "error",
+      });
+      throw zeroRowError;
     }
   }
 }

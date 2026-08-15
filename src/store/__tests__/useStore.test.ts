@@ -416,17 +416,24 @@ function makeEntryDraft(overrides: Partial<EntryDraft> = {}): EntryDraft {
 }
 
 /** Wire supabase.from("meal_composition_items").update(row).eq("id", id)
- *  to a single shared mock, so every call in a saveCompositionApplyQuantities
- *  run (one per changed row, sequential) lands in update.mock.calls /
- *  eq.mock.calls for inspection. */
-function mockCompositionItemsUpdate() {
-  const eq = vi.fn(async () => ({ error: null }));
+ *  .select("id") to a single shared mock, so every call in a
+ *  saveCompositionApplyQuantities run (one per changed row, sequential)
+ *  lands in update.mock.calls / eq.mock.calls for inspection.
+ *
+ * `returning` defaults to one row — a real UPDATE that actually matched
+ * something — since most tests care about the payload/call shape, not the
+ * row-count check. Pass `[]` to simulate the zero-row RLS-filtered case
+ * (see updateCompositionItemQuantities's own comment on why that must not
+ * read as success). */
+function mockCompositionItemsUpdate(returning: { id: string }[] = [{ id: "row" }]) {
+  const select = vi.fn(async () => ({ data: returning, error: null }));
+  const eq = vi.fn(() => ({ select }));
   const update = vi.fn((row: unknown) => {
     void row;
     return { eq };
   });
   (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ update });
-  return { update, eq };
+  return { update, eq, select };
 }
 
 describe("useStore.saveCompositionApplyQuantities", () => {
@@ -563,6 +570,29 @@ describe("useStore.saveCompositionApplyQuantities", () => {
 
     expect(result.error).not.toBeNull();
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("treats a zero-row UPDATE result as a failure, not silent success", async () => {
+    // Reproduces exactly what manual RLS testing found: a foreign auth.uid()
+    // updating this table gets NO Postgrest error — the USING clause just
+    // filters the row out of the update's target set, so the request
+    // "succeeds" with zero rows affected. Simulated here by returning an
+    // empty array from .select("id") rather than by mocking an error.
+    const item = makeCompositionItem({ id: "1", serving_g: 25 });
+    const composition = makeMealComposition([item]);
+    useStore.setState({ compositions: [composition] });
+
+    useStore.getState().startCompositionApplyDraft(composition, "2026-07-27");
+    useStore.getState().setCompositionApplyItemGrams("1", 10);
+
+    mockCompositionItemsUpdate([]); // zero rows returned
+
+    const result = await useStore.getState().saveCompositionApplyQuantities();
+
+    expect(result.error).not.toBeNull();
+    // The cache must NOT show the edit as saved when nothing actually was.
+    const cachedItem = useStore.getState().compositions[0].items[0];
+    expect(cachedItem.serving_g).toBe(25);
   });
 });
 

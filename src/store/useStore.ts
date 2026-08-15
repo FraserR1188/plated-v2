@@ -305,12 +305,6 @@ interface AppState {
     composition: MealCompositionWithItems,
     entries: MealEntry[],
   ) => Promise<WriteResult>;
-  /** `anchor`, if given, re-times the whole bundle — see draftsFromComposition. */
-  applyCompositionToDay: (
-    composition: MealCompositionWithItems,
-    targetDayKey: string,
-    anchor?: TimeOfDay,
-  ) => Promise<WriteResult>;
   renameComposition: (compositionId: string, name: string) => Promise<WriteResult>;
   removeCompositionItem: (
     compositionId: string,
@@ -320,8 +314,8 @@ interface AppState {
 
   // ── Apply-time quantity review (Phase 1, pre-apply — see CompositionApplyDraft) ──
   compositionApplyDraft: CompositionApplyDraft | null;
-  /** Builds the draft from draftsFromComposition — same anchor semantics as
-   *  applyCompositionToDay, just deferred a screen. */
+  /** Builds the draft from draftsFromComposition. `anchor`, if given,
+   *  re-times the whole bundle at once — see draftsFromComposition. */
   startCompositionApplyDraft: (
     composition: MealCompositionWithItems,
     targetDayKey: string,
@@ -330,11 +324,13 @@ interface AppState {
   setCompositionApplyItemGrams: (itemId: string, grams: number) => void;
   resetCompositionApplyDraft: () => void;
   /** Scales every item off its own originalDraft/currentGramsG, inserts via
-   *  applyCompositionDrafts, and mirrors the use-count bump locally — same
-   *  shape as applyCompositionToDay. Does NOT clear compositionApplyDraft on
-   *  success; BundleApplyReviewScreen's beforeRemove listener owns that, so
-   *  the screen doesn't race its own "no draft" guard against a mid-confirm
-   *  state change. */
+   *  applyCompositionDrafts, and mirrors the use-count bump locally. Does NOT
+   *  clear compositionApplyDraft on success; BundleApplyReviewScreen's
+   *  beforeRemove listener owns that, so the screen doesn't race its own
+   *  "no draft" guard against a mid-confirm state change. THE only path that
+   *  applies a bundle as of Phase 1 — ApplyBundleSheet's Add button always
+   *  routes through BundleApplyReviewScreen first; there is no direct,
+   *  un-reviewed apply. */
   applyCompositionDraft: () => Promise<WriteResult>;
   /**
    * Phase 2: "Also update this bundle." Independent of applyCompositionDraft
@@ -981,41 +977,6 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
 
-  applyCompositionToDay: async (composition, targetDayKey, anchor) => {
-    try {
-      const inserted = await compositionApi.applyComposition(
-        composition,
-        targetDayKey,
-        anchor,
-      );
-      set((s) => ({
-        entries: [...inserted, ...s.entries],
-        // Mirror the RPC's effect locally so the list re-sorts immediately,
-        // rather than jumping around on the next fetch.
-        compositions: s.compositions
-          .map((c) =>
-            c.id === composition.id
-              ? {
-                  ...c,
-                  use_count: c.use_count + 1,
-                  last_used_at: new Date().toISOString(),
-                }
-              : c,
-          )
-          .sort((a, z) => {
-            const al = a.last_used_at ?? "";
-            const zl = z.last_used_at ?? "";
-            if (al !== zl) return zl.localeCompare(al);
-            return z.use_count - a.use_count;
-          }),
-      }));
-      return { error: null };
-    } catch (e) {
-      reportError("applyCompositionToDay", e, { level: "error" });
-      return { error: msg(e, "Couldn't apply the bundle.") };
-    }
-  },
-
   startCompositionApplyDraft: (composition, targetDayKey, anchor) => {
     const drafts = compositionApi.draftsFromComposition(
       composition,
@@ -1071,7 +1032,9 @@ export const useStore = create<AppState>((set, get) => ({
       );
       set((s) => ({
         entries: [...inserted, ...s.entries],
-        // Mirror the RPC's effect locally, same as applyCompositionToDay.
+        // Mirror bump_composition_use's effect locally so the compositions
+        // list re-sorts (last_used_at desc, then use_count desc) immediately,
+        // rather than jumping around on the next fetch.
         compositions: s.compositions
           .map((c) =>
             c.id === draft.compositionId
@@ -1144,7 +1107,7 @@ export const useStore = create<AppState>((set, get) => ({
       set((s) => ({
         // In-place cache update, not a refetch — matches every other
         // composition write in this store (addEntriesToBundle,
-        // applyCompositionToDay, removeCompositionItem, etc). This is also
+        // applyCompositionDraft, removeCompositionItem, etc). This is also
         // what keeps ApplyBundleSheet's "N items · Xkcal" subtitle
         // (computed fresh from bundle.items at render) correct immediately,
         // without a round-trip.
@@ -1274,7 +1237,8 @@ export const useStore = create<AppState>((set, get) => ({
         : await compositionApi.applyBatch(composition, { date: todayKey() });
       set((s) => ({
         entries: [inserted, ...s.entries],
-        // Mirror the RPC's effect locally, same as applyCompositionToDay.
+        // Mirror bump_composition_use's effect locally, same as
+        // applyCompositionDraft.
         compositions: s.compositions
           .map((c) =>
             c.id === composition.id

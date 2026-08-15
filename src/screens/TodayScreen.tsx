@@ -37,8 +37,6 @@ import {
   formatTime,
   formatDayLabel,
   formatTimeOfDay,
-  localHM,
-  minutesSinceLocalMidnight,
   isFutureDay,
   parseDateKey,
   dateKey,
@@ -46,6 +44,7 @@ import {
   parseTimeOfDay,
   earliestTimeOfDay,
   sameTimeOnDay,
+  sectionForTime,
   willBePlanned,
   TimeOfDay,
   DEFAULT_HOUR,
@@ -1718,26 +1717,32 @@ function CopyToSheet({
   // selection's ids as well as `visible`: the sheet stays mounted between
   // opens (only its Modal `visible` prop toggles), so re-opening on the SAME
   // set after a Cancel must still reset, not resume the cancelled edit.
+  //
+  // Seeds are "now", not the source entries' eaten_at. Copying is creating a
+  // NEW row — the source's original day/time say when THAT meal happened, not
+  // when you mean to log the copy. sharedMealType(entries) still decides
+  // shared-vs-each MODE (do the sections already agree?), but no longer seeds
+  // the mealType value itself — see the sectionForTime() call below.
+  //
+  // Day, time and meal are all derived from ONE `now`, captured once at the
+  // top, so they can't disagree across a midnight or noon boundary the effect
+  // straddles mid-run.
   const idsKey = entries.map((e) => e.id).join(",");
   useEffect(() => {
     if (!visible || entries.length === 0) return;
 
+    const now = new Date();
+    const nowIso = now.toISOString();
     const shared = sharedMealType(entries);
+
+    setDayKey(dateKey(now));
 
     if (shared !== null) {
       setMode("shared");
-      const earliest = entries.reduce((min, e) =>
-        minutesSinceLocalMidnight(e.eaten_at) <
-        minutesSinceLocalMidnight(min.eaten_at)
-          ? e
-          : min,
-      );
-      setDayKey(dateKey(new Date(earliest.eaten_at)));
-      setMealType(shared);
-      setTime(localHM(earliest.eaten_at));
+      setMealType(sectionForTime(nowIso));
+      setTime({ hours: now.getHours(), minutes: now.getMinutes() });
     } else {
       setMode("each");
-      setDayKey(dateKey(new Date(entries[0].eaten_at)));
     }
   }, [visible, idsKey]);
 

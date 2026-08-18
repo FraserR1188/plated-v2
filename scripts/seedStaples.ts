@@ -202,8 +202,18 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'ghee', displayName: 'Ghee', aliases: ['clarified butter'], cofidOverride: '17-640', /* Ghee, butter */ },
 
   // Meat, poultry & fish
-  { slug: 'chicken-breast', displayName: 'Chicken breast', aliases: ['chicken breast fillet', 'skinless chicken breast'] },
-  { slug: 'chicken-thigh', displayName: 'Chicken thigh', aliases: ['boneless chicken thigh'] },
+  //
+  // No chicken-breast / chicken-thigh staple: CoFID carries no raw chicken
+  // row of any kind — every candidate is cooked (casseroled, roasted,
+  // grilled), roughly 30% high on calories and protein versus raw for two
+  // of the most heavily used ingredients in this list. Dropping just
+  // cofidOverride was tried and wasn't enough — matchCofid() still resolved
+  // both to a casseroled row on its own. And a staple hit short-circuits
+  // the OFF tier entirely (see resolveIngredient()'s tier 2 in
+  // src/lib/ingredients.ts), so seeding either one, however it's found,
+  // would permanently block the client from ever reaching OFF's raw
+  // chicken entries. Absence from this table — not a corrected code — is
+  // what routes these two to OFF.
   { slug: 'beef-mince', displayName: 'Beef mince', aliases: ['minced beef', 'ground beef'], cofidOverride: '18-469', /* Beef, mince, raw */ },
   { slug: 'pork-mince', displayName: 'Pork mince', aliases: ['minced pork', 'ground pork'], cofidOverride: '18-606', /* Pork, mince, raw */ },
   { slug: 'lamb-mince', displayName: 'Lamb mince', aliases: ['minced lamb', 'ground lamb'], cofidOverride: '18-481', /* Lamb, mince, raw */ },

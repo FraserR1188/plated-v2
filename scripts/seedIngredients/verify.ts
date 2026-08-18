@@ -130,10 +130,10 @@ export const CHECKS: CheckDef[] = [
     title: "Row count vs the seed list",
     mode: "assert",
     sql: `-- 0. Row count vs the seed list ----------------------------------------------
--- Expected: 190 (matches SEED_STAPLES). Fewer => the importer dropped whole rows
+-- Expected: 189 (matches SEED_STAPLES). Fewer => the importer dropped whole rows
 -- on total miss rather than inserting a NULL-macro row. Note which behaviour it is;
 -- it changes how you read Q1 (absent row vs present-but-NULL row).
-select count(*) as total_rows from public.core_ingredients;   -- expect 190`,
+select count(*) as total_rows from public.core_ingredients;   -- expect 189`,
     evaluate: (rows) => {
       const total = rows.length;
       const expected = SEED_STAPLES.length;

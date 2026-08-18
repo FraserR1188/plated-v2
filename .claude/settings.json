@@ -1,4 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(curl -s \"https://api.github.com/repos/FraserR1188/plated-v2/actions/runs?branch=master&per_page=10\")",
+      "Bash(node -e ' *)",
+      "Bash(grep -n \"^    <View style={\\\\[rowStyles.card\\\\|^    </View>$\\\\|<LabelConfirmSheet\\\\|^    />$\\\\|^    </>$\" src/screens/RecipeConfirmScreen.tsx)",
+      "Bash(git diff *)"
+    ]
+  },
   "enabledPlugins": {
     "expo@claude-plugins-official": true
   }

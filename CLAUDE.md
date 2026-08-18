@@ -39,6 +39,7 @@ These are the source of most historical bugs. Each one is an invariant, not a pr
 - **Recovery has a one-cycle lag** (nutrition cycle N-1 → recovery score cycle N). **Strain pairs with the same-cycle nutrition.** Don't pool or realign these.
 - **WHOOP cycle intervals are stored in UTC. Never join on calendar dates.**
 - **Plans count toward daily goals but not toward the WHOOP correlation.**
+- **No shared, server-side, barcode-keyed cache of Open Food Facts responses.** plated currently makes only "Produced Works" under ODbL §4.3 — OFF values are copied onto a user's own `meal_entries` / `meal_composition_items` row at log time, and every lookup hits the OFF API live. There is deliberately no shared cache. A store that accumulates OFF records across users and is consulted before the API is a "Derivative Database" under ODbL §4.4, which triggers share-alike and the §4.6 obligation to offer a machine-readable copy of that database free of charge. If a cache is needed for latency or rate limits, **scope it per-user**. Attribution strings live in `src/content/attributions.ts` and are mirrored manually at platedapp.uk/attributions.html — update both together.
 
 ## Product/data rules
 

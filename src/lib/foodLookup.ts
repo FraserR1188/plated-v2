@@ -88,19 +88,35 @@ export function mealEntryToProduct(e: MealEntry): FoodProduct | null {
   if (e.serving_g == null || e.serving_g <= 0) return null;
 
   const g = e.serving_g;
-  const per100 = (v: number | undefined | null) => ((v ?? 0) / g) * 100;
+
+  // Small four are nullable — NULL must survive the reconstruction. `?? 0`
+  // here would fabricate a zero for a macro we genuinely don't know, exactly
+  // the mistake this function used to make. Same discipline as
+  // itemFromIngredient's `!= null ? v * f : null` in
+  // src/lib/compositions.ts:1053-1056, applied to the reverse
+  // (per-serving -> per-100g) direction.
+  const per100 = (v: number | null | undefined) =>
+    v == null ? undefined : (v / g) * 100;
+
+  // Big four are NOT NULL on MealEntry — per100() can never actually return
+  // undefined for these four calls; the `!` documents that guarantee rather
+  // than asserting past a real possibility.
+  const satFat100 = per100(e.sat_fat);
+  const salt100 = per100(e.salt);
+  const fibre100 = per100(e.fibre);
+  const sugar100 = per100(e.sugar);
 
   return {
     name: e.name,
     brand: e.brand ?? "",
-    cal_per100: Math.round(per100(e.calories)),
-    protein_per100: +per100(e.protein).toFixed(1),
-    carbs_per100: +per100(e.carbs).toFixed(1),
-    fat_per100: +per100(e.fat).toFixed(1),
-    sat_fat_per100: +per100(e.sat_fat).toFixed(1),
-    salt_per100: +per100(e.salt).toFixed(2),
-    fibre_per100: +per100(e.fibre).toFixed(1),
-    sugar_per100: +per100(e.sugar).toFixed(1),
+    cal_per100: Math.round(per100(e.calories)!),
+    protein_per100: +per100(e.protein)!.toFixed(1),
+    carbs_per100: +per100(e.carbs)!.toFixed(1),
+    fat_per100: +per100(e.fat)!.toFixed(1),
+    sat_fat_per100: satFat100 != null ? +satFat100.toFixed(1) : undefined,
+    salt_per100: salt100 != null ? +salt100.toFixed(2) : undefined,
+    fibre_per100: fibre100 != null ? +fibre100.toFixed(1) : undefined,
+    sugar_per100: sugar100 != null ? +sugar100.toFixed(1) : undefined,
     barcode: e.barcode ?? undefined,
     off_id: e.off_id ?? undefined,
 

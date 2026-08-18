@@ -104,9 +104,19 @@ describe("mealEntryToProduct", () => {
     expect(product.sugar_per100).toBe(1.6);
   });
 
-  it("treats NULL macros as zero for the per-100g reconstruction, not as missing", () => {
+  it("preserves NULL small-macros as undefined, not zero, through the per-100g reconstruction", () => {
     const product = mealEntryToProduct(
       makeEntry({ salt: null, fibre: null, sugar: null, sat_fat: null }),
+    )!;
+    expect(product.salt_per100).toBeUndefined();
+    expect(product.fibre_per100).toBeUndefined();
+    expect(product.sugar_per100).toBeUndefined();
+    expect(product.sat_fat_per100).toBeUndefined();
+  });
+
+  it("preserves a genuine typed 0 small-macro as 0, not undefined", () => {
+    const product = mealEntryToProduct(
+      makeEntry({ salt: 0, fibre: 0, sugar: 0, sat_fat: 0 }),
     )!;
     expect(product.salt_per100).toBe(0);
     expect(product.fibre_per100).toBe(0);

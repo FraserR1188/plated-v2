@@ -88,9 +88,21 @@ function entryToProduct(entry: MealEntry): FoodProduct {
     protein_per100: parseFloat((entry.protein * factor).toFixed(1)),
     carbs_per100: parseFloat((entry.carbs * factor).toFixed(1)),
     fat_per100: parseFloat((entry.fat * factor).toFixed(1)),
-    salt_per100: parseFloat(((entry.salt ?? 0) * factor).toFixed(2)),
-    fibre_per100: parseFloat(((entry.fibre ?? 0) * factor).toFixed(1)),
-    sugar_per100: parseFloat(((entry.sugar ?? 0) * factor).toFixed(1)),
+    // NULL stays NULL — a friend's unknown salt/fibre/sugar must not become
+    // an asserted zero the moment you copy their entry into your own log.
+    // See foodLookup.mealEntryToProduct for the same fix on the edit path.
+    salt_per100:
+      entry.salt != null
+        ? parseFloat((entry.salt * factor).toFixed(2))
+        : undefined,
+    fibre_per100:
+      entry.fibre != null
+        ? parseFloat((entry.fibre * factor).toFixed(1))
+        : undefined,
+    sugar_per100:
+      entry.sugar != null
+        ? parseFloat((entry.sugar * factor).toFixed(1))
+        : undefined,
     serving_g: entry.serving_g ?? undefined,
   };
 }

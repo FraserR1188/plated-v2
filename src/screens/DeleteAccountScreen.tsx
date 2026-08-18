@@ -22,6 +22,8 @@ import {
   ScrollView,
   ActivityIndicator,
   Pressable,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -96,94 +98,113 @@ export function DeleteAccountScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+      {/* behavior is deliberately undefined on Android: native windowSoftInputMode
+          resize (the default here — softwareKeyboardLayoutMode is unset in
+          app.json) plus this ScrollView already shift content correctly.
+          Adding 'height' or 'padding' on top of that fights the native resize
+          and produces a doubled offset — don't "fix" this into a value. */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={{ flex: 1 }}
       >
-        <Text style={styles.heading}>Delete account</Text>
-        <Text style={styles.intro}>
-          This permanently deletes your plated account. It cannot be undone.
-        </Text>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>This removes</Text>
-          {CONSEQUENCES.map((line) => (
-            <View key={line} style={styles.bulletRow}>
-              <Text style={styles.bulletDot}>·</Text>
-              <Text style={styles.bulletText}>{line}</Text>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>This does not remove</Text>
-          <View style={styles.bulletRow}>
-            <Text style={styles.bulletDot}>·</Text>
-            <Text style={styles.bulletText}>
-              Entries a friend copied from your log into theirs — those
-              became their own record at the moment they copied it, with no
-              link back to your account.
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.confirmWrap}>
-          <Text style={styles.confirmLabel}>
-            Type your account email to confirm
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          // Not optional: without this, the first tap on the confirm button
+          // is swallowed dismissing the keyboard instead of registering —
+          // on a destructive action, that reads as a broken button.
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.heading}>Delete account</Text>
+          <Text style={styles.intro}>
+            This permanently deletes your plated account. It cannot be
+            undone.
           </Text>
-          <Text style={styles.confirmEmail}>{accountEmail ?? "…"}</Text>
-          <TextInput
-            style={styles.input}
-            value={input}
-            onChangeText={(t) => {
-              setInput(t);
-              setError(null);
-            }}
-            placeholder="you@example.com"
-            placeholderTextColor={Colors.textMuted}
-            autoCapitalize="none"
-            autoCorrect={false}
-            keyboardType="email-address"
-            editable={!deleting}
-          />
-        </View>
 
-        {error && <Text style={styles.errorText}>{error}</Text>}
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>This removes</Text>
+            {CONSEQUENCES.map((line) => (
+              <View key={line} style={styles.bulletRow}>
+                <Text style={styles.bulletDot}>·</Text>
+                <Text style={styles.bulletText}>{line}</Text>
+              </View>
+            ))}
+          </View>
 
-        <Pressable
-          style={({ pressed }) => [
-            styles.deleteBtn,
-            !matches && styles.deleteBtnDisabled,
-            pressed && matches && { opacity: 0.85 },
-          ]}
-          onPress={handleDelete}
-          disabled={!matches || deleting}
-        >
-          {deleting ? (
-            <ActivityIndicator color={Colors.bg} />
-          ) : (
-            <Text
-              style={[
-                styles.deleteBtnText,
-                !matches && styles.deleteBtnTextDisabled,
-              ]}
-            >
-              Permanently delete my account
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>This does not remove</Text>
+            <View style={styles.bulletRow}>
+              <Text style={styles.bulletDot}>·</Text>
+              <Text style={styles.bulletText}>
+                Entries a friend copied from your log into theirs — those
+                became their own record at the moment they copied it, with no
+                link back to your account.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.confirmWrap}>
+            <Text style={styles.confirmLabel}>
+              Type your account email to confirm
             </Text>
-          )}
-        </Pressable>
+            <Text style={styles.confirmEmail}>{accountEmail ?? "…"}</Text>
+            <TextInput
+              style={styles.input}
+              value={input}
+              onChangeText={(t) => {
+                setInput(t);
+                setError(null);
+              }}
+              placeholder="you@example.com"
+              placeholderTextColor={Colors.textMuted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              editable={!deleting}
+              // The keyboard is already up while the consequence text above
+              // is being read, so the layout doesn't reflow at the moment
+              // of commitment — the input and confirm button are exactly
+              // where the user last saw them when they decide to type.
+              autoFocus
+            />
+          </View>
 
-        <Pressable
-          style={styles.cancelBtn}
-          onPress={() => navigation.goBack()}
-          disabled={deleting}
-        >
-          <Text style={styles.cancelBtnText}>Cancel</Text>
-        </Pressable>
+          {error && <Text style={styles.errorText}>{error}</Text>}
 
-        <View style={{ height: Spacing.xxl }} />
-      </ScrollView>
+          <Pressable
+            style={({ pressed }) => [
+              styles.deleteBtn,
+              !matches && styles.deleteBtnDisabled,
+              pressed && matches && { opacity: 0.85 },
+            ]}
+            onPress={handleDelete}
+            disabled={!matches || deleting}
+          >
+            {deleting ? (
+              <ActivityIndicator color={Colors.bg} />
+            ) : (
+              <Text
+                style={[
+                  styles.deleteBtnText,
+                  !matches && styles.deleteBtnTextDisabled,
+                ]}
+              >
+                Permanently delete my account
+              </Text>
+            )}
+          </Pressable>
+
+          <Pressable
+            style={styles.cancelBtn}
+            onPress={() => navigation.goBack()}
+            disabled={deleting}
+          >
+            <Text style={styles.cancelBtnText}>Cancel</Text>
+          </Pressable>
+
+          <View style={{ height: Spacing.xxl }} />
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -197,6 +218,7 @@ const styles = StyleSheet.create(
     scroll: {
       paddingHorizontal: Spacing.md,
       paddingTop: Spacing.md,
+      paddingBottom: 32,
     },
     heading: {
       fontSize: Typography.xl,

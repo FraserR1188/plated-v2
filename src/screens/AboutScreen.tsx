@@ -12,25 +12,17 @@
 // ============================================================
 
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Alert } from "react-native";
-import * as Linking from "expo-linking";
+import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Colors, Spacing, Radius, Typography, withDefaultFont } from "../theme/tokens";
 import { DATA_SOURCES, type Licence } from "../content/attributions";
+import { openURL } from "../lib/links";
 import appJson from "../../app.json";
 
 const APP_VERSION = appJson.expo.version;
 const PRIVACY_URL = "https://platedapp.uk/plated-privacy.html";
 // const ATTRIBUTIONS_URL = "https://platedapp.uk/attributions.html"; // commit 3
 const SUPPORT_EMAIL = "robbie@fraseranalytics.com";
-
-async function openURL(url: string) {
-  try {
-    await Linking.openURL(url);
-  } catch {
-    Alert.alert("Couldn't open link", "Check your connection and try again.");
-  }
-}
 
 export function AboutScreen() {
   return (

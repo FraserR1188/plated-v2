@@ -18,6 +18,8 @@
 // version number when editing it.
 // ============================================================
 
+import type { FoodProduct } from "../types";
+
 export type Licence = {
   /** Display name, e.g. "Open Database License (ODbL) v1.0". */
   name: string;
@@ -39,6 +41,12 @@ export type DataSource = {
   statement: string;
   /** One-line version for in-context use (e.g. ProductScreen's OFF badge). */
   inlineNotice: string;
+  /**
+   * One-line version for a RESULT SET, not a single product — rendered once
+   * above a list (e.g. AddIngredientScreen's search results), not per row.
+   * Also reused verbatim by platedapp.uk/attributions.html (commit 3).
+   */
+  listNotice: string;
   sourceUrl: string;
   licences: Licence[];
 };
@@ -52,6 +60,7 @@ export const DATA_SOURCES: DataSource[] = [
     statement:
       "Nutrient data for generic foods and cooking ingredients is derived from McCance and Widdowson's The Composition of Foods Integrated Dataset 2021, Public Health England. © Crown copyright 2021. Contains public sector information licensed under the Open Government Licence v3.0.",
     inlineNotice: "Source: CoFID 2021, Public Health England (OGL v3.0)",
+    listNotice: "Results from CoFID 2021, Public Health England (OGL v3.0)",
     sourceUrl:
       "https://www.gov.uk/government/publications/composition-of-foods-integrated-dataset-cofid",
     licences: [
@@ -69,6 +78,7 @@ export const DATA_SOURCES: DataSource[] = [
     statement:
       "Branded product information and product photos are provided by Open Food Facts and its contributors. Contains information from Open Food Facts, which is made available here under the Open Database License (ODbL). Product photos are made available under the Creative Commons Attribution-ShareAlike licence.",
     inlineNotice: "Source: Open Food Facts (ODbL)",
+    listNotice: "Results from Open Food Facts (ODbL)",
     sourceUrl: "https://world.openfoodfacts.org",
     licences: [
       {
@@ -84,3 +94,15 @@ export const DATA_SOURCES: DataSource[] = [
     ],
   },
 ];
+
+/**
+ * FoodProduct.source is `"off" | "custom" | undefined` (src/types/index.ts)
+ * — `undefined` covers every OFF product resolved before source-tagging
+ * existed ("undefined = OFF (legacy paths)"). An ABSENT value here means
+ * Open Food Facts, not "unknown". This is the one place that convention is
+ * spelled out in code — never write `source === undefined` directly in a
+ * screen or component.
+ */
+export function isOpenFoodFactsSourced(source: FoodProduct["source"]): boolean {
+  return source === undefined || source === "off";
+}

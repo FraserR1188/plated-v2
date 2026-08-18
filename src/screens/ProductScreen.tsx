@@ -48,6 +48,7 @@ import {
   MEAL_LABELS,
 } from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
+import { SourceNotice } from "../components/SourceNotice";
 import { scanMealPhoto, mealScanToFoodProduct, MacroKey } from "../lib/mealRecognition";
 import {
   computeServingTotals,
@@ -945,6 +946,7 @@ export function ProductScreen() {
               ) : null}
             </View>
           </View>
+          <SourceNotice source={draft.source} barcode={draft.barcode} />
           <View style={styles.cardDivider} />
           <Text style={styles.refLabel}>Per 100g</Text>
           <View style={styles.macroGrid}>

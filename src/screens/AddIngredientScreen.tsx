@@ -46,6 +46,7 @@ import {
   SavedIngredient,
   MEAL_LABELS,
 } from "../types";
+import { SourceListNotice } from "../components/SourceNotice";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "AddIngredient">;
 type Route = RouteProp<RootStackParamList, "AddIngredient">;
@@ -342,56 +343,59 @@ export function AddIngredientScreen() {
               </View>
 
               {!showSearchError && results.length > 0 && (
-                <View style={styles.resultsList}>
-                  {results.map((p, i) => (
-                    <Pressable
-                      key={i}
-                      style={({ pressed }) => [
-                        styles.resultRow,
-                        i < results.length - 1 && styles.resultBorder,
-                        pressed && { backgroundColor: Colors.surface2 },
-                      ]}
-                      onPress={() => handleSelectProduct(p)}
-                    >
-                      <RowThumb uri={p.image_thumb_url} />
-                      <View style={styles.resultBody}>
-                        <Text style={styles.resultName} numberOfLines={1}>
-                          {p.name}
-                        </Text>
-                        {p.brand ? (
-                          <Text style={styles.resultBrand}>{p.brand}</Text>
-                        ) : null}
-                        <View style={styles.macroRow}>
-                          <MacroPill
-                            value={`${p.cal_per100}`}
-                            unit="kcal"
-                            color={Colors.green}
-                          />
-                          <MacroPill
-                            value={`${p.protein_per100}`}
-                            label="P"
-                            unit="g"
-                            color={MacroColor.protein}
-                          />
-                          <MacroPill
-                            value={`${p.carbs_per100}`}
-                            label="C"
-                            unit="g"
-                            color={MacroColor.carbs}
-                          />
-                          <MacroPill
-                            value={`${p.fat_per100}`}
-                            label="F"
-                            unit="g"
-                            color={MacroColor.fat}
-                          />
-                          <Text style={styles.per100}>/ 100g</Text>
+                <>
+                  <SourceListNotice results={results} />
+                  <View style={styles.resultsList}>
+                    {results.map((p, i) => (
+                      <Pressable
+                        key={i}
+                        style={({ pressed }) => [
+                          styles.resultRow,
+                          i < results.length - 1 && styles.resultBorder,
+                          pressed && { backgroundColor: Colors.surface2 },
+                        ]}
+                        onPress={() => handleSelectProduct(p)}
+                      >
+                        <RowThumb uri={p.image_thumb_url} />
+                        <View style={styles.resultBody}>
+                          <Text style={styles.resultName} numberOfLines={1}>
+                            {p.name}
+                          </Text>
+                          {p.brand ? (
+                            <Text style={styles.resultBrand}>{p.brand}</Text>
+                          ) : null}
+                          <View style={styles.macroRow}>
+                            <MacroPill
+                              value={`${p.cal_per100}`}
+                              unit="kcal"
+                              color={Colors.green}
+                            />
+                            <MacroPill
+                              value={`${p.protein_per100}`}
+                              label="P"
+                              unit="g"
+                              color={MacroColor.protein}
+                            />
+                            <MacroPill
+                              value={`${p.carbs_per100}`}
+                              label="C"
+                              unit="g"
+                              color={MacroColor.carbs}
+                            />
+                            <MacroPill
+                              value={`${p.fat_per100}`}
+                              label="F"
+                              unit="g"
+                              color={MacroColor.fat}
+                            />
+                            <Text style={styles.per100}>/ 100g</Text>
+                          </View>
                         </View>
-                      </View>
-                      <Text style={styles.chevron}>›</Text>
-                    </Pressable>
-                  ))}
-                </View>
+                        <Text style={styles.chevron}>›</Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
               )}
 
               {/* ── Search failed → retry ───────────────────── */}

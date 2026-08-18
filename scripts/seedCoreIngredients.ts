@@ -74,7 +74,11 @@ type Row = {
   density_g_per_ml: number | null;
   source: "cofid" | "fdc" | "merged";
   source_ref: string | null;
-  verified: false;
+  // true ONLY for a staple.cofidOverride row — a human picked this exact
+  // CoFID food code by hand. Every matchCofid()-resolved row, CoFID or FDC
+  // or merged, is false: an algorithmic pick, however well-anchored, is
+  // still a guess until someone has looked at it.
+  verified: boolean;
 } & Macro100;
 
 function hasAnyValue(m: Partial<Macro100>): boolean {
@@ -86,6 +90,7 @@ function buildRow(
   merged: Macro100,
   source: Row["source"],
   sourceRef: string | null,
+  verified: boolean,
 ): Row {
   return {
     slug: staple.slug,
@@ -95,7 +100,7 @@ function buildRow(
     density_g_per_ml: staple.densityGPerMl ?? null,
     source,
     source_ref: sourceRef,
-    verified: false,
+    verified,
     ...merged,
   };
 }
@@ -110,16 +115,46 @@ async function run() {
   console.log(`[seed] Loading CoFID from ${args.cofidPath}...`);
   const cofidRows = loadCofid(args.cofidPath);
   console.log(`[seed] Loaded ${cofidRows.length} CoFID rows.`);
+  // Built once per run, not once per staple — matchCofid() still scans
+  // cofidRows linearly per staple (191 staples x a few thousand rows is
+  // fine), but an override lookup has no reason to pay that cost too.
+  const cofidByCode = new Map(cofidRows.map((r) => [r.foodCode, r]));
 
   const staples = args.limit ? SEED_STAPLES.slice(0, args.limit) : SEED_STAPLES;
 
   const outRows: Row[] = [];
   const misses: string[] = [];
+  const overrideMisses: string[] = [];
   let cofidOnly = 0;
   let fdcOnly = 0;
   let merged = 0;
+  let overrides = 0;
 
   for (const staple of staples) {
+    // An override bypasses matching entirely — see the field's own comment
+    // in seedStaples.ts. A code that isn't in THIS CSV is its own outcome,
+    // never a silent fall-through to matchCofid(): a human already decided
+    // what this staple should be, and a stale/typo'd code degrading
+    // quietly into a guess would be worse than skipping it outright.
+    if (staple.cofidOverride) {
+      const row = cofidByCode.get(staple.cofidOverride);
+      if (!row) {
+        overrideMisses.push(staple.slug);
+        console.warn(
+          `[seed] MISS  ${staple.slug} — override ${staple.cofidOverride} not found in this CSV. Skipping (not falling back to matching).`,
+        );
+        continue;
+      }
+
+      console.log(`[seed] OK    ${staple.slug} <- cofid (override) "${row.foodName}"`);
+      // No FDC merge for an override — see the field comment: the human
+      // picked the row, not just a gap-filler, and it's trusted as-is.
+      outRows.push(buildRow(staple, coalesceMacros(row.macros, {}), "cofid", row.foodCode, true));
+      cofidOnly++;
+      overrides++;
+      continue;
+    }
+
     const cofidMatch = matchCofid(staple, cofidRows);
     const fdcMatch = fdcKey ? await lookupFdc(staple, fdcKey) : null;
 
@@ -156,14 +191,17 @@ async function run() {
         (fdcMatch ? ` fdc:"${fdcMatch.matchedName}"` : ""),
     );
 
-    outRows.push(buildRow(staple, mergedMacros, source, sourceRef));
+    outRows.push(buildRow(staple, mergedMacros, source, sourceRef, false));
   }
 
   console.log(
-    `\n[seed] ${outRows.length} resolved (cofid-only ${cofidOnly}, fdc-only ${fdcOnly}, merged ${merged}), ${misses.length} missed.`,
+    `\n[seed] ${outRows.length} resolved (cofid-only ${cofidOnly}, fdc-only ${fdcOnly}, merged ${merged}, ${overrides} of which overridden), ${misses.length} missed, ${overrideMisses.length} override(s) not found.`,
   );
   if (misses.length > 0) {
     console.log(`[seed] Missed slugs (need manual mapping): ${misses.join(", ")}`);
+  }
+  if (overrideMisses.length > 0) {
+    console.log(`[seed] Override not found for: ${overrideMisses.join(", ")}`);
   }
 
   if (args.dryRun) {

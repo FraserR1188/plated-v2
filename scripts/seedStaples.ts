@@ -54,6 +54,26 @@ export interface SeedStaple {
    * on purpose.
    */
   preparationPreference?: string[];
+  /**
+   * A CoFID food code a human has already picked for this staple by hand.
+   *
+   * ⚠ THIS CHANGES CONTROL FLOW, NOT JUST DATA. When present, the seed
+   * importer looks this exact code up directly in the loaded CSV and uses
+   * that row as-is — matchCofid() is never called for this staple at all,
+   * and (since the human already chose the identity, not just filled a
+   * gap) FDC merging is skipped too: an override is treated as fully
+   * authoritative, `source` is unconditionally 'cofid', and `verified` is
+   * true. matchCofid() is a suggestion tool for finding this code in the
+   * first place, not the source of truth once it's been set — see
+   * scripts/seedIngredients/cofid.ts's identity-anchoring comment for why
+   * even a well-anchored matcher still isn't trusted to be the final word.
+   *
+   * If this code isn't found in the CSV a given run was given (a stale
+   * code from a re-exported CoFID edition, a typo), the importer skips the
+   * staple entirely rather than silently falling back to matchCofid() —
+   * see seedCoreIngredients.ts's run() for exactly how that's reported.
+   */
+  cofidOverride?: string;
 }
 
 export const SEED_STAPLES: SeedStaple[] = [

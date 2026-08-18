@@ -66,6 +66,27 @@ describe("parseCofidCsv", () => {
     const csv = "Energy (kcal),Protein (g)\n100,5\n";
     expect(() => parseCofidCsv(csv)).toThrow(/Food Code|Food Name|required/i);
   });
+
+  it("parses the optional Group column when present", () => {
+    const csv =
+      "Food Code,Food Name,Group,Energy (kcal),Protein (g),Fat (g),Saturated fat (g),Carbohydrate (g),Sugars (g),Fibre (AOAC) (g),Sodium (mg)\n" +
+      "1,\"Milk, whole, pasteurised\",Milk and milk products,64,3.3,3.6,2.3,4.6,4.6,0,44\n";
+
+    const rows = parseCofidCsv(csv);
+    expect(rows[0].group).toBe("Milk and milk products");
+  });
+
+  it("leaves Group NULL, without throwing, on a CSV that predates the column", () => {
+    // Every other test in this file uses a header with no Group column at
+    // all — this just asserts that's a silent, non-throwing NULL, the same
+    // warn-and-continue treatment every other optional column gets.
+    const csv =
+      "Food Code,Food Name,Energy (kcal),Protein (g),Fat (g),Saturated fat (g),Carbohydrate (g),Sugars (g),Fibre (AOAC) (g),Sodium (mg)\n" +
+      "1,\"Flour, white, plain\",341,9.4,1.3,0.2,77.7,1.5,3.1,2\n";
+
+    const rows = parseCofidCsv(csv);
+    expect(rows[0].group).toBeNull();
+  });
 });
 
 describe("matchCofid", () => {
@@ -148,6 +169,114 @@ describe("matchCofid — preparationPreference (hinted staples)", () => {
     // raw tie-break decides it -> row 2.
     const match = matchCofid(
       staple({ displayName: "Peas", preparationPreference: ["canned"] }),
+      rows,
+    );
+    expect(match?.sourceRef).toBe("2");
+  });
+});
+
+describe("matchCofid — identity anchoring", () => {
+  const HEADER =
+    "Food Code,Food Name,Energy (kcal),Protein (g),Fat (g),Saturated fat (g),Carbohydrate (g),Sugars (g),Fibre (AOAC) (g),Sodium (mg)\n";
+
+  it("doesn't let 'Chocolate, milk' win a bare 'milk' query over the actual milk row", () => {
+    const rows = parseCofidCsv(
+      HEADER +
+        "1,\"Chocolate, milk\",550,7.6,29.7,17.7,59.6,56.5,1.7,120\n" +
+        "2,\"Milk, whole, pasteurised\",64,3.3,3.6,2.3,4.6,4.6,0,44\n",
+    );
+    const match = matchCofid(staple({ displayName: "Whole milk", aliases: ["milk"] }), rows);
+    expect(match?.sourceRef).toBe("2");
+  });
+
+  it("doesn't let 'Chutney, tomato' win over the plain tomato row", () => {
+    // The right row's descriptor is deliberately 2 words, not 1 — with a
+    // single-word "Tomatoes, raw" this test would pass even with the gate
+    // disabled, because it ties the wrong row on extraWords and the
+    // pre-existing raw tie-break (from 7f19f4a) happens to save it too.
+    // Padding the descriptor makes the wrong row strictly SHORTER, so only
+    // the new identity gate — not extraWords, not the raw tie-break — can
+    // be what excludes it.
+    const rows = parseCofidCsv(
+      HEADER +
+        "1,\"Chutney, tomato\",89,0.8,0.2,0,20.4,19,0.9,900\n" +
+        "2,\"Tomatoes, raw, average\",17,0.7,0.3,0.1,3.1,3.1,1,5\n",
+    );
+    const match = matchCofid(staple({ displayName: "Tomato", aliases: ["fresh tomato"] }), rows);
+    expect(match?.sourceRef).toBe("2");
+  });
+
+  it("excludes 'Carrot juice' for a carrot query — the load-bearing no-comma branch", () => {
+    // No comma at all in "Carrot juice": it isn't CoFID's usual inverted
+    // naming, it's a compound product in plain English order, same shape
+    // as the query. The whole name has to be treated as the identity
+    // segment for this to be caught — a comma-only implementation would
+    // let this straight through, since "carrot" trivially appears. The
+    // right row's descriptor is padded to 2 words for the same reason as
+    // the tomato test above — otherwise the pre-existing raw tie-break
+    // alone would save this test even with the gate disabled.
+    const rows = parseCofidCsv(
+      HEADER +
+        "1,\"Carrot juice\",24,0.5,0.1,0,5.6,5.4,0.5,26\n" +
+        "2,\"Carrots, raw, average\",30,0.6,0.4,0.1,6,4.9,2.5,66\n",
+    );
+    const match = matchCofid(staple({ displayName: "Carrot", aliases: ["fresh carrot"] }), rows);
+    expect(match?.sourceRef).toBe("2");
+  });
+
+  it("doesn't let 'Orange roughy, raw' (a fish) win over the plain orange row", () => {
+    // Both rows contain "raw", which neutralises the pre-existing raw
+    // tie-break as a possible accidental saviour here — and the right
+    // row's descriptor is padded to 3 words so it doesn't win outright on
+    // extraWords either. Only the identity gate can be what's deciding this.
+    const rows = parseCofidCsv(
+      HEADER +
+        "1,\"Orange roughy, raw\",73,15.7,1.2,0,0,0,0,55\n" +
+        "2,\"Oranges, raw, whole, peeled\",37,1.1,0.1,0,8.5,8.5,1.7,3\n",
+    );
+    const match = matchCofid(staple({ displayName: "Orange" }), rows);
+    expect(match?.sourceRef).toBe("2");
+  });
+
+  it("doesn't let a bare 'rice' alias match 'Flour, rice' over the actual rice row", () => {
+    const rows = parseCofidCsv(
+      HEADER +
+        "1,\"Flour, rice\",366,5.9,1.4,0.3,80.1,0.1,2.4,4\n" +
+        "2,\"Rice, easy cook, raw\",383,7.3,3.6,0.8,85.8,0.1,1.4,3\n",
+    );
+    const match = matchCofid(staple({ displayName: "Basmati rice", aliases: ["rice"] }), rows);
+    expect(match?.sourceRef).toBe("2");
+  });
+
+  it("doesn't let 'Beef steak pudding' (a dish) win over the actual rump steak row", () => {
+    const rows = parseCofidCsv(
+      HEADER +
+        "1,\"Beef steak pudding\",188,10.4,10.6,4.6,13.7,1,0.8,400\n" +
+        "2,\"Beef, rump steak, raw\",123,20.9,4.1,1.7,0,0,0,52\n",
+    );
+    // Matches the real rump-steak staple's actual aliases — the 'beef
+    // steak' alias is what lets the correct row's identity ("Beef") pass
+    // the gate at all, since the bare displayName "Rump steak" alone
+    // doesn't contain "beef".
+    const match = matchCofid(
+      staple({ displayName: "Rump steak", aliases: ["beef steak", "sirloin steak"] }),
+      rows,
+    );
+    expect(match?.sourceRef).toBe("2");
+  });
+
+  it("doesn't interfere with the hint layer — tinned-tuna still resolves canned over raw", () => {
+    const rows = parseCofidCsv(
+      HEADER +
+        "1,\"Tuna, raw\",108,23.5,0.6,0.2,0,0,0,50\n" +
+        "2,\"Tuna, canned in brine, drained\",99,23.5,0.6,0.2,0,0,0,247\n",
+    );
+    const match = matchCofid(
+      staple({
+        displayName: "Tinned tuna",
+        aliases: ["canned tuna", "tuna"],
+        preparationPreference: ["canned"],
+      }),
       rows,
     );
     expect(match?.sourceRef).toBe("2");

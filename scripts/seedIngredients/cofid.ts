@@ -25,6 +25,13 @@
 //     Sugars            "Sugars", "Total sugars"
 //     Fibre, AOAC       must contain "aoac" — see the header note below
 //     Sodium (mg)       "Sodium"
+//     Group             "Group", "Food Group" — OPTIONAL. Not used for
+//                        matching (see the identity-anchoring comment below
+//                        for why a text-only signal was preferred there
+//                        instead); carried through on CofidRow for a future
+//                        review artefact. Older exports won't have it —
+//                        same warn-and-continue treatment as any other
+//                        optional column, never a hard failure.
 //
 //   A column that can't be found by any recognised header is left NULL for
 //   every row, not zero-filled — see convert.ts.
@@ -59,6 +66,12 @@ const TRACE_AS_ZERO = true;
 export interface CofidRow {
   foodCode: string;
   foodName: string;
+  /** CoFID's own food-group category, when the export includes it. NOT
+   *  used for matching — see resolveColumns()'s header comment. Carried
+   *  through for a future review artefact as an extra sanity signal;
+   *  null on any CSV exported before this column existed in the contract,
+   *  or whose export simply omitted it. */
+  group: string | null;
   macros: Partial<Macro100>;
 }
 
@@ -165,6 +178,7 @@ interface ColumnMap {
   sugars: number;
   fibreAoac: number;
   sodium: number;
+  group: number;
 }
 
 function resolveColumns(headers: string[]): ColumnMap {
@@ -195,6 +209,10 @@ function resolveColumns(headers: string[]): ColumnMap {
       ["aoac", "fibre"],
     ]),
     sodium: findColumn(headers, [["sodium"]]),
+    // Optional, informational only — see the header comment. Falls through
+    // to the generic missing-column warning below like everything else
+    // here except foodCode/foodName; never throws.
+    group: findColumn(headers, [["group"], ["food", "group"]]),
   };
 
   const missing = Object.entries(map)
@@ -247,6 +265,7 @@ export function parseCofidCsv(text: string): CofidRow[] {
     rows.push({
       foodCode,
       foodName,
+      group: cols.group === -1 ? null : (r[cols.group] ?? "").trim() || null,
       macros: {
         kcal_100g: cols.kcal === -1 ? null : parseCofidValue(r[cols.kcal]),
         protein_100g: cols.protein === -1 ? null : parseCofidValue(r[cols.protein]),
@@ -273,11 +292,55 @@ function nameTokens(s: string): string[] {
   return normalize(s).split(" ").filter(Boolean).map(singularise);
 }
 
-/** One (row, query) pair that satisfied token containment — every
+/**
+ * The row's IDENTITY — the text before the first comma, or the entire name
+ * when there is no comma at all.
+ *
+ * CoFID's "Category, descriptor" convention means the identity is normally
+ * just the plain food ("Milk", "Tomatoes") with everything that varies —
+ * prep state, cut, brand-ish qualifiers — living safely AFTER the comma.
+ * But a genuinely different, compound PRODUCT sometimes shares a word with
+ * the plain ingredient and has NO comma to hide behind at all ("Carrot
+ * juice", not "Carrots, juiced") — treating the whole name as the identity
+ * in that case is what catches it. See identitySegmentIsSubsetOfQuery()'s
+ * comment for how this gets used.
+ */
+function identitySegment(foodName: string): string {
+  const i = foodName.indexOf(",");
+  return i === -1 ? foodName : foodName.slice(0, i);
+}
+
+/**
+ * The candidacy gate this file gained on top of plain token containment.
+ *
+ * Old bug: token containment only ever checked query-tokens-found-in-row,
+ * which is satisfied just as happily by a compound PRODUCT that happens to
+ * contain the query word ("Chocolate, milk" for a bare "milk" query;
+ * "Chutney, tomato" for "tomato"; "Orange roughy, raw" for "orange") as by
+ * an actual variant of the plain ingredient — and because compound-product
+ * names are usually SHORTER than the correctly-descriptive plain-ingredient
+ * row, extraWords then systematically rewards the wrong one.
+ *
+ * Fix: every token in the row's IDENTITY segment must ALSO appear in the
+ * query — not merely "somewhere in the row" (that's the existing check,
+ * unchanged, still required too). A legitimate prep-state descriptor lives
+ * after the first comma and is completely unconstrained by this; an
+ * unexplained word sitting IN the identity segment means this is a
+ * different food, not a variant of the one being searched for.
+ */
+function identitySegmentIsSubsetOfQuery(rowName: string, queryTokens: Set<string>): boolean {
+  const identityTokens = nameTokens(identitySegment(rowName));
+  return identityTokens.every((t) => queryTokens.has(t));
+}
+
+/** One (row, query) pair that satisfied BOTH containment checks — every
  *  staple.displayName/alias is still tried against every row, same as
  *  before this file gained a ranking step; this just materialises the full
  *  candidate set instead of reducing it inline, so the ranking function
- *  used can vary per staple (see below). */
+ *  used can vary per staple (see below). This is a FILTER on candidacy —
+ *  which rows are even eligible — not a ranking key; extraWords, the hint
+ *  preference, and the raw tie-break all rank strictly within whatever
+ *  survives here. */
 interface Candidate {
   row: CofidRow;
   rowTokens: Set<string>;
@@ -293,7 +356,8 @@ function candidatesFor(staple: SeedStaple, rows: CofidRow[]): Candidate[] {
     for (const query of queries) {
       const qTokens = nameTokens(query);
       if (qTokens.length === 0) continue;
-      if (!qTokens.every((t) => rowTokens.has(t))) continue;
+      if (!qTokens.every((t) => rowTokens.has(t))) continue; // existing check, unchanged
+      if (!identitySegmentIsSubsetOfQuery(row.foodName, new Set(qTokens))) continue; // new gate
       // Fewest words beyond the query — "Flour, white, plain" beats
       // "Flour, white, plain, fortified" for the query "plain flour".
       out.push({ row, rowTokens, extraWords: rowTokens.size - qTokens.length });

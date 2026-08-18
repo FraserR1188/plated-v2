@@ -13,6 +13,12 @@
 // cases one source by name has already drifted from this file being the
 // source of truth.
 //
+// https://platedapp.uk/attributions.html (plated-website repo) is a manual
+// public mirror of this file's DATA_SOURCES, published so a reviewer
+// without an account can see the same attribution the app shows. It is not
+// generated from this file — whenever a data source is added here, or a
+// statement/licence changes, that page must be updated by hand to match.
+//
 // The OGL v3.0 statement (CoFID entry, `statement` field) is close to a
 // fixed form mandated by the licence — do not reword, reorder, or drop the
 // version number when editing it.

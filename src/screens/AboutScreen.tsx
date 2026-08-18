@@ -6,9 +6,6 @@
 // here), and legal/support links. No fetch, no Supabase call, no store
 // subscription — this screen must render correctly with no network.
 //
-// The attributions page (platedapp.uk/attributions.html) does not exist yet
-// (ships commit 3) — deliberately not linked below. A dead link in front of
-// a Play Store reviewer is worse than no link.
 // ============================================================
 
 import React from "react";
@@ -21,7 +18,7 @@ import appJson from "../../app.json";
 
 const APP_VERSION = appJson.expo.version;
 const PRIVACY_URL = "https://platedapp.uk/plated-privacy.html";
-// const ATTRIBUTIONS_URL = "https://platedapp.uk/attributions.html"; // commit 3
+const ATTRIBUTIONS_URL = "https://platedapp.uk/attributions.html";
 const SUPPORT_EMAIL = "robbie@fraseranalytics.com";
 
 export function AboutScreen() {
@@ -64,7 +61,7 @@ export function AboutScreen() {
         <SectionLabel title="Legal" />
         <View style={styles.card}>
           <LinkRow label="Privacy policy" onPress={() => openURL(PRIVACY_URL)} />
-          {/* Attributions page ships in commit 3 — do not link until it exists. */}
+          <LinkRow label="Data sources and attribution" onPress={() => openURL(ATTRIBUTIONS_URL)} />
         </View>
 
         {/* ── Support ──────────────────────────────────── */}

@@ -131,7 +131,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'carrot', displayName: 'Carrot', aliases: ['fresh carrot'],
     unitGrams: { small: 50, medium: 61, large: 72 }, cofidOverride: '13-496', /* Carrots, old, raw */ },
   { slug: 'potato', displayName: 'Potato', aliases: ['white potato', 'maris piper', 'baking potato'],
-    unitGrams: { small: 130, medium: 170, large: 300 }, cofidOverride: '15-850', /* Potatoes, duchesse */ }, // review: variety-dependent
+    unitGrams: { small: 130, medium: 170, large: 300 }, cofidOverride: '13-489', /* Potatoes, old, raw, flesh only */ }, // review: variety-dependent
   { slug: 'bell-pepper', displayName: 'Pepper (bell)', aliases: ['pepper', 'bell pepper', 'capsicum', 'red pepper', 'green pepper'],
     unitGrams: { medium: 120, large: 160 }, cofidOverride: '13-524', /* Pepper, capsicum, red, raw */ },
 
@@ -174,7 +174,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'demerara-sugar', displayName: 'Demerara sugar', aliases: ['raw cane sugar'], cofidOverride: '17-061', /* Sugar, Demerara */ },
   { slug: 'muscovado-sugar', displayName: 'Muscovado sugar', aliases: ['dark brown sugar'] },
   { slug: 'treacle', displayName: 'Black treacle', aliases: ['molasses'], densityGPerMl: 1.4, cofidOverride: '17-826', /* Treacle, black */ },
-  { slug: 'dark-chocolate', displayName: 'Dark chocolate', aliases: ['plain chocolate', 'cooking chocolate'], cofidOverride: '17-650', /* Chocolate, dark, with crème or mint fondant centres */ },
+  { slug: 'dark-chocolate', displayName: 'Dark chocolate', aliases: ['plain chocolate', 'cooking chocolate'], cofidOverride: '17-491', /* Chocolate, plain */ },
   { slug: 'milk-chocolate', displayName: 'Milk chocolate', aliases: [], cofidOverride: '17-648', /* Chocolate, milk */ },
 
   // Dairy & alternatives
@@ -184,7 +184,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'single-cream', displayName: 'Single cream', aliases: ['light cream', 'cream, single'], densityGPerMl: 1.01, cofidOverride: '12-332', /* Cream, fresh, single */ },
   { slug: 'soured-cream', displayName: 'Soured cream', aliases: ['sour cream'], densityGPerMl: 1.0, cofidOverride: '17-677', /* Dips, sour-cream based, reduced fat */ },
   { slug: 'creme-fraiche', displayName: 'Crème fraîche', aliases: ['creme fraiche'], densityGPerMl: 1.0, cofidOverride: '12-335', /* Creme fraiche, full fat */ },
-  { slug: 'natural-yogurt', displayName: 'Natural yogurt', aliases: ['plain yogurt', 'yoghurt'], densityGPerMl: 1.03, cofidOverride: '12-555', /* Yogurt, Greek style, plain */ },
+  { slug: 'natural-yogurt', displayName: 'Natural yogurt', aliases: ['plain yogurt', 'yoghurt'], densityGPerMl: 1.03, cofidOverride: '12-184', /* Yogurt, whole milk, plain */ },
   { slug: 'greek-yogurt', displayName: 'Greek yogurt', aliases: ['greek style yogurt', 'yogurt, greek style'], densityGPerMl: 1.03, cofidOverride: '12-555', /* Yogurt, Greek style, plain */ },
   { slug: 'margarine', displayName: 'Margarine', aliases: ['spread', 'vegetable spread'] },
   { slug: 'cheddar', displayName: 'Cheddar cheese', aliases: ['cheddar', 'mature cheddar', 'grated cheese'], cofidOverride: '12-346', /* Cheese, Cheddar, English */ },
@@ -202,15 +202,15 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'ghee', displayName: 'Ghee', aliases: ['clarified butter'], cofidOverride: '17-640', /* Ghee, butter */ },
 
   // Meat, poultry & fish
-  { slug: 'chicken-breast', displayName: 'Chicken breast', aliases: ['chicken breast fillet', 'skinless chicken breast'], cofidOverride: '18-307', /* Chicken, breast, casseroled, meat only */ },
-  { slug: 'chicken-thigh', displayName: 'Chicken thigh', aliases: ['boneless chicken thigh'], cofidOverride: '18-317', /* Chicken, thighs, casseroled, meat and skin */ },
+  { slug: 'chicken-breast', displayName: 'Chicken breast', aliases: ['chicken breast fillet', 'skinless chicken breast'] },
+  { slug: 'chicken-thigh', displayName: 'Chicken thigh', aliases: ['boneless chicken thigh'] },
   { slug: 'beef-mince', displayName: 'Beef mince', aliases: ['minced beef', 'ground beef'], cofidOverride: '18-469', /* Beef, mince, raw */ },
   { slug: 'pork-mince', displayName: 'Pork mince', aliases: ['minced pork', 'ground pork'], cofidOverride: '18-606', /* Pork, mince, raw */ },
   { slug: 'lamb-mince', displayName: 'Lamb mince', aliases: ['minced lamb', 'ground lamb'], cofidOverride: '18-481', /* Lamb, mince, raw */ },
   { slug: 'turkey-mince', displayName: 'Turkey mince', aliases: ['minced turkey', 'ground turkey'], cofidOverride: '18-354', /* Turkey, mince, stewed */ },
   { slug: 'pork-sausage', displayName: 'Pork sausage', aliases: ['sausages', 'bangers'], cofidOverride: '19-510', /* Sausages, pork, raw */ },
   { slug: 'streaky-bacon', displayName: 'Streaky bacon', aliases: ['bacon', 'smoked bacon'], cofidOverride: '19-016', /* Bacon rashers, streaky, raw */ },
-  { slug: 'back-bacon', displayName: 'Back bacon', aliases: ['bacon rashers', 'bacon medallions'], cofidOverride: '19-500', /* Bacon rashers, back, grilled */ },
+  { slug: 'back-bacon', displayName: 'Back bacon', aliases: ['bacon rashers', 'bacon medallions'], cofidOverride: '19-497', /* Bacon rashers, back, raw */ },
   // Split from a single 'gammon' entry — a raw gammon joint and cooked/cured
   // ham are different foods with different macros (moisture loss + curing),
   // and 'ham steak' was a misplaced alias on the raw entry. gammon stays
@@ -219,8 +219,8 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'gammon', displayName: 'Gammon', aliases: ['gammon joint'], cofidOverride: '19-020', /* Ham, gammon joint, raw */ },
   { slug: 'ham', displayName: 'Ham', aliases: ['ham steak', 'cooked ham', 'sliced ham'], preparationPreference: ['cooked'], cofidOverride: '19-496', /* Ham */ },
   { slug: 'rump-steak', displayName: 'Rump steak', aliases: ['beef steak', 'sirloin steak'], cofidOverride: '18-043', /* Beef, rump steak, raw, lean */ },
-  { slug: 'salmon-fillet', displayName: 'Salmon fillet', aliases: ['salmon'], cofidOverride: '16-485', /* Salmon, wild, baked */ },
-  { slug: 'cod-fillet', displayName: 'Cod fillet', aliases: ['cod', 'white fish'], cofidOverride: '16-158', /* White fish, dried, salted */ },
+  { slug: 'salmon-fillet', displayName: 'Salmon fillet', aliases: ['salmon'], cofidOverride: '16-356', /* Salmon, farmed, flesh only, raw */ },
+  { slug: 'cod-fillet', displayName: 'Cod fillet', aliases: ['cod', 'white fish'], cofidOverride: '16-372', /* Cod, flesh only, raw */ },
   // The bare 'tuna' alias risks matching a raw tuna steak CoFID row instead
   // of the canned-in-brine/oil product this staple actually means — a very
   // different food nutritionally. 'canned' pins it down.
@@ -254,7 +254,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'passata', displayName: 'Passata', aliases: ['sieved tomatoes', 'tomato sauce'], densityGPerMl: 1.05, cofidOverride: '17-834', /* Sauce, tomato based, homemade */ },
   { slug: 'aubergine', displayName: 'Aubergine', aliases: ['eggplant'], cofidOverride: '13-161', /* Aubergine, raw */ },
   { slug: 'courgette', displayName: 'Courgette', aliases: ['zucchini'], cofidOverride: '13-627', /* Courgette, raw */ },
-  { slug: 'mushroom', displayName: 'Mushrooms', aliases: ['chestnut mushrooms', 'button mushrooms', 'closed cup mushrooms'], cofidOverride: '17-416', /* Mushroom, dried */ },
+  { slug: 'mushroom', displayName: 'Mushrooms', aliases: ['chestnut mushrooms', 'button mushrooms', 'closed cup mushrooms'], cofidOverride: '13-505', /* Mushrooms, white, raw */ },
   { slug: 'broccoli', displayName: 'Broccoli', aliases: ['calabrese'], cofidOverride: '13-502', /* Broccoli, green, raw */ },
   { slug: 'cauliflower', displayName: 'Cauliflower', aliases: [], cofidOverride: '13-512', /* Cauliflower, raw */ },
   { slug: 'spinach', displayName: 'Spinach', aliases: ['baby spinach'], cofidOverride: '13-521', /* Spinach, baby, raw */ },
@@ -269,14 +269,14 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'beetroot', displayName: 'Beetroot', aliases: ['beets'], cofidOverride: '13-164', /* Beetroot, raw */ },
   { slug: 'butternut-squash', displayName: 'Butternut squash', aliases: ['squash'], cofidOverride: '13-355', /* Squash, butternut, raw */ },
   { slug: 'frozen-peas', displayName: 'Peas', aliases: ['frozen peas', 'garden peas'], cofidOverride: '13-527', /* Peas, frozen, raw */ },
-  { slug: 'sweetcorn', displayName: 'Sweetcorn', aliases: ['corn', 'tinned sweetcorn'], preparationPreference: ['canned'], cofidOverride: '13-609', /* Sweetcorn, dried */ },
+  { slug: 'sweetcorn', displayName: 'Sweetcorn', aliases: ['corn', 'tinned sweetcorn'], preparationPreference: ['canned'], cofidOverride: '13-529', /* Sweetcorn kernels, canned in water, drained */ },
   { slug: 'green-beans', displayName: 'Green beans', aliases: ['french beans', 'fine beans'], cofidOverride: '13-514', /* Beans, green, raw */ },
   { slug: 'cabbage', displayName: 'Cabbage', aliases: ['savoy cabbage', 'white cabbage'], cofidOverride: '13-509', /* Cabbage, white, raw */ },
   { slug: 'brussels-sprouts', displayName: 'Brussels sprouts', aliases: ['sprouts'], cofidOverride: '13-177', /* Brussels sprouts, raw */ },
   { slug: 'asparagus', displayName: 'Asparagus', aliases: [], cofidOverride: '13-157', /* Asparagus, raw */ },
   { slug: 'pak-choi', displayName: 'Pak choi', aliases: ['bok choy'], cofidOverride: '13-516', /* Pak choi, steamed */ },
   { slug: 'ginger', displayName: 'Ginger', aliases: ['fresh ginger', 'root ginger'], cofidOverride: '13-890', /* Ginger, fresh */ },
-  { slug: 'red-chilli', displayName: 'Red chilli', aliases: ['chilli', 'fresh chilli', 'chili pepper'], cofidOverride: '15-640', /* Chilli, vegetable, homemade */ },
+  { slug: 'red-chilli', displayName: 'Red chilli', aliases: ['chilli', 'fresh chilli', 'chili pepper'], cofidOverride: '13-317', /* Peppers, capsicum, chilli, red, raw */ },
 
   // Fruit (tail)
   { slug: 'apple', displayName: 'Apple', aliases: ['eating apple', 'bramley apple'], cofidOverride: '14-362', /* Apples, cooking, raw, flesh only, peeled */ },
@@ -297,7 +297,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'dates', displayName: 'Dates', aliases: ['medjool dates'], preparationPreference: ['dried'], cofidOverride: '14-394', /* Dates, dried, flesh and skin */ },
 
   // Herbs & spices
-  { slug: 'coriander', displayName: 'Coriander', aliases: ['cilantro', 'fresh coriander', 'coriander leaves'], cofidOverride: '13-818', /* Coriander leaves, dried */ },
+  { slug: 'coriander', displayName: 'Coriander', aliases: ['cilantro', 'fresh coriander', 'coriander leaves'], cofidOverride: '13-888', /* Coriander leaves, fresh */ },
   { slug: 'parsley', displayName: 'Parsley', aliases: ['flat leaf parsley', 'fresh parsley'], cofidOverride: '13-844', /* Parsley, fresh */ },
   { slug: 'basil', displayName: 'Basil', aliases: ['fresh basil'], cofidOverride: '13-804', /* Basil, fresh */ },
   { slug: 'mint', displayName: 'Mint', aliases: ['fresh mint'], cofidOverride: '13-836', /* Mint, fresh */ },
@@ -327,7 +327,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'ground-almonds', displayName: 'Ground almonds', aliases: ['almond flour', 'almond meal'], cofidOverride: '14-870', /* Almonds, flaked and ground */ },
   { slug: 'walnuts', displayName: 'Walnuts', aliases: [], cofidOverride: '14-879', /* Walnuts, kernel only */ },
   { slug: 'cashews', displayName: 'Cashew nuts', aliases: ['cashews'], cofidOverride: '14-811', /* Cashew nuts, kernel only, plain */ },
-  { slug: 'peanuts', displayName: 'Peanuts', aliases: ['roasted peanuts'], preparationPreference: ['roasted'], cofidOverride: '14-877', /* Peanuts, kernel only, plain, unsalted */ },
+  { slug: 'peanuts', displayName: 'Peanuts', aliases: ['roasted peanuts'], preparationPreference: ['roasted'], cofidOverride: '14-878', /* Peanuts, dry roasted */ },
   { slug: 'pine-nuts', displayName: 'Pine nuts', aliases: [], cofidOverride: '14-839', /* Pine nuts, kernel only */ },
   { slug: 'sesame-seeds', displayName: 'Sesame seeds', aliases: [], cofidOverride: '14-844', /* Sesame seeds */ },
   { slug: 'sunflower-seeds', displayName: 'Sunflower seeds', aliases: [], cofidOverride: '14-845', /* Sunflower seeds */ },

@@ -47,6 +47,7 @@ import { Colors, Fonts, NavTheme } from "../theme/tokens";
 import { RootStackParamList, BottomTabParamList } from "../types";
 import { CreateFoodScreen } from "../screens/CreateFoodScreen";
 import { AboutScreen } from "../screens/AboutScreen";
+import { DeleteAccountScreen } from "../screens/DeleteAccountScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<BottomTabParamList>();
@@ -285,6 +286,11 @@ export function AppNavigator() {
           name="About"
           component={AboutScreen}
           options={{ title: "About & legal" }}
+        />
+        <Stack.Screen
+          name="DeleteAccount"
+          component={DeleteAccountScreen}
+          options={{ title: "Delete account" }}
         />
       </Stack.Navigator>
     </NavigationContainer>

@@ -671,6 +671,13 @@ export type RootStackParamList = {
   About: undefined;
 
   /**
+   * No params, deliberately — this screen confirms by matching the
+   * account's OWN email (read from the current session), never a value
+   * threaded through navigation. See src/screens/DeleteAccountScreen.tsx.
+   */
+  DeleteAccount: undefined;
+
+  /**
    * No params. USED TO carry `onPick: (product, quantityG) => void` — a
    * function in a navigation param, which React Navigation warns about
    * ("Non-serializable values were found in the navigation state") because

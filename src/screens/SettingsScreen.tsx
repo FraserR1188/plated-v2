@@ -229,7 +229,7 @@ export function SettingsScreen() {
   const handleDisconnectWhoop = () => {
     Alert.alert(
       "Disconnect WHOOP?",
-      "plated will stop pulling your recovery, sleep and strain. Anything already synced stays.",
+      "Disconnecting stops new syncs and revokes plated's access at WHOOP. Your existing recovery and sleep history is kept, so past correlations still work. Deleting your account removes it.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -680,6 +680,16 @@ export function SettingsScreen() {
           >
             <Text style={styles.signOutBtnText}>Sign out</Text>
           </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.deleteAccountBtn,
+              { marginTop: Spacing.sm },
+              pressed && { opacity: 0.85 },
+            ]}
+            onPress={() => navigation.navigate("DeleteAccount")}
+          >
+            <Text style={styles.deleteAccountBtnText}>Delete account</Text>
+          </Pressable>
         </View>
 
         <View style={{ height: Spacing.xxl }} />
@@ -1049,6 +1059,15 @@ const styles = StyleSheet.create(
     fontSize: Typography.base,
     fontWeight: Typography.semibold,
     color: Colors.danger,
+  },
+  deleteAccountBtn: {
+    paddingVertical: 13,
+    alignItems: "center",
+  },
+  deleteAccountBtnText: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.medium,
+    color: Colors.textDim,
   },
 
   // ── Goals ──────────────────────────────────────────────────

@@ -28,11 +28,6 @@ import {
 import { syncWhoop } from "./src/lib/whoop";
 import { reportError } from "./src/lib/reportError";
 
-const CRASH_TEST = false; // Phase-2 verify: flip true, build, launch once, then revert.
-function Bomb(): never {
-  throw new Error("phase2-boundary-test");
-}
-
 function ErrorFallback({ onReset }: { onReset: () => void }) {
   return (
     <View style={styles.errorWrap}>
@@ -143,7 +138,6 @@ function App() {
       <Sentry.ErrorBoundary
         fallback={({ resetError }) => <ErrorFallback onReset={resetError} />}
       >
-        {CRASH_TEST ? <Bomb /> : null}
         {content}
       </Sentry.ErrorBoundary>
       <StatusBar style="light" />

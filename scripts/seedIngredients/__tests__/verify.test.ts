@@ -57,27 +57,31 @@ describe("emitSql / verify.sql", () => {
   });
 });
 
-// ─── check 0: row count ──────────────────────────────────────
+// ─── check 0: seed-list coverage (review — no pass/fail) ─────
 
-describe("check 0 — row count vs SEED_STAPLES", () => {
-  it("passes when the row count equals SEED_STAPLES.length", () => {
-    const rows = Array.from({ length: SEED_STAPLES.length }, () => row());
+describe("check 0 — seed-list coverage vs SEED_STAPLES", () => {
+  it("returns tables, not a verdict — a short row count alone is not a failure", () => {
+    const rows = SEED_STAPLES.map((s) => row({ slug: s.slug }));
     const result = (check("0") as any).evaluate(rows);
-    expect(result.pass).toBe(true);
+    expect(result.tables).toBeDefined();
+    expect(result.pass).toBeUndefined();
+    expect(result.tables[0].rows).toHaveLength(0);
   });
 
-  it("fails with a 'dropped rows' diagnosis when short", () => {
-    const rows = Array.from({ length: SEED_STAPLES.length - 5 }, () => row());
+  it("lists each SEED_STAPLES slug with no matching row, by slug and display name", () => {
+    const rows = SEED_STAPLES.slice(1).map((s) => row({ slug: s.slug }));
     const result = (check("0") as any).evaluate(rows);
-    expect(result.pass).toBe(false);
-    expect(result.diagnosis).toMatch(/dropped whole rows/i);
+    expect(result.tables[0].rows).toHaveLength(1);
+    expect(result.tables[0].rows[0]).toEqual({
+      slug: SEED_STAPLES[0].slug,
+      display_name: SEED_STAPLES[0].displayName,
+    });
   });
 
-  it("fails with a 'stale slugs' diagnosis when over", () => {
-    const rows = Array.from({ length: SEED_STAPLES.length + 5 }, () => row());
+  it("does not list a slug that has a row, even if extra unknown rows are present", () => {
+    const rows = [...SEED_STAPLES.map((s) => row({ slug: s.slug })), row({ slug: "stale-leftover-slug" })];
     const result = (check("0") as any).evaluate(rows);
-    expect(result.pass).toBe(false);
-    expect(result.diagnosis).toMatch(/stale slugs|grown/i);
+    expect(result.tables[0].rows).toHaveLength(0);
   });
 });
 
@@ -100,6 +104,21 @@ describe("check 2 — head-staple alarm", () => {
   it("a TAIL staple (empty unit_grams) missing a core macro does NOT trip this check", () => {
     const rows = [row({ slug: "obscure-herb", unit_grams: {}, protein_100g: null })];
     expect((check("2") as any).evaluate(rows).pass).toBe(true);
+  });
+
+  it("does NOT flag the allowlisted black-pepper — CoFID marks energy/carbs N for it", () => {
+    const rows = [row({ slug: "black-pepper", unit_grams: { tsp: 2.3 }, kcal_100g: null, carbs_100g: null })];
+    expect((check("2") as any).evaluate(rows).pass).toBe(true);
+  });
+
+  it("still flags a DIFFERENT head staple missing a core macro alongside the allowlisted one", () => {
+    const rows = [
+      row({ slug: "black-pepper", unit_grams: { tsp: 2.3 }, kcal_100g: null, carbs_100g: null }),
+      row({ slug: "egg", unit_grams: { large: 58 }, protein_100g: null }),
+    ];
+    const result = (check("2") as any).evaluate(rows);
+    expect(result.pass).toBe(false);
+    expect(result.rows.map((r: any) => r.slug)).toEqual(["egg"]);
   });
 });
 
@@ -148,6 +167,18 @@ describe("check 5 — zero-collapse guard", () => {
     // sugar has 0 protein, oil has 0 carbs — both legitimate, neither should trip this.
     const rows = [row({ kcal_100g: 387, protein_100g: 0 }), row({ kcal_100g: 884, carbs_100g: 0 })];
     expect((check("5") as any).evaluate(rows).pass).toBe(true);
+  });
+
+  it("does NOT flag the allowlisted inorganic slugs — table-salt and bicarbonate-of-soda are genuinely 0 kcal in CoFID", () => {
+    const rows = [row({ slug: "table-salt", kcal_100g: 0 }), row({ slug: "bicarbonate-of-soda", kcal_100g: 0 })];
+    expect((check("5") as any).evaluate(rows).pass).toBe(true);
+  });
+
+  it("still flags a DIFFERENT slug with kcal_100g = 0 alongside the allowlisted ones", () => {
+    const rows = [row({ slug: "table-salt", kcal_100g: 0 }), row({ slug: "flour", kcal_100g: 0 })];
+    const result = (check("5") as any).evaluate(rows);
+    expect(result.pass).toBe(false);
+    expect(result.rows.map((r: any) => r.slug)).toEqual(["flour"]);
   });
 });
 

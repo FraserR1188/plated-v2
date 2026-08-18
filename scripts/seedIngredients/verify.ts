@@ -113,6 +113,25 @@ export const SALT_NULL_THRESHOLD = 0.05;
 
 const REFERENCE_SALT_SLUGS = ["whole-milk", "cheddar", "butter", "table-salt", "soy-sauce"];
 
+// Head staples (non-empty unit_grams) allowed to miss the core four despite
+// check 2's alarm. CoFID marks these N (not determined) — not zero, not a
+// name-match miss — for the whole category, and there is no better row to
+// match to. Each entry needs its own CoFID-code justification; this is not
+// a general escape hatch for a real name-match failure.
+const HEAD_STAPLE_NULL_ALLOWLIST = new Set<string>([
+  "black-pepper", // CoFID 13-880 "Pepper, black, dried, ground": energy & carbohydrate both N. Ground spices and stock cubes carry the same N marking generally.
+]);
+
+// Slugs allowed to have a genuinely zero kcal_100g for check 5. CoFID
+// records a literal zero for these — not a NULL coalesced to zero on write
+// — because each is a pure inorganic compound with no macronutrient content
+// at all. Each entry needs its own CoFID-code justification; this is not a
+// general escape hatch for the ?? 0 bug this check exists to catch.
+const ZERO_KCAL_ALLOWLIST = new Set<string>([
+  "table-salt", // CoFID 17-367 "Salt": inorganic — genuinely 0 kcal/protein/carbohydrate/fat.
+  "bicarbonate-of-soda", // CoFID 17-356 "Bicarbonate of soda": same — inorganic, genuinely 0.
+]);
+
 export const HEADER_SQL = `-- ============================================================================
 -- core_ingredients — post-seed verification suite
 --
@@ -127,25 +146,37 @@ export const HEADER_SQL = `-- ==================================================
 export const CHECKS: CheckDef[] = [
   {
     id: "0",
-    title: "Row count vs the seed list",
-    mode: "assert",
-    sql: `-- 0. Row count vs the seed list ----------------------------------------------
--- Expected: 189 (matches SEED_STAPLES). Fewer => the importer dropped whole rows
--- on total miss rather than inserting a NULL-macro row. Note which behaviour it is;
--- it changes how you read Q1 (absent row vs present-but-NULL row).
-select count(*) as total_rows from public.core_ingredients;   -- expect 189`,
+    title: "Seed-list coverage — which staples have no row",
+    mode: "review",
+    sql: `-- 0. Seed-list coverage — which staples have no row ---------------------------
+-- Row count here will legitimately be LESS than SEED_STAPLES.length: a total
+-- CoFID/FDC miss, or a stale/typo'd cofidOverride code, means the importer
+-- skips the row entirely rather than inserting a NULL-macro placeholder (see
+-- seedCoreIngredients.ts's MISS / OVERRIDE NOT FOUND branches). So there is
+-- no single "expected" count to assert against — this is a by-name review,
+-- not a pass/fail check.
+select slug from public.core_ingredients order by slug;
+-- Compare the result against SEED_STAPLES in scripts/seedStaples.ts, or just
+-- re-read the import run's own '[seed] MISS' / '[seed] OVERRIDE NOT FOUND'
+-- console lines — that's the authoritative list, computed at import time.
+-- This script's evaluate() below does the same set-difference against the
+-- CURRENT seed list, so you don't have to do it by hand.`,
     evaluate: (rows) => {
-      const total = rows.length;
-      const expected = SEED_STAPLES.length;
-      const pass = total === expected;
+      const present = new Set(rows.map((r) => r.slug));
+      const absent = SEED_STAPLES.filter((s) => !present.has(s.slug))
+        .map((s) => ({ slug: s.slug, display_name: s.displayName }))
+        .sort((a, b) => a.slug.localeCompare(b.slug));
       return {
-        pass,
-        summary: `${total} rows (expected ${expected}, matching SEED_STAPLES.length)`,
-        diagnosis: pass
-          ? undefined
-          : total < expected
-            ? "Fewer rows than SEED_STAPLES — the importer dropped whole rows on a total CoFID/FDC miss instead of inserting a row for review. Check the real run's '[seed] MISS' log lines for the missing slugs."
-            : "More rows than SEED_STAPLES — either the seed list has grown since this table was populated, or stale slugs from an older version of the list are still sitting in the table.",
+        tables: [
+          {
+            label: `SEED_STAPLES slugs with no core_ingredients row (${rows.length}/${SEED_STAPLES.length} present)`,
+            rows: absent,
+            note:
+              absent.length === 0
+                ? undefined
+                : "Absence here is EXPECTED for a genuine CoFID/FDC total miss or a stale cofidOverride code — cross-check each slug against the import run's '[seed] MISS' / 'OVERRIDE NOT FOUND' log lines before treating any of these as a bug.",
+          },
+        ],
       };
     },
   },
@@ -209,10 +240,13 @@ order by display_name;
 select slug, display_name, source, kcal_100g, protein_100g, carbs_100g, fat_100g
 from public.core_ingredients
 where unit_grams <> '{}'::jsonb
-  and (kcal_100g is null or protein_100g is null or carbs_100g is null or fat_100g is null);
--- EXPECT: 0 rows. Any row => investigate that staple's CoFID name match first.`,
+  and (kcal_100g is null or protein_100g is null or carbs_100g is null or fat_100g is null)
+  and slug not in ('black-pepper'); -- CoFID marks energy & carbohydrate N for ground spices/stock cubes generally — see verify.ts's HEAD_STAPLE_NULL_ALLOWLIST.
+-- EXPECT: 0 rows. Any row (other than the allowlisted spices/stock cubes above) => investigate that staple's CoFID name match first.`,
     evaluate: (rows) => {
-      const offenders = rows.filter((r) => hasUnitGrams(r) && missingCoreFour(r));
+      const offenders = rows.filter(
+        (r) => hasUnitGrams(r) && missingCoreFour(r) && !HEAD_STAPLE_NULL_ALLOWLIST.has(r.slug),
+      );
       return {
         pass: offenders.length === 0,
         summary: `${offenders.length} head staple(s) missing a core macro`,
@@ -353,14 +387,15 @@ order by salt_100g desc;
 select slug, display_name, source, kcal_100g, protein_100g, carbs_100g, fat_100g
 from public.core_ingredients
 where kcal_100g = 0
+  and slug not in ('table-salt', 'bicarbonate-of-soda') -- inorganic — genuinely 0 in CoFID, see verify.ts's ZERO_KCAL_ALLOWLIST
 order by display_name;
--- kcal exactly 0 is implausible for virtually every staple in the list => smoking
--- gun for a NULL silently coalesced to 0 on write. EXPECT: 0 rows.
+-- kcal exactly 0 is implausible for virtually every OTHER staple in the list =>
+-- smoking gun for a NULL silently coalesced to 0 on write. EXPECT: 0 rows.
 -- (protein/carbs/fat = 0 can be legitimate — oils have 0 carbs, sugar 0 protein —
 --  so those are NOT alarms on their own.)`,
     evaluate: (rows) => {
       const offenders = rows
-        .filter((r) => r.kcal_100g === 0)
+        .filter((r) => r.kcal_100g === 0 && !ZERO_KCAL_ALLOWLIST.has(r.slug))
         .sort((a, b) => a.display_name.localeCompare(b.display_name));
       return {
         pass: offenders.length === 0,

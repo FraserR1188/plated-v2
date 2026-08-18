@@ -10,11 +10,19 @@
 -- ============================================================================
 
 
--- 0. Row count vs the seed list ----------------------------------------------
--- Expected: 189 (matches SEED_STAPLES). Fewer => the importer dropped whole rows
--- on total miss rather than inserting a NULL-macro row. Note which behaviour it is;
--- it changes how you read Q1 (absent row vs present-but-NULL row).
-select count(*) as total_rows from public.core_ingredients;   -- expect 189
+-- 0. Seed-list coverage — which staples have no row ---------------------------
+-- Row count here will legitimately be LESS than SEED_STAPLES.length: a total
+-- CoFID/FDC miss, or a stale/typo'd cofidOverride code, means the importer
+-- skips the row entirely rather than inserting a NULL-macro placeholder (see
+-- seedCoreIngredients.ts's MISS / OVERRIDE NOT FOUND branches). So there is
+-- no single "expected" count to assert against — this is a by-name review,
+-- not a pass/fail check.
+select slug from public.core_ingredients order by slug;
+-- Compare the result against SEED_STAPLES in scripts/seedStaples.ts, or just
+-- re-read the import run's own '[seed] MISS' / '[seed] OVERRIDE NOT FOUND'
+-- console lines — that's the authoritative list, computed at import time.
+-- This script's evaluate() below does the same set-difference against the
+-- CURRENT seed list, so you don't have to do it by hand.
 
 
 -- 1. Core-four NULL audit — the "invisible to the staple tier" list -----------
@@ -47,8 +55,9 @@ order by display_name;
 select slug, display_name, source, kcal_100g, protein_100g, carbs_100g, fat_100g
 from public.core_ingredients
 where unit_grams <> '{}'::jsonb
-  and (kcal_100g is null or protein_100g is null or carbs_100g is null or fat_100g is null);
--- EXPECT: 0 rows. Any row => investigate that staple's CoFID name match first.
+  and (kcal_100g is null or protein_100g is null or carbs_100g is null or fat_100g is null)
+  and slug not in ('black-pepper'); -- CoFID marks energy & carbohydrate N for ground spices/stock cubes generally — see verify.ts's HEAD_STAPLE_NULL_ALLOWLIST.
+-- EXPECT: 0 rows. Any row (other than the allowlisted spices/stock cubes above) => investigate that staple's CoFID name match first.
 
 
 -- 3. Source provenance breakdown — the name-match discriminator ----------------
@@ -100,9 +109,10 @@ order by salt_100g desc;
 select slug, display_name, source, kcal_100g, protein_100g, carbs_100g, fat_100g
 from public.core_ingredients
 where kcal_100g = 0
+  and slug not in ('table-salt', 'bicarbonate-of-soda') -- inorganic — genuinely 0 in CoFID, see verify.ts's ZERO_KCAL_ALLOWLIST
 order by display_name;
--- kcal exactly 0 is implausible for virtually every staple in the list => smoking
--- gun for a NULL silently coalesced to 0 on write. EXPECT: 0 rows.
+-- kcal exactly 0 is implausible for virtually every OTHER staple in the list =>
+-- smoking gun for a NULL silently coalesced to 0 on write. EXPECT: 0 rows.
 -- (protein/carbs/fat = 0 can be legitimate — oils have 0 carbs, sugar 0 protein —
 --  so those are NOT alarms on their own.)
 

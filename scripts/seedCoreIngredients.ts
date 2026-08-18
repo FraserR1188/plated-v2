@@ -37,7 +37,7 @@
 // ============================================================
 
 import { SEED_STAPLES, type SeedStaple } from "./seedStaples";
-import { loadCofid, matchCofid } from "./seedIngredients/cofid";
+import { loadCofid, matchCofidWithRunnerUp } from "./seedIngredients/cofid";
 import { lookupFdc } from "./seedIngredients/fdc";
 import { coalesceMacros, Macro100, MACRO100_KEYS } from "./seedIngredients/convert";
 import { createAdminClient } from "./seedIngredients/db";
@@ -130,10 +130,24 @@ async function run() {
   let merged = 0;
   let overrides = 0;
 
+  // ── LOGGING ──────────────────────────────────────────────────────────
+  // Four distinct per-staple outcomes, four distinct labels — never "OK"
+  // for anything, because "OK" doesn't say WHO decided the row was right.
+  //   OVERRIDE            a human-picked cofidOverride code, found and used.
+  //   OVERRIDE NOT FOUND   a cofidOverride code that isn't in this CSV —
+  //                        skipped, never silently downgraded to a guess.
+  //   GUESS                matchCofid()/lookupFdc()'s own pick. Carries a
+  //                        runner-up inline when one exists, so a human
+  //                        skimming the console gets a first read on how
+  //                        contested it was.
+  //   MISS                 no CoFID or FDC match at all.
+  // The summary below leads with how many of the resolved rows are which
+  // of these — see that comment for why the ordering there matters too.
+
   for (const staple of staples) {
     // An override bypasses matching entirely — see the field's own comment
     // in seedStaples.ts. A code that isn't in THIS CSV is its own outcome,
-    // never a silent fall-through to matchCofid(): a human already decided
+    // never a silent fall-through to matching: a human already decided
     // what this staple should be, and a stale/typo'd code degrading
     // quietly into a guess would be worse than skipping it outright.
     if (staple.cofidOverride) {
@@ -141,12 +155,12 @@ async function run() {
       if (!row) {
         overrideMisses.push(staple.slug);
         console.warn(
-          `[seed] MISS  ${staple.slug} — override ${staple.cofidOverride} not found in this CSV. Skipping (not falling back to matching).`,
+          `[seed] OVERRIDE NOT FOUND  ${staple.slug} — code ${staple.cofidOverride} not in this CSV. Skipping (not falling back to matching).`,
         );
         continue;
       }
 
-      console.log(`[seed] OK    ${staple.slug} <- cofid (override) "${row.foodName}"`);
+      console.log(`[seed] ${"OVERRIDE".padEnd(8)} ${staple.slug} <- cofid "${row.foodName}"`);
       // No FDC merge for an override — see the field comment: the human
       // picked the row, not just a gap-filler, and it's trusted as-is.
       outRows.push(buildRow(staple, coalesceMacros(row.macros, {}), "cofid", row.foodCode, true));
@@ -155,12 +169,12 @@ async function run() {
       continue;
     }
 
-    const cofidMatch = matchCofid(staple, cofidRows);
+    const { match: cofidMatch, runnerUp } = matchCofidWithRunnerUp(staple, cofidRows);
     const fdcMatch = fdcKey ? await lookupFdc(staple, fdcKey) : null;
 
     if (!cofidMatch && !fdcMatch) {
       misses.push(staple.slug);
-      console.warn(`[seed] MISS  ${staple.slug} — no CoFID or FDC match. Skipping.`);
+      console.warn(`[seed] ${"MISS".padEnd(8)} ${staple.slug} — no CoFID or FDC match. Skipping.`);
       continue;
     }
 
@@ -185,23 +199,44 @@ async function run() {
       fdcOnly++;
     }
 
+    // GUESS, never OK — this is matchCofid()'s/lookupFdc()'s pick, not a
+    // human's. See the file-level LOGGING comment: a run of nothing but
+    // GUESS lines must not be mistakable for a clean pass. The runner-up
+    // (only ever computed for a CoFID pick, not an FDC one — FDC's own
+    // search relevance isn't re-scored locally the way CoFID's is) gives a
+    // human skimming this output a first read on how contested the pick
+    // was, before anyone opens a review artefact.
     console.log(
-      `[seed] OK    ${staple.slug} <- ${source}` +
+      `[seed] ${"GUESS".padEnd(8)} ${staple.slug} <- ${source}` +
         (cofidMatch ? ` cofid:"${cofidMatch.matchedName}"` : "") +
-        (fdcMatch ? ` fdc:"${fdcMatch.matchedName}"` : ""),
+        (fdcMatch ? ` fdc:"${fdcMatch.matchedName}"` : "") +
+        (runnerUp ? ` (runner-up: "${runnerUp.matchedName}")` : ""),
     );
 
     outRows.push(buildRow(staple, mergedMacros, source, sourceRef, false));
   }
 
+  // Verified/unverified LEADS the summary, above the source breakdown —
+  // deliberately. cofid/fdc/merged describes whose NUMBERS a row has;
+  // verified/unverified describes whether a HUMAN has looked at it, which
+  // is the more important trust signal for this workflow. A run of 176
+  // guesses and 0 overrides must not be able to read as a clean pass by
+  // leading with a source breakdown that looks like routine, healthy
+  // variety instead of "nobody has reviewed any of this yet".
+  const unverified = outRows.length - overrides;
   console.log(
-    `\n[seed] ${outRows.length} resolved (cofid-only ${cofidOnly}, fdc-only ${fdcOnly}, merged ${merged}, ${overrides} of which overridden), ${misses.length} missed, ${overrideMisses.length} override(s) not found.`,
+    `\n[seed] ${outRows.length} resolved — ${overrides} verified (override), ` +
+      `${unverified} unverified (matcher guess${unverified === 1 ? "" : "es"}${unverified > 0 ? ", NEEDS REVIEW" : ""}).`,
   );
+  console.log(
+    `[seed]   source breakdown: cofid-only ${cofidOnly}, fdc-only ${fdcOnly}, merged ${merged} (${overrides} of the cofid-only rows overridden).`,
+  );
+  console.log(`[seed] ${misses.length} missed, ${overrideMisses.length} override(s) not found.`);
   if (misses.length > 0) {
     console.log(`[seed] Missed slugs (need manual mapping): ${misses.join(", ")}`);
   }
   if (overrideMisses.length > 0) {
-    console.log(`[seed] Override not found for: ${overrideMisses.join(", ")}`);
+    console.log(`[seed] OVERRIDE NOT FOUND for: ${overrideMisses.join(", ")}`);
   }
 
   if (args.dryRun) {

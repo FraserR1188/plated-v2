@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseCofidCsv, matchCofid } from "../cofid";
+import { parseCofidCsv, matchCofid, matchCofidWithRunnerUp } from "../cofid";
 import type { SeedStaple } from "../../seedStaples";
 
 function staple(overrides: Partial<SeedStaple>): SeedStaple {
@@ -280,5 +280,44 @@ describe("matchCofid — identity anchoring", () => {
       rows,
     );
     expect(match?.sourceRef).toBe("2");
+  });
+});
+
+describe("matchCofidWithRunnerUp", () => {
+  const HEADER =
+    "Food Code,Food Name,Energy (kcal),Protein (g),Fat (g),Saturated fat (g),Carbohydrate (g),Sugars (g),Fibre (AOAC) (g),Sodium (mg)\n";
+
+  it("surfaces the next-best DIFFERENT row as the runner-up, deduplicated by food code", () => {
+    const rows = parseCofidCsv(
+      HEADER +
+        "1,\"Flour, white, plain\",341,9.4,1.3,0.2,77.7,1.5,3.1,2\n" +
+        "2,\"Flour, white, plain, fortified\",341,9.4,1.3,0.2,77.7,1.5,3.1,2\n",
+    );
+    // "Plain flour" and its would-be alias both point at food code 1 here —
+    // the runner-up must still be food code 2, not code 1 re-surfacing via
+    // a second query.
+    const result = matchCofidWithRunnerUp(
+      staple({ displayName: "Plain flour", aliases: ["flour"] }),
+      rows,
+    );
+    expect(result.match?.sourceRef).toBe("1");
+    expect(result.runnerUp?.sourceRef).toBe("2");
+  });
+
+  it("returns a null runner-up when only one candidate survives", () => {
+    const rows = parseCofidCsv(HEADER + "1,\"Onions, raw\",36,1.2,0.2,0,7.9,4.7,1.4,3\n");
+    const result = matchCofidWithRunnerUp(staple({ displayName: "Onion" }), rows);
+    expect(result.match?.sourceRef).toBe("1");
+    expect(result.runnerUp).toBeNull();
+  });
+
+  it("matchCofid() still returns exactly matchCofidWithRunnerUp().match", () => {
+    const rows = parseCofidCsv(
+      HEADER +
+        "1,\"Chocolate, milk\",550,7.6,29.7,17.7,59.6,56.5,1.7,120\n" +
+        "2,\"Milk, whole, pasteurised\",64,3.3,3.6,2.3,4.6,4.6,0,44\n",
+    );
+    const s = staple({ displayName: "Whole milk", aliases: ["milk"] });
+    expect(matchCofid(s, rows)).toEqual(matchCofidWithRunnerUp(s, rows).match);
   });
 });

@@ -434,19 +434,59 @@ function bestByHint(candidates: Candidate[], hintTokens: string[]): Candidate | 
   return best;
 }
 
-export function matchCofid(staple: SeedStaple, rows: CofidRow[]): CofidMatch | null {
+/** Same fallback shape matchCofid() has always used: try the hint ranking
+ *  first if there is one, but fall back to the unhinted ranking over the
+ *  SAME pool (not a restricted one) whenever the hint doesn't produce a
+ *  winner — including when there's no hint at all. */
+function rankWithinPool(pool: Candidate[], hintTokens: string[] | undefined): Candidate | null {
+  if (hintTokens && hintTokens.length > 0) {
+    const hinted = bestByHint(pool, hintTokens);
+    if (hinted) return hinted;
+  }
+  return bestByExtraWordsThenRaw(pool);
+}
+
+function candidateToMatch(c: Candidate): CofidMatch {
+  return { macros: c.row.macros, sourceRef: c.row.foodCode, matchedName: c.row.foodName };
+}
+
+export interface CofidMatchWithRunnerUp {
+  match: CofidMatch | null;
+  /**
+   * The next-best DIFFERENT food that survived the same candidacy gate —
+   * for logging next to an unverified match, so a human skimming console
+   * output gets a first read on how contested the pick was without opening
+   * a separate review artefact. Deduplicated by food code, not merely by
+   * (row, query) pair, so this can never be the SAME row re-surfacing
+   * because a second alias also matched it. Null when nothing else
+   * survived the gate at all — an uncontested pick.
+   */
+  runnerUp: CofidMatch | null;
+}
+
+export function matchCofidWithRunnerUp(
+  staple: SeedStaple,
+  rows: CofidRow[],
+): CofidMatchWithRunnerUp {
   const candidates = candidatesFor(staple, rows);
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) return { match: null, runnerUp: null };
 
   const hintTokens = staple.preparationPreference;
-  const best =
-    (hintTokens && hintTokens.length > 0 ? bestByHint(candidates, hintTokens) : null) ??
-    bestByExtraWordsThenRaw(candidates);
+  const winner = rankWithinPool(candidates, hintTokens);
+  if (!winner) return { match: null, runnerUp: null };
 
-  if (!best) return null;
+  const remainder = candidates.filter((c) => c.row.foodCode !== winner.row.foodCode);
+  const runnerUp = remainder.length > 0 ? rankWithinPool(remainder, hintTokens) : null;
+
   return {
-    macros: best.row.macros,
-    sourceRef: best.row.foodCode,
-    matchedName: best.row.foodName,
+    match: candidateToMatch(winner),
+    runnerUp: runnerUp ? candidateToMatch(runnerUp) : null,
   };
+}
+
+/** Thin wrapper — matchCofidWithRunnerUp() is the single source of truth
+ *  for ranking now, this just drops the runner-up for callers (mostly
+ *  tests) that only ever cared about the winner. */
+export function matchCofid(staple: SeedStaple, rows: CofidRow[]): CofidMatch | null {
+  return matchCofidWithRunnerUp(staple, rows).match;
 }

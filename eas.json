@@ -17,6 +17,13 @@
         "buildType": "apk"
       },
       "env": { "EXPO_PUBLIC_SENTRY_ENV": "preview" }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": { "EXPO_PUBLIC_SENTRY_ENV": "production" },
+      "autoIncrement": true
     }
   }
 }

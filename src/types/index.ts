@@ -667,6 +667,9 @@ export type RootStackParamList = {
    */
   BundleApplyReview: undefined;
 
+  /** No params. Static content — see src/screens/AboutScreen.tsx. */
+  About: undefined;
+
   /**
    * No params. USED TO carry `onPick: (product, quantityG) => void` — a
    * function in a navigation param, which React Navigation warns about

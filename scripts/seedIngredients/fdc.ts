@@ -17,6 +17,15 @@
 // separate nutrient rows) and has migrated sugar IDs across releases; 1008/
 // 1003/1004/1005/1258/1079/2000|1063/1093 is current as of the Phase 2
 // brief but is exactly the kind of thing that silently drifts.
+//
+// ATTRIBUTION — this importer has never written a production row (see
+// src/content/attributions.ts, DATA_SOURCES: only cofid-2021 and
+// open-food-facts are listed). If this path is ever used to seed
+// core_ingredients rows that ship in a build, a USDA FoodData Central entry
+// MUST be added to DATA_SOURCES first — that file is the single source of
+// truth for attribution, not this comment. Suggested citation: U.S.
+// Department of Agriculture, Agricultural Research Service. FoodData
+// Central. fdc.nal.usda.gov.
 // ============================================================
 
 import type { SeedStaple } from "../seedStaples";

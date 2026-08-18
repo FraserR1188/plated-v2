@@ -46,6 +46,7 @@ import { TabBar } from "../components/TabBar";
 import { Colors, Fonts, NavTheme } from "../theme/tokens";
 import { RootStackParamList, BottomTabParamList } from "../types";
 import { CreateFoodScreen } from "../screens/CreateFoodScreen";
+import { AboutScreen } from "../screens/AboutScreen";
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<BottomTabParamList>();
@@ -279,6 +280,11 @@ export function AppNavigator() {
           name="BundleApplyReview"
           component={BundleApplyReviewScreen}
           options={{ title: "Adjust & apply" }}
+        />
+        <Stack.Screen
+          name="About"
+          component={AboutScreen}
+          options={{ title: "About & legal" }}
         />
       </Stack.Navigator>
     </NavigationContainer>

@@ -10,6 +10,9 @@ import {
   Pressable,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useNavigation } from "@react-navigation/native";
+import { NativeStackNavigationProp } from "@react-navigation/native-stack";
+import { RootStackParamList } from "../types";
 import { useStore } from "../store/useStore";
 import { exportCSV, last30Days } from "../lib/csv";
 import {
@@ -61,6 +64,8 @@ const GOAL_FIELDS: {
   { key: "sugar", label: "Sugar", unit: "g", color: MacroColor.sugar },
 ];
 
+type Nav = NativeStackNavigationProp<RootStackParamList>;
+
 // Username validation — mirrors DB constraint
 const USERNAME_REGEX = /^[a-z0-9_]{3,30}$/;
 
@@ -88,6 +93,7 @@ function relativeTime(iso: string | null): string | null {
 }
 
 export function SettingsScreen() {
+  const navigation = useNavigation<Nav>();
   const {
     goals,
     saveGoals,
@@ -653,7 +659,21 @@ export function SettingsScreen() {
         <View style={styles.card}>
           <Pressable
             style={({ pressed }) => [
+              styles.libRow,
+              styles.goalBorder,
+              pressed && { backgroundColor: Colors.surface2 },
+            ]}
+            onPress={() => navigation.navigate("About")}
+          >
+            <View style={styles.libBody}>
+              <Text style={styles.libName}>About & legal</Text>
+            </View>
+            <Text style={styles.libChevron}>›</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [
               styles.signOutBtn,
+              { marginTop: Spacing.md },
               pressed && { opacity: 0.85 },
             ]}
             onPress={handleSignOut}

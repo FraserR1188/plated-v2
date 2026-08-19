@@ -179,6 +179,17 @@ export async function searchUsers(
   }));
 }
 
+/**
+ * Since follows_no_reciprocal (20260819120000_*.sql) forbids both A→B and B→A
+ * existing for the same pair, `out` and `inc` can never both be set for the
+ * same userId — only one directional row can exist between any two users at
+ * a time. That makes the outgoing-before-incoming ordering below DEAD LOGIC:
+ * there is no longer a genuine conflict for it to resolve, because the two
+ * conditions are now mutually exclusive rather than merely checked in an
+ * order that happened to prefer one. Left as-is rather than collapsed,
+ * since removing it wasn't asked for and the order is still correct — it's
+ * just no longer doing any work.
+ */
 function friendshipStateFor(
   userId: string,
   outgoingStatus: Map<string, string>,
@@ -193,6 +204,17 @@ function friendshipStateFor(
 }
 
 // ─── Friend requests ─────────────────────────────────────────
+
+/**
+ * The message returned by requestFriend() when the OTHER person already sent
+ * YOU a request first. Exported as a constant, not duplicated as a literal at
+ * the call site, because callers need to recognise this specific case (to
+ * refresh the row into the Accept/Decline state) and a string comparison
+ * against a copy-pasted literal is exactly the kind of thing that silently
+ * drifts when either side is edited later.
+ */
+export const RECIPROCAL_REQUEST_ERROR =
+  "This person already sent you a request — check your requests.";
 
 /**
  * Send a friend request. Status is never sent on the insert — the column
@@ -213,6 +235,14 @@ export async function requestFriend(
 
   if (error) {
     reportError("requestFriend", error);
+    // 23P01 = exclusion_violation. follows_no_reciprocal
+    // (20260819120000) forbids both A→B and B→A existing for the same pair —
+    // this is the second of two crossed requests, sent before either party
+    // saw the other's. Not a bug to bury under a generic message: the
+    // request the user is looking for already exists, just addressed to them.
+    if (error.code === "23P01") {
+      return { error: RECIPROCAL_REQUEST_ERROR };
+    }
     return { error: "Couldn't send that friend request." };
   }
   return { error: null };

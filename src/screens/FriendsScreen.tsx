@@ -40,6 +40,7 @@ import {
   getFriends,
   getIncomingRequests,
   getTodayCaloriesForUser,
+  RECIPROCAL_REQUEST_ERROR,
 } from "../lib/social";
 import {
   RootStackParamList,
@@ -475,29 +476,47 @@ export function FriendsScreen() {
 
   // ── Friend requests ────────────────────────────────────────
 
-  const handleRequestFriend = useCallback(async (userId: string) => {
-    setLoadingId(userId);
-    try {
-      const { error } = await requestFriend(userId);
-      if (error) {
-        Alert.alert("Error", error);
-        return;
+  const handleRequestFriend = useCallback(
+    async (userId: string) => {
+      setLoadingId(userId);
+      try {
+        const { error } = await requestFriend(userId);
+        if (error) {
+          Alert.alert("Error", error);
+          if (error === RECIPROCAL_REQUEST_ERROR) {
+            // They already requested ME — my insert collided with their row
+            // (follows_no_reciprocal, 20260819120000) instead of creating a
+            // second one. The request the user was trying to send already
+            // exists in the other direction, so surface it now rather than
+            // making them back out and re-search to find it.
+            setSearchResults((prev) =>
+              prev.map((u) =>
+                u.user_id === userId
+                  ? { ...u, friendship: "incoming_pending" }
+                  : u,
+              ),
+            );
+            await Promise.all([loadFriends(), fetchIncomingRequestCount()]);
+          }
+          return;
+        }
+        setSearchResults((prev) =>
+          prev.map((u) =>
+            u.user_id === userId ? { ...u, friendship: "outgoing_pending" } : u,
+          ),
+        );
+      } catch (err) {
+        reportError("handleRequestFriend", err);
+        Alert.alert(
+          "Error",
+          "Could not send that friend request. Please try again.",
+        );
+      } finally {
+        setLoadingId(null);
       }
-      setSearchResults((prev) =>
-        prev.map((u) =>
-          u.user_id === userId ? { ...u, friendship: "outgoing_pending" } : u,
-        ),
-      );
-    } catch (err) {
-      reportError("handleRequestFriend", err);
-      Alert.alert(
-        "Error",
-        "Could not send that friend request. Please try again.",
-      );
-    } finally {
-      setLoadingId(null);
-    }
-  }, []);
+    },
+    [loadFriends, fetchIncomingRequestCount],
+  );
 
   const handleAcceptRequest = useCallback(
     async (userId: string) => {

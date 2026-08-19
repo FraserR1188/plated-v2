@@ -12,7 +12,7 @@
 // ============================================================
 
 import { supabase } from "./supabase";
-import { useStore } from "../store/useStore";
+import { useStore, WriteResult } from "../store/useStore";
 import { reportError } from "./reportError";
 
 const BUCKET = "custom-food-images";
@@ -148,14 +148,31 @@ export async function getSignedImageUrl(
 
 // ─── Delete ──────────────────────────────────────────────────
 
-/** Remove a stored photo (e.g. when a custom food is deleted). */
+/**
+ * Remove a stored photo (e.g. when a custom food is deleted).
+ *
+ * Returns WriteResult, not void — matching deleteEntries rather than
+ * deleteIngredient. A failed deleteIngredient self-heals: the row it didn't
+ * remove reappears on the next fetchSavedIngredients() fetch, so the UI
+ * never has to notice the failure on its own. A storage object this fails
+ * to remove has no equivalent read path to reappear on — nothing in the app
+ * ever lists bucket contents, so an orphan left behind here is invisible
+ * and permanent until the account-deletion sweep eventually catches it by
+ * path prefix. That asymmetry is why this one can't afford to be void.
+ */
 export async function deleteCustomFoodImage(
   path: string | null | undefined,
-): Promise<void> {
-  if (!path) return;
+): Promise<WriteResult> {
+  if (!path) return { error: null };
   try {
-    await supabase.storage.from(BUCKET).remove([path]);
+    const { error } = await supabase.storage.from(BUCKET).remove([path]);
+    if (error) {
+      reportError("deleteCustomFoodImage", error);
+      return { error: "Couldn't remove the image file." };
+    }
+    return { error: null };
   } catch (e: any) {
     reportError("deleteCustomFoodImage", e);
+    return { error: "Couldn't remove the image file." };
   }
 }

@@ -19,6 +19,8 @@ import {
 
 import { dateKey } from "./time";
 import { applyEntries } from "./entries";
+import { reportError } from "./reportError";
+import type { WriteResult } from "../store/useStore";
 
 // ─── Profile CRUD ────────────────────────────────────────────
 
@@ -39,7 +41,21 @@ export async function getMyProfile(): Promise<Profile | null> {
   return data;
 }
 
-/** Create or upsert the current user's profile (used during onboarding / settings). */
+// profiles.username is NOT NULL UNIQUE, CHECK (username ~ '^[a-z0-9_]{3,30}$')
+// (20260819100000_capture_social_schema.sql). Validate against the exact same
+// pattern client-side so a rejected write comes back as a hint, not a raw
+// constraint-violation message.
+const USERNAME_FORMAT_RE = /^[a-z0-9_]{3,30}$/;
+const USERNAME_FORMAT_HINT =
+  "Usernames use lowercase letters, numbers and underscores, 3-30 characters.";
+
+/**
+ * Create or upsert the current user's profile (used during onboarding / settings).
+ *
+ * Every account gets a profile row at signup now
+ * (20260819101000_profile_on_signup.sql), so in practice this is always an
+ * UPDATE — the upsert/onConflict is defence in depth, not the primary path.
+ */
 export async function upsertProfile(
   username: string,
   displayName?: string,
@@ -49,12 +65,17 @@ export async function upsertProfile(
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
 
+  const normalized = username.toLowerCase().trim();
+  if (!USERNAME_FORMAT_RE.test(normalized)) {
+    throw new Error(USERNAME_FORMAT_HINT);
+  }
+
   const { data, error } = await supabase
     .from("profiles")
     .upsert(
       {
         user_id: user.id,
-        username: username.toLowerCase().trim(),
+        username: normalized,
         display_name: displayName?.trim() ?? null,
       },
       { onConflict: "user_id" },
@@ -62,7 +83,15 @@ export async function upsertProfile(
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) {
+    // 23505 = unique_violation. Distinct from every other failure: it's not
+    // a bug to report, it's someone else's handle.
+    if (error.code === "23505") {
+      throw new Error("That handle is taken. Try another one.");
+    }
+    reportError("upsertProfile", error);
+    throw new Error("Couldn't save your username. Please try again.");
+  }
   return data;
 }
 
@@ -150,24 +179,28 @@ export async function searchUsers(
 
 // ─── Follow / Unfollow ───────────────────────────────────────
 
-export async function followUser(targetUserId: string): Promise<void> {
+export async function followUser(targetUserId: string): Promise<WriteResult> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
+  if (!user) return { error: "Not signed in." };
 
   const { error } = await supabase
     .from("follows")
     .insert({ follower_id: user.id, following_id: targetUserId });
 
-  if (error) throw error;
+  if (error) {
+    reportError("followUser", error);
+    return { error: "Couldn't follow this user." };
+  }
+  return { error: null };
 }
 
-export async function unfollowUser(targetUserId: string): Promise<void> {
+export async function unfollowUser(targetUserId: string): Promise<WriteResult> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
+  if (!user) return { error: "Not signed in." };
 
   const { error } = await supabase
     .from("follows")
@@ -175,7 +208,11 @@ export async function unfollowUser(targetUserId: string): Promise<void> {
     .eq("follower_id", user.id)
     .eq("following_id", targetUserId);
 
-  if (error) throw error;
+  if (error) {
+    reportError("unfollowUser", error);
+    return { error: "Couldn't unfollow this user." };
+  }
+  return { error: null };
 }
 
 // ─── Friends List ────────────────────────────────────────────

@@ -5,8 +5,6 @@
 // calorie summary) and a search bar to find new users.
 // ============================================================
 
-const todayKey = () => new Date().toISOString().split("T")[0];
-
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import {
   View,
@@ -41,6 +39,8 @@ import {
   getTodayCaloriesForUser,
 } from "../lib/social";
 import { RootStackParamList, ProfileWithFollowState, Profile } from "../types";
+import { dateKey } from "../lib/time";
+import { reportError } from "../lib/reportError";
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -275,10 +275,7 @@ export function FriendsScreen() {
       );
       setFollowing(enriched);
     } catch (err) {
-      console.error(
-        "loadFollowing error:",
-        err instanceof Error ? err.message : String(err),
-      );
+      reportError("loadFollowing", err);
     } finally {
       setLoadingList(false);
       setRefreshing(false);
@@ -313,7 +310,8 @@ export function FriendsScreen() {
       try {
         const results = await searchUsers(text.trim());
         setSearchResults(results);
-      } catch {
+      } catch (err) {
+        reportError("searchUsers", err);
         setSearchError("Search failed. Try again.");
       } finally {
         setSearching(false);
@@ -333,7 +331,11 @@ export function FriendsScreen() {
     async (userId: string) => {
       setLoadingId(userId);
       try {
-        await followUser(userId);
+        const { error } = await followUser(userId);
+        if (error) {
+          Alert.alert("Error", error);
+          return;
+        }
         // Update search results optimistically
         setSearchResults((prev) =>
           prev.map((u) =>
@@ -342,7 +344,8 @@ export function FriendsScreen() {
         );
         // Refresh following list
         await loadFollowing();
-      } catch {
+      } catch (err) {
+        reportError("handleFollow", err);
         Alert.alert("Error", "Could not follow user. Please try again.");
       } finally {
         setLoadingId(null);
@@ -360,14 +363,19 @@ export function FriendsScreen() {
         onPress: async () => {
           setLoadingId(userId);
           try {
-            await unfollowUser(userId);
+            const { error } = await unfollowUser(userId);
+            if (error) {
+              Alert.alert("Error", error);
+              return;
+            }
             setFollowing((prev) => prev.filter((f) => f.user_id !== userId));
             setSearchResults((prev) =>
               prev.map((u) =>
                 u.user_id === userId ? { ...u, is_following: false } : u,
               ),
             );
-          } catch {
+          } catch (err) {
+            reportError("handleUnfollow", err);
             Alert.alert("Error", "Could not unfollow. Please try again.");
           } finally {
             setLoadingId(null);
@@ -383,7 +391,7 @@ export function FriendsScreen() {
     (profile: Profile) => {
       navigation.navigate("ConnectedUserLog", {
         profile,
-        date: todayKey(),
+        date: dateKey(),
       });
     },
     [navigation],

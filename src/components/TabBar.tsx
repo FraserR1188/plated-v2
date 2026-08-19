@@ -33,6 +33,14 @@ const TAB_ICONS: Record<string, { default: string; active: string }> = {
   Settings: { default: "⊙", active: "⊙" },
 };
 
+// Friends must not be reachable by testers until the friendship model has an
+// accept gate: meal_entries_select_follower currently grants read access to
+// another user's full meal history the instant a `follows` row exists, with
+// no pending/accepted distinction. The screen and its route stay registered
+// in AppNavigator — only this tab-bar entry is hidden — so flipping this one
+// constant is enough to bring it back for testing.
+const SOCIAL_ENABLED = false;
+
 // ─── Single tab item ─────────────────────────────────────────
 
 interface TabItemProps {
@@ -119,6 +127,8 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
     >
       <View style={styles.inner}>
         {state.routes.map((route, index) => {
+          if (route.name === "Friends" && !SOCIAL_ENABLED) return null;
+
           const { options } = descriptors[route.key];
           const label =
             typeof options.tabBarLabel === "string"

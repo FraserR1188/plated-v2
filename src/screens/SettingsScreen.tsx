@@ -36,6 +36,7 @@ import {
   syncWhoop,
   type WhoopConnection,
 } from "../lib/whoop";
+import { reportError } from "../lib/reportError";
 
 import { supabase } from "../lib/supabase";
 
@@ -199,8 +200,13 @@ export function SettingsScreen() {
       setCurrentUsername(trimmed);
       setUsernameEditing(false);
       setUsernameSaved(true);
-    } catch {
-      setUsernameError("Could not save username. Please try again.");
+    } catch (err) {
+      reportError("upsertProfile", err);
+      setUsernameError(
+        err instanceof Error
+          ? err.message
+          : "Could not save username. Please try again.",
+      );
     } finally {
       setUsernameSaving(false);
     }

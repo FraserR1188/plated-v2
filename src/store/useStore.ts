@@ -227,6 +227,16 @@ interface AppState {
   goals: Goals;
   loading: boolean;
 
+  /**
+   * Incoming pending friend-request count — the Friends tab badge. Lives here
+   * (not screen state) because TabBar needs it and FriendsScreen already has
+   * the underlying rows. Deliberately eventually-consistent: refreshed on
+   * app foreground, TabBar mount, and right after accept/decline on
+   * FriendsScreen — never polled, there is no push infrastructure.
+   */
+  incomingRequestCount: number;
+  fetchIncomingRequestCount: () => Promise<void>;
+
   setUserId: (id: string | null) => void;
   reset: () => void;
   fetchEntries: () => Promise<void>;
@@ -493,6 +503,7 @@ export const useStore = create<AppState>((set, get) => ({
   savedIngredients: [],
   goals: DEFAULT_GOALS,
   loading: false,
+  incomingRequestCount: 0,
   batchDraft: EMPTY_BATCH_DRAFT,
   compositionApplyDraft: null,
   manualEntryResult: null,
@@ -509,6 +520,7 @@ export const useStore = create<AppState>((set, get) => ({
       savedIngredients: [],
       goals: DEFAULT_GOALS,
       loading: false,
+      incomingRequestCount: 0,
       batchDraft: EMPTY_BATCH_DRAFT,
       compositionApplyDraft: null,
       manualEntryResult: null,
@@ -608,6 +620,29 @@ export const useStore = create<AppState>((set, get) => ({
           sugar: data.sugar,
         },
       });
+  },
+
+  /**
+   * Count only — head: true means PostgREST returns the count without the
+   * matching rows, so this is a single-row response, not the full
+   * getIncomingRequests() profile join FriendsScreen uses for its own list.
+   * Log-only on failure: a badge that fails to load must never surface an
+   * Alert or block the tab bar, so state is simply left at its last-known
+   * value rather than reset to 0.
+   */
+  fetchIncomingRequestCount: async () => {
+    const { userId } = get();
+    if (!userId) return;
+    const { count, error } = await supabase
+      .from("follows")
+      .select("*", { count: "exact", head: true })
+      .eq("following_id", userId)
+      .eq("status", "pending");
+    if (error) {
+      reportError("fetchIncomingRequestCount", error);
+      return;
+    }
+    set({ incomingRequestCount: count ?? 0 });
   },
 
   fetchSavedIngredients: async () => {

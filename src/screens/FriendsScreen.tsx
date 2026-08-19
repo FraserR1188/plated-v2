@@ -49,6 +49,7 @@ import {
 } from "../types";
 import { dateKey } from "../lib/time";
 import { reportError } from "../lib/reportError";
+import { useStore } from "../store/useStore";
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 
@@ -376,6 +377,9 @@ function EmptyFriends() {
 
 export function FriendsScreen() {
   const navigation = useNavigation<Nav>();
+  const fetchIncomingRequestCount = useStore(
+    (s) => s.fetchIncomingRequestCount,
+  );
 
   // Search state
   const [query, setQuery] = useState("");
@@ -513,6 +517,8 @@ export function FriendsScreen() {
           prev.filter((r) => r.user_id !== userId),
         );
         await loadFriends();
+        // Clears the tab badge immediately, without waiting for foreground.
+        await fetchIncomingRequestCount();
       } catch (err) {
         reportError("handleAcceptRequest", err);
         Alert.alert(
@@ -523,32 +529,44 @@ export function FriendsScreen() {
         setLoadingId(null);
       }
     },
-    [loadFriends],
+    [loadFriends, fetchIncomingRequestCount],
   );
 
   // Covers both "decline an incoming request" and "cancel one I sent" — same
-  // underlying declineFriend() delete either way (see social.ts).
-  const handleDismissRequest = useCallback(async (userId: string) => {
-    setLoadingId(userId);
-    try {
-      const { error } = await declineFriend(userId);
-      if (error) {
-        Alert.alert("Error", error);
-        return;
+  // underlying declineFriend() delete either way (see social.ts). Either way,
+  // refreshing the badge count is a correct no-op at worst: cancelling my own
+  // outgoing request doesn't change MY incoming count, but re-fetching it still
+  // returns the right number.
+  const handleDismissRequest = useCallback(
+    async (userId: string) => {
+      setLoadingId(userId);
+      try {
+        const { error } = await declineFriend(userId);
+        if (error) {
+          Alert.alert("Error", error);
+          return;
+        }
+        setSearchResults((prev) =>
+          prev.map((u) =>
+            u.user_id === userId ? { ...u, friendship: "none" } : u,
+          ),
+        );
+        setIncomingRequests((prev) =>
+          prev.filter((r) => r.user_id !== userId),
+        );
+        await fetchIncomingRequestCount();
+      } catch (err) {
+        reportError("handleDismissRequest", err);
+        Alert.alert(
+          "Error",
+          "Could not update that request. Please try again.",
+        );
+      } finally {
+        setLoadingId(null);
       }
-      setSearchResults((prev) =>
-        prev.map((u) =>
-          u.user_id === userId ? { ...u, friendship: "none" } : u,
-        ),
-      );
-      setIncomingRequests((prev) => prev.filter((r) => r.user_id !== userId));
-    } catch (err) {
-      reportError("handleDismissRequest", err);
-      Alert.alert("Error", "Could not update that request. Please try again.");
-    } finally {
-      setLoadingId(null);
-    }
-  }, []);
+    },
+    [fetchIncomingRequestCount],
+  );
 
   const handleUnfriend = useCallback((userId: string) => {
     Alert.alert(

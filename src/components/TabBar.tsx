@@ -18,10 +18,19 @@ import {
   StyleSheet,
   Animated,
   Platform,
+  AppState,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import { Colors, Radius, Spacing, Typography, Fonts } from "../theme/tokens";
+import {
+  Colors,
+  Radius,
+  Spacing,
+  Typography,
+  Fonts,
+  Overlay,
+} from "../theme/tokens";
+import { useStore } from "../store/useStore";
 
 // Tab icon map — emoji/unicode placeholders.
 // Swap these for your SVG icon components if you have them.
@@ -47,11 +56,19 @@ const SOCIAL_ENABLED = true;
 interface TabItemProps {
   label: string;
   focused: boolean;
+  /** Unread count overlay on the icon. Omitted or 0 renders no badge — never a "0". */
+  badgeCount?: number;
   onPress: () => void;
   onLongPress: () => void;
 }
 
-function TabItem({ label, focused, onPress, onLongPress }: TabItemProps) {
+function TabItem({
+  label,
+  focused,
+  badgeCount,
+  onPress,
+  onLongPress,
+}: TabItemProps) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const icons = TAB_ICONS[label] ?? { default: "·", active: "·" };
 
@@ -90,14 +107,23 @@ function TabItem({ label, focused, onPress, onLongPress }: TabItemProps) {
           { transform: [{ scale: scaleAnim }] },
         ]}
       >
-        <Text
-          style={[
-            styles.tabIcon,
-            { color: focused ? Colors.green : Colors.textMuted },
-          ]}
-        >
-          {focused ? icons.active : icons.default}
-        </Text>
+        <View style={styles.iconWrap}>
+          <Text
+            style={[
+              styles.tabIcon,
+              { color: focused ? Colors.green : Colors.textMuted },
+            ]}
+          >
+            {focused ? icons.active : icons.default}
+          </Text>
+          {!!badgeCount && badgeCount > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText} numberOfLines={1}>
+                {badgeCount > 9 ? "9+" : badgeCount}
+              </Text>
+            </View>
+          )}
+        </View>
         <Text
           style={[
             styles.tabLabel,
@@ -118,6 +144,25 @@ function TabItem({ label, focused, onPress, onLongPress }: TabItemProps) {
 
 export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
+  const incomingRequestCount = useStore((s) => s.incomingRequestCount);
+  const fetchIncomingRequestCount = useStore(
+    (s) => s.fetchIncomingRequestCount,
+  );
+
+  // Refresh on mount and on app foreground. No polling — there is no push
+  // infrastructure, so this badge is deliberately eventually-consistent
+  // within a session. Skipped entirely while the tab is hidden: no point
+  // spending a request on a count nobody can see.
+  useEffect(() => {
+    if (!SOCIAL_ENABLED) return;
+
+    fetchIncomingRequestCount();
+
+    const sub = AppState.addEventListener("change", (next) => {
+      if (next === "active") fetchIncomingRequestCount();
+    });
+    return () => sub.remove();
+  }, [fetchIncomingRequestCount]);
 
   return (
     <View
@@ -161,6 +206,9 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
               key={route.key}
               label={label}
               focused={focused}
+              badgeCount={
+                route.name === "Friends" ? incomingRequestCount : undefined
+              }
               onPress={onPress}
               onLongPress={onLongPress}
             />
@@ -206,9 +254,32 @@ const styles = StyleSheet.create({
     backgroundColor: `${Colors.green}15`,
   },
 
+  iconWrap: {
+    position: "relative",
+  },
   tabIcon: {
     fontSize: 20,
     lineHeight: 24,
+  },
+  badge: {
+    position: "absolute",
+    top: -4,
+    right: -8,
+    minWidth: 15,
+    height: 15,
+    borderRadius: 8,
+    paddingHorizontal: 3,
+    backgroundColor: Colors.danger,
+    borderWidth: 1,
+    borderColor: Colors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: {
+    fontSize: 9,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
+    color: Overlay.white,
   },
   tabLabel: {
     fontSize: Typography.xs,

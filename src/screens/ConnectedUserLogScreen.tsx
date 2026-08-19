@@ -41,7 +41,7 @@ import {
   Fonts,
   withDefaultFont,
 } from "../theme/tokens";
-import { getEntriesForUser, followUser, unfollowUser } from "../lib/social";
+import { getEntriesForUser } from "../lib/social";
 import { sectionForTime } from "../lib/time";
 import { todayKey } from "../store/useStore";
 import {

@@ -33,12 +33,20 @@ import {
 } from "../theme/tokens";
 import {
   searchUsers,
-  followUser,
-  unfollowUser,
-  getFollowing,
+  requestFriend,
+  acceptFriend,
+  declineFriend,
+  unfriend,
+  getFriends,
+  getIncomingRequests,
   getTodayCaloriesForUser,
 } from "../lib/social";
-import { RootStackParamList, ProfileWithFollowState, Profile } from "../types";
+import {
+  RootStackParamList,
+  ProfileWithFriendState,
+  FriendshipState,
+  Profile,
+} from "../types";
 import { dateKey } from "../lib/time";
 import { reportError } from "../lib/reportError";
 
@@ -81,42 +89,107 @@ function CaloriePill({ calories }: { calories: number }) {
   );
 }
 
-// ─── Follow button ───────────────────────────────────────────
+// ─── Friend action button ───────────────────────────────────
+//
+// One row, four possible relationships (ProfileWithFriendState.friendship),
+// four different controls. "incoming_pending" renders two buttons — the rest
+// render one.
 
-function FollowButton({
-  isFollowing,
-  onPress,
+function FriendActionButton({
+  friendship,
+  onRequest,
+  onCancel,
+  onAccept,
+  onDecline,
+  onUnfriend,
   loading,
 }: {
-  isFollowing: boolean;
-  onPress: () => void;
+  friendship: FriendshipState;
+  onRequest: () => void;
+  onCancel: () => void;
+  onAccept: () => void;
+  onDecline: () => void;
+  onUnfriend: () => void;
   loading: boolean;
 }) {
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      disabled={loading}
-      activeOpacity={0.7}
-      style={[
-        styles.followBtn,
-        isFollowing ? styles.followBtnActive : styles.followBtnInactive,
-      ]}
-    >
-      {loading ? (
-        <ActivityIndicator
-          size="small"
-          color={isFollowing ? Colors.textSub : Colors.bg}
-        />
-      ) : (
-        <Text
+  if (loading) {
+    return (
+      <View style={[styles.followBtn, styles.followBtnActive]}>
+        <ActivityIndicator size="small" color={Colors.textSub} />
+      </View>
+    );
+  }
+
+  if (friendship === "incoming_pending") {
+    return (
+      <View style={styles.requestActions}>
+        <TouchableOpacity
+          onPress={onAccept}
+          activeOpacity={0.7}
           style={[
-            styles.followBtnText,
-            { color: isFollowing ? Colors.textSub : Colors.bg },
+            styles.followBtn,
+            styles.followBtnInactive,
+            styles.requestActionBtn,
           ]}
         >
-          {isFollowing ? "Following" : "Follow"}
+          <Text style={[styles.followBtnText, { color: Colors.bg }]}>
+            Accept
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={onDecline}
+          activeOpacity={0.7}
+          style={[
+            styles.followBtn,
+            styles.followBtnActive,
+            styles.requestActionBtn,
+          ]}
+        >
+          <Text style={[styles.followBtnText, { color: Colors.textSub }]}>
+            Decline
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (friendship === "accepted") {
+    return (
+      <TouchableOpacity
+        onPress={onUnfriend}
+        activeOpacity={0.7}
+        style={[styles.followBtn, styles.followBtnActive]}
+      >
+        <Text style={[styles.followBtnText, { color: Colors.textSub }]}>
+          Friends
         </Text>
-      )}
+      </TouchableOpacity>
+    );
+  }
+
+  if (friendship === "outgoing_pending") {
+    return (
+      <TouchableOpacity
+        onPress={onCancel}
+        activeOpacity={0.7}
+        style={[styles.followBtn, styles.followBtnActive]}
+      >
+        <Text style={[styles.followBtnText, { color: Colors.textSub }]}>
+          Requested
+        </Text>
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <TouchableOpacity
+      onPress={onRequest}
+      activeOpacity={0.7}
+      style={[styles.followBtn, styles.followBtnInactive]}
+    >
+      <Text style={[styles.followBtnText, { color: Colors.bg }]}>
+        Add Friend
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -124,17 +197,23 @@ function FollowButton({
 // ─── User row (search results) ───────────────────────────────
 
 interface UserRowProps {
-  item: ProfileWithFollowState;
-  onFollow: (userId: string) => void;
-  onUnfollow: (userId: string) => void;
+  item: ProfileWithFriendState;
+  onRequest: (userId: string) => void;
+  onCancel: (userId: string) => void;
+  onAccept: (userId: string) => void;
+  onDecline: (userId: string) => void;
+  onUnfriend: (userId: string) => void;
   onPress: (profile: Profile) => void;
   loadingId: string | null;
 }
 
 function UserRow({
   item,
-  onFollow,
-  onUnfollow,
+  onRequest,
+  onCancel,
+  onAccept,
+  onDecline,
+  onUnfriend,
   onPress,
   loadingId,
 }: UserRowProps) {
@@ -151,23 +230,18 @@ function UserRow({
     >
       <Avatar name={displayName} />
       <View style={styles.userRowMeta}>
-        <View style={styles.userRowNameRow}>
-          <Text style={styles.userRowDisplayName} numberOfLines={1}>
-            {displayName}
-          </Text>
-          {item.follows_you && (
-            <View style={styles.followsYouBadge}>
-              <Text style={styles.followsYouText}>follows you</Text>
-            </View>
-          )}
-        </View>
+        <Text style={styles.userRowDisplayName} numberOfLines={1}>
+          {displayName}
+        </Text>
         <Text style={styles.userRowUsername}>@{item.username}</Text>
       </View>
-      <FollowButton
-        isFollowing={item.is_following}
-        onPress={() =>
-          item.is_following ? onUnfollow(item.user_id) : onFollow(item.user_id)
-        }
+      <FriendActionButton
+        friendship={item.friendship}
+        onRequest={() => onRequest(item.user_id)}
+        onCancel={() => onCancel(item.user_id)}
+        onAccept={() => onAccept(item.user_id)}
+        onDecline={() => onDecline(item.user_id)}
+        onUnfriend={() => onUnfriend(item.user_id)}
         loading={isLoading}
       />
     </Pressable>
@@ -177,13 +251,13 @@ function UserRow({
 // ─── Friend row (following list) ─────────────────────────────
 
 interface FriendRowProps {
-  item: ProfileWithFollowState & { todayCalories?: number };
-  onUnfollow: (userId: string) => void;
+  item: ProfileWithFriendState & { todayCalories?: number };
+  onUnfriend: (userId: string) => void;
   onPress: (profile: Profile) => void;
   loadingId: string | null;
 }
 
-function FriendRow({ item, onUnfollow, onPress, loadingId }: FriendRowProps) {
+function FriendRow({ item, onUnfriend, onPress, loadingId }: FriendRowProps) {
   const displayName = item.display_name ?? item.username;
   const isLoading = loadingId === item.user_id;
 
@@ -206,7 +280,7 @@ function FriendRow({ item, onUnfollow, onPress, loadingId }: FriendRowProps) {
         )}
       </View>
       <TouchableOpacity
-        onPress={() => onUnfollow(item.user_id)}
+        onPress={() => onUnfriend(item.user_id)}
         disabled={isLoading}
         activeOpacity={0.7}
         style={styles.unfollowBtn}
@@ -214,22 +288,85 @@ function FriendRow({ item, onUnfollow, onPress, loadingId }: FriendRowProps) {
         {isLoading ? (
           <ActivityIndicator size="small" color={Colors.textMuted} />
         ) : (
-          <Text style={styles.unfollowBtnText}>Unfollow</Text>
+          <Text style={styles.unfollowBtnText}>Remove</Text>
         )}
       </TouchableOpacity>
     </Pressable>
   );
 }
 
+// ─── Incoming request row ────────────────────────────────────
+//
+// Visually distinct from UserRow/FriendRow: tinted card with an accent
+// border, not a plain list row, so a pending request reads as something
+// that needs a decision rather than just another search result.
+
+interface RequestRowProps {
+  item: ProfileWithFriendState;
+  onAccept: (userId: string) => void;
+  onDecline: (userId: string) => void;
+  loadingId: string | null;
+}
+
+function RequestRow({ item, onAccept, onDecline, loadingId }: RequestRowProps) {
+  const displayName = item.display_name ?? item.username;
+  const isLoading = loadingId === item.user_id;
+
+  return (
+    <View style={styles.requestRow}>
+      <Avatar name={displayName} size={40} />
+      <View style={styles.requestRowMeta}>
+        <Text style={styles.userRowDisplayName} numberOfLines={1}>
+          {displayName}
+        </Text>
+        <Text style={styles.userRowUsername}>@{item.username}</Text>
+      </View>
+      {isLoading ? (
+        <ActivityIndicator size="small" color={Colors.textSub} />
+      ) : (
+        <View style={styles.requestActions}>
+          <TouchableOpacity
+            onPress={() => onAccept(item.user_id)}
+            activeOpacity={0.7}
+            style={[
+              styles.followBtn,
+              styles.followBtnInactive,
+              styles.requestActionBtn,
+            ]}
+          >
+            <Text style={[styles.followBtnText, { color: Colors.bg }]}>
+              Accept
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => onDecline(item.user_id)}
+            activeOpacity={0.7}
+            style={[
+              styles.followBtn,
+              styles.followBtnActive,
+              styles.requestActionBtn,
+            ]}
+          >
+            <Text style={[styles.followBtnText, { color: Colors.textSub }]}>
+              Decline
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ─── Empty state ─────────────────────────────────────────────
 
-function EmptyFollowing() {
+function EmptyFriends() {
   return (
     <View style={styles.emptyState}>
       <Text style={styles.emptyIcon}>👥</Text>
       <Text style={styles.emptyTitle}>No one here yet</Text>
       <Text style={styles.emptyBody}>
-        Search for friends by username and follow them to see their daily log.
+        Search for friends by username and send a request to see their daily
+        log.
       </Text>
     </View>
   );
@@ -242,40 +379,47 @@ export function FriendsScreen() {
 
   // Search state
   const [query, setQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<ProfileWithFollowState[]>(
+  const [searchResults, setSearchResults] = useState<ProfileWithFriendState[]>(
     [],
   );
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  // Following list state
-  const [following, setFollowing] = useState<
-    (ProfileWithFollowState & { todayCalories?: number })[]
+  // Friends list + incoming requests state
+  const [friends, setFriends] = useState<
+    (ProfileWithFriendState & { todayCalories?: number })[]
+  >([]);
+  const [incomingRequests, setIncomingRequests] = useState<
+    ProfileWithFriendState[]
   >([]);
   const [loadingList, setLoadingList] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Per-row loading state (follow / unfollow in-flight)
+  // Per-row loading state (request / accept / decline / unfriend in-flight)
   const [loadingId, setLoadingId] = useState<string | null>(null);
 
   // Debounce ref
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Load following list ────────────────────────────────────
+  // ── Load friends + incoming requests ───────────────────────
 
-  const loadFollowing = useCallback(async () => {
+  const loadFriends = useCallback(async () => {
     try {
-      const list = await getFollowing();
-      // Fetch today's calories for each person in parallel
+      const [friendList, requests] = await Promise.all([
+        getFriends(),
+        getIncomingRequests(),
+      ]);
+      // Fetch today's calories for each friend in parallel
       const enriched = await Promise.all(
-        list.map(async (f) => ({
+        friendList.map(async (f) => ({
           ...f,
           todayCalories: await getTodayCaloriesForUser(f.user_id),
         })),
       );
-      setFollowing(enriched);
+      setFriends(enriched);
+      setIncomingRequests(requests);
     } catch (err) {
-      reportError("loadFollowing", err);
+      reportError("loadFriends", err);
     } finally {
       setLoadingList(false);
       setRefreshing(false);
@@ -283,13 +427,13 @@ export function FriendsScreen() {
   }, []);
 
   useEffect(() => {
-    loadFollowing();
-  }, [loadFollowing]);
+    loadFriends();
+  }, [loadFriends]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    loadFollowing();
-  }, [loadFollowing]);
+    loadFriends();
+  }, [loadFriends]);
 
   // ── Search ─────────────────────────────────────────────────
 
@@ -325,64 +469,123 @@ export function FriendsScreen() {
     setSearchError(null);
   }, []);
 
-  // ── Follow / Unfollow ──────────────────────────────────────
+  // ── Friend requests ────────────────────────────────────────
 
-  const handleFollow = useCallback(
+  const handleRequestFriend = useCallback(async (userId: string) => {
+    setLoadingId(userId);
+    try {
+      const { error } = await requestFriend(userId);
+      if (error) {
+        Alert.alert("Error", error);
+        return;
+      }
+      setSearchResults((prev) =>
+        prev.map((u) =>
+          u.user_id === userId ? { ...u, friendship: "outgoing_pending" } : u,
+        ),
+      );
+    } catch (err) {
+      reportError("handleRequestFriend", err);
+      Alert.alert(
+        "Error",
+        "Could not send that friend request. Please try again.",
+      );
+    } finally {
+      setLoadingId(null);
+    }
+  }, []);
+
+  const handleAcceptRequest = useCallback(
     async (userId: string) => {
       setLoadingId(userId);
       try {
-        const { error } = await followUser(userId);
+        const { error } = await acceptFriend(userId);
         if (error) {
           Alert.alert("Error", error);
           return;
         }
-        // Update search results optimistically
         setSearchResults((prev) =>
           prev.map((u) =>
-            u.user_id === userId ? { ...u, is_following: true } : u,
+            u.user_id === userId ? { ...u, friendship: "accepted" } : u,
           ),
         );
-        // Refresh following list
-        await loadFollowing();
+        setIncomingRequests((prev) =>
+          prev.filter((r) => r.user_id !== userId),
+        );
+        await loadFriends();
       } catch (err) {
-        reportError("handleFollow", err);
-        Alert.alert("Error", "Could not follow user. Please try again.");
+        reportError("handleAcceptRequest", err);
+        Alert.alert(
+          "Error",
+          "Could not accept that request. Please try again.",
+        );
       } finally {
         setLoadingId(null);
       }
     },
-    [loadFollowing],
+    [loadFriends],
   );
 
-  const handleUnfollow = useCallback(async (userId: string) => {
-    Alert.alert("Unfollow", "You'll no longer be able to see their log.", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Unfollow",
-        style: "destructive",
-        onPress: async () => {
-          setLoadingId(userId);
-          try {
-            const { error } = await unfollowUser(userId);
-            if (error) {
-              Alert.alert("Error", error);
-              return;
+  // Covers both "decline an incoming request" and "cancel one I sent" — same
+  // underlying declineFriend() delete either way (see social.ts).
+  const handleDismissRequest = useCallback(async (userId: string) => {
+    setLoadingId(userId);
+    try {
+      const { error } = await declineFriend(userId);
+      if (error) {
+        Alert.alert("Error", error);
+        return;
+      }
+      setSearchResults((prev) =>
+        prev.map((u) =>
+          u.user_id === userId ? { ...u, friendship: "none" } : u,
+        ),
+      );
+      setIncomingRequests((prev) => prev.filter((r) => r.user_id !== userId));
+    } catch (err) {
+      reportError("handleDismissRequest", err);
+      Alert.alert("Error", "Could not update that request. Please try again.");
+    } finally {
+      setLoadingId(null);
+    }
+  }, []);
+
+  const handleUnfriend = useCallback((userId: string) => {
+    Alert.alert(
+      "Remove friend",
+      "You'll no longer be able to see each other's log.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            setLoadingId(userId);
+            try {
+              const { error } = await unfriend(userId);
+              if (error) {
+                Alert.alert("Error", error);
+                return;
+              }
+              setFriends((prev) => prev.filter((f) => f.user_id !== userId));
+              setSearchResults((prev) =>
+                prev.map((u) =>
+                  u.user_id === userId ? { ...u, friendship: "none" } : u,
+                ),
+              );
+            } catch (err) {
+              reportError("handleUnfriend", err);
+              Alert.alert(
+                "Error",
+                "Could not remove this friend. Please try again.",
+              );
+            } finally {
+              setLoadingId(null);
             }
-            setFollowing((prev) => prev.filter((f) => f.user_id !== userId));
-            setSearchResults((prev) =>
-              prev.map((u) =>
-                u.user_id === userId ? { ...u, is_following: false } : u,
-              ),
-            );
-          } catch (err) {
-            reportError("handleUnfollow", err);
-            Alert.alert("Error", "Could not unfollow. Please try again.");
-          } finally {
-            setLoadingId(null);
-          }
+          },
         },
-      },
-    ]);
+      ],
+    );
   }, []);
 
   // ── Navigate to connected user's log ──────────────────────
@@ -456,8 +659,11 @@ export function FriendsScreen() {
               renderItem={({ item }) => (
                 <UserRow
                   item={item}
-                  onFollow={handleFollow}
-                  onUnfollow={handleUnfollow}
+                  onRequest={handleRequestFriend}
+                  onCancel={handleDismissRequest}
+                  onAccept={handleAcceptRequest}
+                  onDecline={handleDismissRequest}
+                  onUnfriend={handleUnfriend}
                   onPress={handleViewLog}
                   loadingId={loadingId}
                 />
@@ -468,7 +674,7 @@ export function FriendsScreen() {
           )}
         </View>
       ) : (
-        /* ── Following list ── */
+        /* ── Friends list ── */
         <View style={styles.flex}>
           {loadingList ? (
             <View style={styles.centred}>
@@ -476,17 +682,31 @@ export function FriendsScreen() {
             </View>
           ) : (
             <>
-              {following.length > 0 && (
-                <Text style={styles.sectionLabel}>Following</Text>
+              {incomingRequests.length > 0 && (
+                <View style={styles.requestsSection}>
+                  <Text style={styles.sectionLabel}>Requests</Text>
+                  {incomingRequests.map((r) => (
+                    <RequestRow
+                      key={r.user_id}
+                      item={r}
+                      onAccept={handleAcceptRequest}
+                      onDecline={handleDismissRequest}
+                      loadingId={loadingId}
+                    />
+                  ))}
+                </View>
+              )}
+              {friends.length > 0 && (
+                <Text style={styles.sectionLabel}>Friends</Text>
               )}
               <FlatList
-                data={following}
+                data={friends}
                 keyExtractor={(item) => item.user_id}
                 contentContainerStyle={[
                   styles.listContent,
-                  following.length === 0 && styles.listContentEmpty,
+                  friends.length === 0 && styles.listContentEmpty,
                 ]}
-                ListEmptyComponent={<EmptyFollowing />}
+                ListEmptyComponent={<EmptyFriends />}
                 refreshControl={
                   <RefreshControl
                     refreshing={refreshing}
@@ -497,7 +717,7 @@ export function FriendsScreen() {
                 renderItem={({ item }) => (
                   <FriendRow
                     item={item}
-                    onUnfollow={handleUnfollow}
+                    onUnfriend={handleUnfriend}
                     onPress={handleViewLog}
                     loadingId={loadingId}
                   />
@@ -601,11 +821,6 @@ const styles = StyleSheet.create(
     marginLeft: Spacing.sm,
     marginRight: Spacing.xs,
   },
-  userRowNameRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.xs,
-  },
   userRowDisplayName: {
     fontSize: Typography.base,
     fontWeight: Typography.semibold,
@@ -618,20 +833,37 @@ const styles = StyleSheet.create(
     marginTop: 2,
   },
 
-  // "follows you" badge
-  followsYouBadge: {
-    backgroundColor: Colors.surface2,
-    borderRadius: Radius.pill,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+  // Incoming requests — tinted card + accent border, deliberately distinct
+  // from the plain search-result row.
+  requestsSection: {
+    paddingBottom: Spacing.xs,
   },
-  followsYouText: {
-    fontSize: 10,
-    color: Colors.textSub,
-    fontWeight: Typography.medium,
+  requestRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.xs,
+    padding: Spacing.sm,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.card,
+    borderWidth: 1,
+    borderColor: Colors.green,
+  },
+  requestRowMeta: {
+    flex: 1,
+    marginLeft: Spacing.sm,
+    marginRight: Spacing.xs,
+  },
+  requestActions: {
+    flexDirection: "row",
+    gap: Spacing.xs,
+  },
+  requestActionBtn: {
+    minWidth: 0,
+    paddingHorizontal: 12,
   },
 
-  // Friend row (following list)
+  // Friend row (accepted friends list)
   friendRow: {
     flexDirection: "row",
     alignItems: "center",

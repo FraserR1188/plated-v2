@@ -33,13 +33,14 @@ const TAB_ICONS: Record<string, { default: string; active: string }> = {
   Settings: { default: "⊙", active: "⊙" },
 };
 
-// Friends must not be reachable by testers until the friendship model has an
-// accept gate: meal_entries_select_follower currently grants read access to
-// another user's full meal history the instant a `follows` row exists, with
-// no pending/accepted distinction. The screen and its route stay registered
-// in AppNavigator — only this tab-bar entry is hidden — so flipping this one
-// constant is enough to bring it back for testing.
-const SOCIAL_ENABLED = false;
+// The accept gate is live: migration 20260819110000_friendship_accept_gate.sql
+// converted follows into a mutual friendship (pending/accepted), and
+// meal_entries_select_follower now requires status = 'accepted' in both
+// directions — verified a pending row grants 0 cross-user meal_entries rows.
+// The client (social.ts, FriendsScreen) is written against that policy set.
+// Flip back to false, rather than deleting this flag, if a regression needs
+// the tab hidden again without a redeploy.
+const SOCIAL_ENABLED = true;
 
 // ─── Single tab item ─────────────────────────────────────────
 

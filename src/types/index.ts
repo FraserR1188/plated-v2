@@ -520,11 +520,18 @@ export interface Profile {
   created_at: string;
 }
 
-export interface ProfileWithFollowState extends Profile {
-  is_following: boolean;
-  follows_you: boolean;
-  follower_count: number;
-  following_count: number;
+// 20260819110000_friendship_accept_gate.sql: follows is a mutual friendship
+// with a pending/accepted handshake, keyed on the directional (requester,
+// addressee) pair. These four states are the only ones a client can observe
+// for a given (me, other) pair — there is no reciprocal row.
+export type FriendshipState =
+  | "none"
+  | "outgoing_pending"
+  | "incoming_pending"
+  | "accepted";
+
+export interface ProfileWithFriendState extends Profile {
+  friendship: FriendshipState;
 }
 
 export interface FriendSummary {

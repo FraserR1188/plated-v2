@@ -11,7 +11,8 @@
 import { supabase } from "./supabase";
 import {
   Profile,
-  ProfileWithFollowState,
+  ProfileWithFriendState,
+  FriendshipState,
   MealEntry,
   EntryDraft,
   CopyPayload,
@@ -122,11 +123,11 @@ export async function isUsernameAvailable(username: string): Promise<boolean> {
  * Not fixed here because changing it changes what users can find, which is a
  * product decision, not a cleanup. The comment now matches the code.
  *
- * Excludes the current user. Returns up to 20 results with follow state.
+ * Excludes the current user. Returns up to 20 results with friendship state.
  */
 export async function searchUsers(
   query: string,
-): Promise<ProfileWithFollowState[]> {
+): Promise<ProfileWithFriendState[]> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -145,41 +146,62 @@ export async function searchUsers(
   if (error) throw error;
   if (!profiles || profiles.length === 0) return [];
 
-  const { data: myFollows } = await supabase
+  // Both directions of MY relationships, with status — this is what turns into
+  // "none" / "outgoing_pending" / "incoming_pending" / "accepted" below.
+  //
+  // follow_counts is deliberately NOT queried here any more: follows_select_party
+  // (20260819110000_friendship_accept_gate.sql) narrowed SELECT on follows to
+  // rows the caller is party to, so the view — security_invoker = on — now only
+  // sees the caller's own relationships. It would return a correct count for
+  // the caller's own profile and a near-zero one for every OTHER profile in
+  // this result list, which is wrong, not stale. Not worked around with a
+  // security definer function; see that migration's note.
+  const { data: outgoing } = await supabase
     .from("follows")
-    .select("following_id")
+    .select("following_id, status")
     .eq("follower_id", user.id);
 
-  const { data: theirFollows } = await supabase
+  const { data: incoming } = await supabase
     .from("follows")
-    .select("follower_id")
+    .select("follower_id, status")
     .eq("following_id", user.id);
 
-  const myFollowSet = new Set((myFollows ?? []).map((r) => r.following_id));
-  const theirFollowSet = new Set(
-    (theirFollows ?? []).map((r) => r.follower_id),
+  const outgoingStatus = new Map(
+    (outgoing ?? []).map((r) => [r.following_id, r.status]),
   );
-
-  const userIds = profiles.map((p) => p.user_id);
-  const { data: counts } = await supabase
-    .from("follow_counts")
-    .select("user_id, follower_count, following_count")
-    .in("user_id", userIds);
-
-  const countMap = new Map((counts ?? []).map((c) => [c.user_id, c]));
+  const incomingStatus = new Map(
+    (incoming ?? []).map((r) => [r.follower_id, r.status]),
+  );
 
   return profiles.map((p) => ({
     ...p,
-    is_following: myFollowSet.has(p.user_id),
-    follows_you: theirFollowSet.has(p.user_id),
-    follower_count: countMap.get(p.user_id)?.follower_count ?? 0,
-    following_count: countMap.get(p.user_id)?.following_count ?? 0,
+    friendship: friendshipStateFor(p.user_id, outgoingStatus, incomingStatus),
   }));
 }
 
-// ─── Follow / Unfollow ───────────────────────────────────────
+function friendshipStateFor(
+  userId: string,
+  outgoingStatus: Map<string, string>,
+  incomingStatus: Map<string, string>,
+): FriendshipState {
+  const out = outgoingStatus.get(userId);
+  const inc = incomingStatus.get(userId);
+  if (out === "accepted" || inc === "accepted") return "accepted";
+  if (out === "pending") return "outgoing_pending";
+  if (inc === "pending") return "incoming_pending";
+  return "none";
+}
 
-export async function followUser(targetUserId: string): Promise<WriteResult> {
+// ─── Friend requests ─────────────────────────────────────────
+
+/**
+ * Send a friend request. Status is never sent on the insert — the column
+ * default supplies 'pending', and follows_insert_own's WITH CHECK rejects
+ * anything else anyway (20260819110000_friendship_accept_gate.sql).
+ */
+export async function requestFriend(
+  targetUserId: string,
+): Promise<WriteResult> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -190,13 +212,62 @@ export async function followUser(targetUserId: string): Promise<WriteResult> {
     .insert({ follower_id: user.id, following_id: targetUserId });
 
   if (error) {
-    reportError("followUser", error);
-    return { error: "Couldn't follow this user." };
+    reportError("requestFriend", error);
+    return { error: "Couldn't send that friend request." };
   }
   return { error: null };
 }
 
-export async function unfollowUser(targetUserId: string): Promise<WriteResult> {
+/**
+ * Accept an incoming request. follows_update_addressee only lets the
+ * ADDRESSEE (following_id = me) move a row, and only to 'accepted'.
+ *
+ * A row that isn't mine to accept — wrong user, already handled, or never
+ * existed — matches zero rows and comes back as an EMPTY result, not a
+ * Postgres error. That is the standing invariant for a foreign auth.uid():
+ * 0 rows affected, not an error. Without .select() PostgREST can't tell
+ * "0 rows updated" from "1 row updated", so this MUST select the updated
+ * rows back, and zero rows is treated as a failure with its own message.
+ */
+export async function acceptFriend(
+  requesterId: string,
+): Promise<WriteResult> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const { data, error } = await supabase
+    .from("follows")
+    .update({ status: "accepted" })
+    .eq("follower_id", requesterId)
+    .eq("following_id", user.id)
+    .eq("status", "pending")
+    .select();
+
+  if (error) {
+    reportError("acceptFriend", error);
+    return { error: "Couldn't accept that request." };
+  }
+  if (!data || data.length === 0) {
+    return { error: "That request is no longer available." };
+  }
+  return { error: null };
+}
+
+/**
+ * declineFriend and unfriend are the same DELETE: follows_delete_party lets
+ * EITHER party remove the row regardless of status, and the row could have
+ * either of us as follower_id depending on who originally sent the request —
+ * the caller can't know which without a lookup, so the predicate covers both
+ * directions in one query. One implementation, two named exports so Sentry
+ * can tell a declined request from an unfriend.
+ */
+async function deleteFriendRow(
+  otherUserId: string,
+  operation: string,
+  friendlyMessage: string,
+): Promise<WriteResult> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -205,75 +276,123 @@ export async function unfollowUser(targetUserId: string): Promise<WriteResult> {
   const { error } = await supabase
     .from("follows")
     .delete()
-    .eq("follower_id", user.id)
-    .eq("following_id", targetUserId);
+    .or(
+      `and(follower_id.eq.${user.id},following_id.eq.${otherUserId}),` +
+        `and(follower_id.eq.${otherUserId},following_id.eq.${user.id})`,
+    );
 
   if (error) {
-    reportError("unfollowUser", error);
-    return { error: "Couldn't unfollow this user." };
+    reportError(operation, error);
+    return { error: friendlyMessage };
   }
   return { error: null };
 }
 
-// ─── Friends List ────────────────────────────────────────────
+/** Decline an incoming request, or cancel one you sent — same delete either way. */
+export function declineFriend(otherUserId: string): Promise<WriteResult> {
+  return deleteFriendRow(
+    otherUserId,
+    "declineFriend",
+    "Couldn't decline that request.",
+  );
+}
+
+/** Remove an existing (accepted) friendship. */
+export function unfriend(friendUserId: string): Promise<WriteResult> {
+  return deleteFriendRow(
+    friendUserId,
+    "unfriend",
+    "Couldn't remove this friend.",
+  );
+}
+
+// ─── Friends list ────────────────────────────────────────────
 
 /**
- * Returns everyone the current user follows, enriched with
+ * Everyone the current user has an ACCEPTED friendship with, enriched with
  * today's calorie total for each person.
+ *
+ * Two queries, not one join: a row's "other party" profile sits on whichever
+ * FK column ISN'T the caller, and follows has two FKs into profiles (one per
+ * column), so a single PostgREST embed can't pick the right one without
+ * already knowing which side that is.
  */
-export async function getFollowing(): Promise<ProfileWithFollowState[]> {
+export async function getFriends(): Promise<ProfileWithFriendState[]> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return [];
 
-  const { data: follows, error: followErr } = await supabase
+  const [outgoing, incoming] = await Promise.all([
+    supabase
+      .from("follows")
+      .select(
+        `
+        following_id,
+        profiles!follows_following_id_fkey (
+          user_id, username, display_name, avatar_url, created_at
+        )
+      `,
+      )
+      .eq("follower_id", user.id)
+      .eq("status", "accepted"),
+    supabase
+      .from("follows")
+      .select(
+        `
+        follower_id,
+        profiles!follows_follower_id_fkey (
+          user_id, username, display_name, avatar_url, created_at
+        )
+      `,
+      )
+      .eq("following_id", user.id)
+      .eq("status", "accepted"),
+  ]);
+
+  if (outgoing.error) throw outgoing.error;
+  if (incoming.error) throw incoming.error;
+
+  const profiles = [
+    ...(outgoing.data ?? []).map((r) => r.profiles as unknown as Profile),
+    ...(incoming.data ?? []).map((r) => r.profiles as unknown as Profile),
+  ].filter((p): p is Profile => !!p);
+
+  return profiles.map((p) => ({
+    ...p,
+    friendship: "accepted" as const,
+  }));
+}
+
+/** Pending requests where I'm the addressee — the ones I can Accept/Decline. */
+export async function getIncomingRequests(): Promise<
+  ProfileWithFriendState[]
+> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return [];
+
+  const { data, error } = await supabase
     .from("follows")
     .select(
       `
-      following_id,
-      profiles!follows_following_id_fkey (
+      follower_id,
+      profiles!follows_follower_id_fkey (
         user_id, username, display_name, avatar_url, created_at
       )
     `,
     )
-    .eq("follower_id", user.id);
+    .eq("following_id", user.id)
+    .eq("status", "pending");
 
-  if (followErr) throw followErr;
-  if (!follows || follows.length === 0) return [];
+  if (error) throw error;
+  if (!data) return [];
 
-  const followingIds = follows.map((f) => f.following_id);
-
-  const { data: theirFollows } = await supabase
-    .from("follows")
-    .select("follower_id")
-    .in("follower_id", followingIds)
-    .eq("following_id", user.id);
-
-  const theirFollowSet = new Set(
-    (theirFollows ?? []).map((r) => r.follower_id),
-  );
-
-  const { data: counts } = await supabase
-    .from("follow_counts")
-    .select("user_id, follower_count, following_count")
-    .in("user_id", followingIds);
-
-  const countMap = new Map((counts ?? []).map((c) => [c.user_id, c]));
-
-  return follows
-    .map((f) => {
-      const profile = f.profiles as unknown as Profile;
-      if (!profile) return null;
-      return {
-        ...profile,
-        is_following: true as boolean,
-        follows_you: theirFollowSet.has(profile.user_id),
-        follower_count: countMap.get(profile.user_id)?.follower_count ?? 0,
-        following_count: countMap.get(profile.user_id)?.following_count ?? 0,
-      } satisfies ProfileWithFollowState;
-    })
-    .filter((x): x is ProfileWithFollowState => x !== null);
+  return data
+    .map((r) => r.profiles as unknown as Profile)
+    .filter((p): p is Profile => !!p)
+    .map((p) => ({ ...p, friendship: "incoming_pending" as const }));
 }
 
 // ─── Viewing another user's log ──────────────────────────────

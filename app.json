@@ -9,12 +9,10 @@
     "icon": "./assets/icon.png",
     "android": {
       "package": "com.fraseranalytics.plated",
-      "permissions": [
-        "android.permission.CAMERA"
-      ],
+      "permissions": ["android.permission.CAMERA"],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#242A31"
+        "backgroundColor": "#1B1F24"
       }
     },
     "plugins": [

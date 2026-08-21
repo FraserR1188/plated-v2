@@ -6,11 +6,16 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "scheme": "plated",
+    "icon": "./assets/icon.png",
     "android": {
       "package": "com.fraseranalytics.plated",
       "permissions": [
         "android.permission.CAMERA"
-      ]
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#242A31"
+      }
     },
     "plugins": [
       "expo-dev-client",

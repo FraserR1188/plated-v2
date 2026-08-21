@@ -19,6 +19,8 @@
       "env": { "EXPO_PUBLIC_SENTRY_ENV": "preview" }
     },
     "production": {
+      "distribution": "store",
+      "environment": "production",
       "android": {
         "buildType": "app-bundle"
       },
@@ -28,6 +30,8 @@
     "production-apk": {
       "extends": "production",
       "distribution": "internal",
+      "environment": "production",
+      "autoIncrement": false,
       "android": {
         "buildType": "apk"
       }

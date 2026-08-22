@@ -25,6 +25,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { CalorieRing } from "../components/CalorieRing";
 import { MacroBar } from "../components/MacroBar";
+import { CopyTargetPicker } from "../components/CopyTargetPicker";
 import { useStore, todayKey } from "../store/useStore";
 import { mealEntryToProduct } from "../lib/foodLookup";
 import { previewComposition, bundlesOnly } from "../lib/compositions";
@@ -36,7 +37,6 @@ import { kjToKcal } from "../lib/energy";
 import {
   formatTime,
   formatDayLabel,
-  formatTimeOfDay,
   isFutureDay,
   parseDateKey,
   dateKey,
@@ -63,7 +63,6 @@ import {
   MealEntry,
   MealCompositionWithItems,
   MealType,
-  MEAL_TYPES,
   MEAL_LABELS,
   Workout,
 } from "../types";
@@ -1708,7 +1707,6 @@ function CopyToSheet({
   const [dayKey, setDayKey] = useState(todayKey());
   const [mealType, setMealType] = useState<MealType>("breakfast");
   const [time, setTime] = useState<TimeOfDay>({ hours: 8, minutes: 0 });
-  const [picking, setPicking] = useState<"date" | "time" | null>(null);
 
   const showToggle = entries.length > 1;
 
@@ -1748,9 +1746,6 @@ function CopyToSheet({
 
   if (entries.length === 0) return null;
 
-  const prospectiveEatenAt = sameTimeOnDay(time, dayKey);
-  const sharedPlanned = willBePlanned(prospectiveEatenAt);
-
   // EACH-mode pill: built from the exact drafts copyEntriesToDay will insert
   // — recomputed from `entries`/`dayKey` on every render, so it can't go
   // stale when the Day picker changes.
@@ -1759,9 +1754,6 @@ function CopyToSheet({
     willBePlanned(d.eaten_at),
   ).length;
   const eachLoggedCount = eachDrafts.length - eachPlannedCount;
-
-  const timeSeed = new Date();
-  timeSeed.setHours(time.hours, time.minutes, 0, 0);
 
   const title =
     entries.length === 1 ? `Copy "${entries[0].name}"` : `Copy ${entries.length} items`;
@@ -1824,69 +1816,16 @@ function CopyToSheet({
           </View>
         )}
 
-        <Pressable
-          style={copyStyles.row}
-          onPress={() => setPicking("date")}
-        >
-          <Text style={copyStyles.rowLabel}>Day</Text>
-          <Text style={copyStyles.rowValue}>{formatDayLabel(dayKey)}</Text>
-        </Pressable>
-
-        {mode === "shared" && (
-          <>
-            <Text style={copyStyles.rowLabel}>Meal</Text>
-            <View style={copyStyles.segmented}>
-              {MEAL_TYPES.map((mt) => (
-                <Pressable
-                  key={mt}
-                  style={[
-                    copyStyles.segment,
-                    mealType === mt && copyStyles.segmentActive,
-                  ]}
-                  onPress={() => setMealType(mt)}
-                >
-                  <Text
-                    style={[
-                      copyStyles.segmentText,
-                      mealType === mt && copyStyles.segmentTextActive,
-                    ]}
-                  >
-                    {MEAL_LABELS[mt]}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-
-            <Pressable
-              style={copyStyles.row}
-              onPress={() => setPicking("time")}
-            >
-              <Text style={copyStyles.rowLabel}>Time</Text>
-              <Text style={copyStyles.rowValue}>{formatTimeOfDay(time)}</Text>
-            </Pressable>
-
-            <View
-              style={[
-                sheetStyles.pill,
-                sharedPlanned ? sheetStyles.pillPlanned : sheetStyles.pillLogged,
-                copyStyles.pill,
-              ]}
-            >
-              <Text
-                style={[
-                  sheetStyles.pillText,
-                  sharedPlanned
-                    ? sheetStyles.pillTextPlanned
-                    : sheetStyles.pillTextLogged,
-                ]}
-              >
-                {sharedPlanned
-                  ? "Will be saved as Planned"
-                  : "Will be saved as Logged"}
-              </Text>
-            </View>
-          </>
-        )}
+        <CopyTargetPicker
+          dayKey={dayKey}
+          onDayKeyChange={setDayKey}
+          time={time}
+          onTimeChange={setTime}
+          showTimePicker={mode === "shared"}
+          mealType={mealType}
+          onMealTypeChange={setMealType}
+          showMealPicker={mode === "shared"}
+        />
 
         {mode === "each" && (
           <View
@@ -1929,63 +1868,11 @@ function CopyToSheet({
           <Text style={sheetStyles.closeText}>Cancel</Text>
         </Pressable>
       </View>
-
-      {picking === "date" && (
-        <DateTimePicker
-          value={parseDateKey(dayKey)}
-          mode="date"
-          display="default"
-          onChange={(event: any, picked?: Date) => {
-            setPicking(null);
-            if (event?.type === "dismissed" || !picked) return;
-            setDayKey(dateKey(picked));
-          }}
-        />
-      )}
-
-      {picking === "time" && mode === "shared" && (
-        <DateTimePicker
-          value={timeSeed}
-          mode="time"
-          is24Hour
-          display="default"
-          onChange={(event: any, picked?: Date) => {
-            setPicking(null);
-            if (event?.type === "dismissed" || !picked) return;
-            setTime({ hours: picked.getHours(), minutes: picked.getMinutes() });
-          }}
-        />
-      )}
     </Modal>
   );
 }
 
 const copyStyles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.control,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-  },
-  rowLabel: {
-    fontSize: Typography.xs,
-    color: Colors.textMuted,
-    fontWeight: Typography.semibold,
-    fontFamily: Fonts.sans.semibold,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-  },
-  rowValue: {
-    fontSize: Typography.base,
-    fontWeight: Typography.bold,
-    fontFamily: Fonts.sans.bold,
-    color: Colors.text,
-  },
   segmented: {
     flexDirection: "row",
     gap: 6,

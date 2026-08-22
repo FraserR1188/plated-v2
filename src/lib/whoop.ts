@@ -52,9 +52,32 @@ export type WhoopConnection = {
   last_sync_at: string | null;
   /** Last ATTEMPT. The throttle key. Moves whether or not the sync worked. */
   last_sync_attempt_at: string | null;
-  /** Null when the last sync succeeded. Anything else means it didn't. */
+  /**
+   * Null when the last sync fully succeeded. "partial" when it hit its time
+   * budget mid-pull but otherwise worked — not a failure. Anything else is a
+   * real failure code (a collection failure like "cycles:transient", a token
+   * failure like "missing" or "token_revoked", etc). See
+   * classifySyncStatus() rather than reading this raw.
+   */
   last_sync_error: string | null;
 };
+
+export type WhoopSyncStatus = "healthy" | "partial" | "failing";
+
+/**
+ * Classifies last_sync_error for display. "partial" is the one non-null
+ * value that isn't a failure — the sync hit its time budget but otherwise
+ * completed, and will pick up the rest next time. Everything else, INCLUDING
+ * a code we don't recognise, is "failing": an unfamiliar value from the
+ * server must not silently read as healthy.
+ */
+export function classifySyncStatus(
+  lastSyncError: string | null,
+): WhoopSyncStatus {
+  if (lastSyncError === null) return "healthy";
+  if (lastSyncError === "partial") return "partial";
+  return "failing";
+}
 
 export type WhoopErrorCode =
   | "unauthorized"

@@ -34,6 +34,7 @@ import {
   connectWhoop,
   disconnectWhoop,
   syncWhoop,
+  classifySyncStatus,
   type WhoopConnection,
 } from "../lib/whoop";
 import { reportError } from "../lib/reportError";
@@ -370,7 +371,7 @@ export function SettingsScreen() {
   // A stale timestamp with no explanation is worse than no timestamp: the user
   // reads "Last synced yesterday", assumes it's still working, and never finds
   // out it has been failing for a week.
-  const syncFailing = !!whoop?.last_sync_error; // ← ADD
+  const syncStatus = classifySyncStatus(whoop?.last_sync_error ?? null);
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
@@ -513,7 +514,12 @@ export function SettingsScreen() {
                   <View
                     style={[
                       styles.whoopDot,
-                      syncFailing && { backgroundColor: Colors.danger },
+                      syncStatus === "failing" && {
+                        backgroundColor: Colors.danger,
+                      },
+                      syncStatus === "partial" && {
+                        backgroundColor: Colors.warning,
+                      },
                     ]}
                   />
                   <View>
@@ -521,16 +527,21 @@ export function SettingsScreen() {
                     <Text
                       style={[
                         styles.whoopStatusSub,
-                        syncFailing && { color: Colors.danger },
+                        syncStatus === "failing" && { color: Colors.danger },
+                        syncStatus === "partial" && { color: Colors.warning },
                       ]}
                     >
-                      {syncFailing
+                      {syncStatus === "failing"
                         ? lastSync
                           ? `Sync failing · last worked ${lastSync}`
                           : "Sync failing"
-                        : lastSync
-                          ? `Last synced ${lastSync}`
-                          : "Not synced yet"}
+                        : syncStatus === "partial"
+                          ? lastSync
+                            ? `Synced ${lastSync} · some data still catching up`
+                            : "Synced, some data still catching up"
+                          : lastSync
+                            ? `Last synced ${lastSync}`
+                            : "Not synced yet"}
                     </Text>
                   </View>
                 </View>

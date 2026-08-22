@@ -32,3 +32,15 @@ vi.mock("@sentry/react-native", () => ({
   init: vi.fn(),
   wrap: (c: unknown) => c,
 }));
+
+// Same problem as @sentry/react-native above, via a different path:
+// src/lib/whoop.ts uses expo-linking / expo-web-browser for the OAuth
+// handoff, and both transitively pull in real react-native. Any test that
+// imports whoop.ts (even just for a pure helper like classifySyncStatus)
+// needs these stubbed before import or it fails at transform time.
+vi.mock("expo-linking", () => ({
+  parse: vi.fn(() => ({ queryParams: {} })),
+}));
+vi.mock("expo-web-browser", () => ({
+  openAuthSessionAsync: vi.fn(async () => ({ type: "cancel" })),
+}));

@@ -14,11 +14,12 @@ import {
   ProfileWithFriendState,
   FriendshipState,
   MealEntry,
+  MealType,
   EntryDraft,
   CopyPayload,
 } from "../types";
 
-import { dateKey } from "./time";
+import { dateKey, localHM, sameTimeOnDay, TimeOfDay } from "./time";
 import { applyEntries } from "./entries";
 import { reportError } from "./reportError";
 import type { WriteResult } from "../store/useStore";
@@ -461,14 +462,32 @@ export async function getEntriesForUser(
  * the insert, the date derivation, the trigger — is shared with bundles and
  * copy-a-day, and lives in src/lib/entries.ts.
  *
- * ─── TIME: now(), NOT theirs ───
+ * ─── TIME: a target YOU choose, NOT theirs — but "each" preserves per-entry ───
  *
- * You are eating this NOW, not when they ate it. eaten_at is what the WHOOP
- * correlation keys on, so it must be the time it went in YOUR mouth. Note that
- * copy-a-day does the OPPOSITE (it preserves the wall clock), and a bundle does
- * a third thing (it uses the item's stored time). Three rules, three builders.
- * A strategy flag on the insert would have to encode all three, and the social
- * rule can't even see a target day.
+ * eaten_at comes from `target`, resolved by CopyConfirmScreen's own picker —
+ * never the friend's original eaten_at, UNLESS target.time is null, in which
+ * case it's each entry's OWN wall clock, moved onto target.dayKey. This
+ * mirrors target.meal_type exactly: both null means "preserve this entry's
+ * own value," and both are resolved per entry, not once for the whole
+ * payload. CopyConfirmScreen passes time: null together with meal_type: null,
+ * for the same scope (full_day, "each" mode) — a single chosen instant can no
+ * more express "keep each item's own time" than a single chosen section can
+ * express "keep each item's own meal."
+ *
+ * "Steal this meal idea" is not "mirror their day": in "shared" mode the
+ * picker defaults to now (captured once when the screen opens), not to the
+ * source entries' time and not to whichever day was being browsed in the
+ * friend's log, but the user can move it, including into the future — a
+ * forward day flows through untouched into the eaten_at -> planned DB trigger
+ * like any other creation path. Note that copy-a-day (draftsFromDay) does the
+ * per-entry-time-preserving thing UNCONDITIONALLY, and a bundle does a third
+ * thing again (it uses the item's stored time). This builder is deliberately
+ * NOT routed onto draftsFromDay for the null-time case: draftsFromDay carries
+ * image_path/custom_food_id forward, which is correct for YOUR OWN food but
+ * would leak a friend's private storage path and an FK into their
+ * custom_foods — see the IMAGES section below. Same per-entry wall-clock
+ * math, two different correct answers on images, so this stays its own
+ * builder rather than delegating.
  *
  * ─── IMAGES: the rule falls out of storage RLS, not out of taste ───
  *
@@ -501,10 +520,22 @@ export async function getEntriesForUser(
  * homemade food doesn't. The alternatives (duplicate the bytes into your own
  * folder; or loosen the bucket RLS so followers can sign your photos) are both
  * real work, and the second weakens a privacy claim we've already published.
+ *
+ * ─── TARGET: chosen in CopyConfirmScreen, resolved here ───
+ *
+ * `target` is CopyConfirmScreen's own CopyTargetPicker state, seeded from a
+ * `now` captured when the screen opened — never the day being browsed in the
+ * friend's log, and never the source entries' own eaten_at (except via the
+ * null branch above). `target.time ?? localHM(entry.eaten_at)` and
+ * `target.dayKey` go through sameTimeOnDay(), the same DST-safe day+time ->
+ * instant chain draftsForTarget/draftsFromDay use, so a future day flows
+ * through untouched into the eaten_at -> planned DB trigger exactly like any
+ * other creation path — no clamping, no special-casing planned here.
  */
-export function draftsFromFeedEntry(payload: CopyPayload): EntryDraft[] {
-  const now = new Date().toISOString();
-
+export function draftsFromFeedEntry(
+  payload: CopyPayload,
+  target: { dayKey: string; time: TimeOfDay | null; meal_type: MealType | null },
+): EntryDraft[] {
   return payload.entries.map((entry) => ({
     name: entry.name,
     brand: entry.brand ?? null,
@@ -532,14 +563,33 @@ export function draftsFromFeedEntry(payload: CopyPayload): EntryDraft[] {
     fibre: entry.fibre ?? null,
     sugar: entry.sugar ?? null,
 
-    // targetMeal is resolved HERE and stops here. It never reaches the insert:
-    //   - ingredient / meal_section copies → targetMeal overrides.
-    //   - full_day copies (targetMeal null) → each entry keeps its own section.
+    // target.meal_type is resolved HERE and stops here. It never reaches the
+    // insert:
+    //   - ingredient / meal_section copies → target.meal_type overrides.
+    //   - full_day copies (target.meal_type null) → each entry keeps its own
+    //     section — CopyConfirmScreen only ever passes null here for that
+    //     scope, since a single chosen section can't express "keep each
+    //     entry's own".
     // A payload-level override cannot express copy-a-day's "each row keeps its
     // OWN meal", which is why applyEntries takes per-row meal_type instead.
-    meal_type: payload.targetMeal ?? entry.meal_type,
+    meal_type: target.meal_type ?? entry.meal_type,
 
-    eaten_at: now,
+    // target.time is resolved per entry, exactly paralleling meal_type above:
+    // null means "keep THIS entry's own wall clock," moved onto
+    // target.dayKey via sameTimeOnDay — not a single instant shared by every
+    // row in the payload. See the TIME section above.
+    eaten_at: sameTimeOnDay(
+      target.time ?? localHM(entry.eaten_at),
+      target.dayKey,
+    ),
+    // Unconditionally true, matching draftsForTarget/draftsFromDay (the
+    // own-log copy builders) — a copy's timing stays a forecast even when the
+    // user explicitly chose the day and wall-clock time in the picker. This
+    // is NOT the same rule as confirmEntries'/ProductScreen's "they told us
+    // the real time" (which applies to confirming an already-logged meal),
+    // and the two must not be conflated: see the entries.test.ts tests named
+    // "regardless of the source's certainty" for the own-log side of this
+    // invariant.
     eaten_at_estimated: true,
 
     source: "copied",
@@ -555,21 +605,17 @@ export function draftsFromFeedEntry(payload: CopyPayload): EntryDraft[] {
 }
 
 /**
- * Copy a set of a friend's entries into the current user's log, dated today.
+ * Copy a set of a friend's entries into the current user's log, at a target
+ * day/time/meal CopyConfirmScreen's CopyTargetPicker resolved.
  *
- * Kept as a named export so CopyConfirmScreen doesn't have to change. The insert
- * itself now lives in applyEntries().
- *
- * ⚠ RootStackParamList.CopyConfirm carries a `date`, and this function ignores
- * it — it always lands on now(). That is correct for a social copy (see above),
- * but if that route param was ever meant to CHOOSE the day, the screen has been
- * offering a choice and dropping it. Flagged, not changed: it needs a look at
- * CopyConfirmScreen, which isn't in scope for D4.
+ * Kept as a named export so CopyConfirmScreen's call site stays a one-liner.
+ * The insert itself lives in applyEntries().
  */
 export async function copyEntriesToMyLog(
   payload: CopyPayload,
+  target: { dayKey: string; time: TimeOfDay | null; meal_type: MealType | null },
 ): Promise<MealEntry[]> {
-  return applyEntries(draftsFromFeedEntry(payload));
+  return applyEntries(draftsFromFeedEntry(payload, target));
 }
 
 // ─── Utility: today's calorie total for a user ───────────────

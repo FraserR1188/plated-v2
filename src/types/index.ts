@@ -549,15 +549,19 @@ export type CopyScope = "ingredient" | "meal_section" | "full_day";
  * The SOCIAL copy payload. It is a NAVIGATION type, not a data-layer one —
  * CopyConfirmScreen receives it and turns it into EntryDrafts.
  *
- * targetMeal stops at the builder. It never reaches meal_entries: applyEntries
- * takes per-row meal_type, because copy-a-day has to preserve each row's own
- * section and a payload-level override cannot express that.
+ * No targetMeal here: it used to carry a pre-decided section from
+ * ConnectedUserLogScreen, but that value is always exactly `entries[0].meal_type`
+ * for a `meal_section` scope (every entry in a section share it, by
+ * construction of ConnectedUserLogScreen's grouping) and irrelevant for
+ * `full_day` (each entry keeps its own). A field that only ever repeats data
+ * already on `entries`/`scope` is exactly the kind of thing that reads as
+ * load-bearing later and isn't — CopyConfirmScreen derives its Meal-picker
+ * seed and shared/each mode from `scope` and `entries` directly.
  */
 export interface CopyPayload {
   scope: CopyScope;
   entries: MealEntry[];
   sourceName: string; // e.g. "Alex's Breakfast"
-  targetMeal: MealType | null; // null when full_day (preserve original meals)
 }
 
 // ─── Biometric workouts (WHOOP spine) ─────────────────────────
@@ -637,7 +641,6 @@ export type RootStackParamList = {
 
   CopyConfirm: {
     payload: CopyPayload;
-    date: string;
   };
 
   CreateFood: {

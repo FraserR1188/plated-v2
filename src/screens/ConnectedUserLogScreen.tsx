@@ -194,11 +194,7 @@ interface MealSectionProps {
   label: string;
   entries: MealEntry[];
   onCopyIngredient: (entry: MealEntry) => void;
-  onCopySection: (
-    entries: MealEntry[],
-    mealType: MealType,
-    label: string,
-  ) => void;
+  onCopySection: (entries: MealEntry[], label: string) => void;
 }
 
 function MealSection({
@@ -230,7 +226,7 @@ function MealSection({
         {entries.length > 0 && (
           <CopyBtn
             label={`Copy ${label}`}
-            onPress={() => onCopySection(entries, mealType, label)}
+            onPress={() => onCopySection(entries, label)}
           />
         )}
       </View>
@@ -338,14 +334,13 @@ export function ConnectedUserLogScreen() {
   // ── Copy: meal section ────────────────────────────────────
 
   const handleCopySection = useCallback(
-    (sectionEntries: MealEntry[], mealType: MealType, label: string) => {
+    (sectionEntries: MealEntry[], label: string) => {
       const payload: CopyPayload = {
         scope: "meal_section",
         entries: sectionEntries,
         sourceName: `${displayName}'s ${label}`,
-        targetMeal: mealType,
       };
-      navigation.navigate("CopyConfirm", { payload, date: todayKey() });
+      navigation.navigate("CopyConfirm", { payload });
     },
     [navigation, displayName],
   );
@@ -359,9 +354,8 @@ export function ConnectedUserLogScreen() {
       scope: "full_day",
       entries,
       sourceName: `${displayName}'s full day`,
-      targetMeal: null,
     };
-    navigation.navigate("CopyConfirm", { payload, date: todayKey() });
+    navigation.navigate("CopyConfirm", { payload });
   }, [navigation, entries, displayName]);
 
   // ── Render ────────────────────────────────────────────────

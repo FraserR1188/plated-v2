@@ -6,19 +6,18 @@
 // same day/time/meal control instead of growing a second implementation of
 // the day/time -> eaten_at chain.
 //
-// Day is always shown. Meal and Time are each independently optional —
-// TodayScreen's "each" mode hides both together (per-entry time isn't a
-// single value to show), but a caller collapsing a friend's meal_section
-// (one shared meal_type across every entry) wants Time editable without
-// necessarily wanting Meal editable in every case, so the two flags are not
-// coupled here.
+// Day is always shown. mode="shared" also shows Meal and Time — one chosen
+// {meal_type, time} applied to every entry the caller is copying. mode="each"
+// hides both: the caller is preserving each entry's own section (and, for
+// TodayScreen specifically, its own wall-clock via draftsFromDay) instead of
+// collapsing onto one. There is no "show Time but not Meal" combination —
+// every caller's copy is either one fully-chosen slot or "just move the day."
 //
 // The Planned/Logged pill is computed from THIS component's OWN dayKey/time
 // via the same sameTimeOnDay + willBePlanned chain the actual insert goes
 // through — never from a source entry's original eaten_at — so the preview
-// can't drift from what lands. It only renders when showTimePicker is true;
-// a caller hiding Time (no single instant to preview) renders its own pill
-// from whatever it derives per-entry instead.
+// can't drift from what lands. It only renders in "shared" mode; an "each"
+// caller renders its own pill from whatever it derives per-entry instead.
 // ============================================================
 
 import React, { useState } from "react";
@@ -48,10 +47,9 @@ interface CopyTargetPickerProps {
   onDayKeyChange: (dayKey: string) => void;
   time: TimeOfDay;
   onTimeChange: (time: TimeOfDay) => void;
-  showTimePicker: boolean;
   mealType: MealType;
   onMealTypeChange: (mealType: MealType) => void;
-  showMealPicker: boolean;
+  mode: "shared" | "each";
 }
 
 export function CopyTargetPicker({
@@ -59,12 +57,13 @@ export function CopyTargetPicker({
   onDayKeyChange,
   time,
   onTimeChange,
-  showTimePicker,
   mealType,
   onMealTypeChange,
-  showMealPicker,
+  mode,
 }: CopyTargetPickerProps) {
   const [picking, setPicking] = useState<"date" | "time" | null>(null);
+  const showTimePicker = mode === "shared";
+  const showMealPicker = mode === "shared";
 
   const timeSeed = new Date();
   timeSeed.setHours(time.hours, time.minutes, 0, 0);

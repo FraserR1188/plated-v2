@@ -1821,10 +1821,9 @@ function CopyToSheet({
           onDayKeyChange={setDayKey}
           time={time}
           onTimeChange={setTime}
-          showTimePicker={mode === "shared"}
           mealType={mealType}
           onMealTypeChange={setMealType}
-          showMealPicker={mode === "shared"}
+          mode={mode}
         />
 
         {mode === "each" && (

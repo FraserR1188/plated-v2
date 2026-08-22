@@ -29,7 +29,10 @@ import {
   withDefaultFont,
 } from "../theme/tokens";
 import { copyEntriesToMyLog } from "../lib/social";
-import { MealEntry, RootStackParamList } from "../types";
+import { sharedMealType } from "../lib/entries";
+import { dateKey, sectionForTime, TimeOfDay } from "../lib/time";
+import { CopyTargetPicker } from "../components/CopyTargetPicker";
+import { MealEntry, MealType, RootStackParamList } from "../types";
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, "CopyConfirm">;
@@ -53,6 +56,31 @@ export function CopyConfirmScreen() {
 
   const [confirming, setConfirming] = useState(false);
 
+  // ── Copy target: Day/Time/Meal, defaulting to NOW ──────────
+  //
+  // "Steal this meal idea," not "mirror their day": seeded from a `now`
+  // captured ONCE on mount, never from the day being browsed in the friend's
+  // log and never from the source entries' own eaten_at. Day/time/meal all
+  // derive from that one `now` so they can't disagree across a midnight or
+  // noon boundary — same reasoning as TodayScreen's CopyToSheet.
+  //
+  // `mode` is not user-toggleable here (unlike TodayScreen's multi-select
+  // sheet): a meal_section payload's entries always share one meal_type by
+  // construction of ConnectedUserLogScreen's grouping (verified — there is no
+  // producer that mixes them), and full_day always means "preserve each
+  // entry's own section." scope alone determines it.
+  const [now] = useState(() => new Date());
+  const [dayKey, setDayKey] = useState(() => dateKey(now));
+  const [time, setTime] = useState<TimeOfDay>(() => ({
+    hours: now.getHours(),
+    minutes: now.getMinutes(),
+  }));
+  const [mealType, setMealType] = useState<MealType>(
+    () => sharedMealType(payload.entries) ?? sectionForTime(now.toISOString()),
+  );
+  const mode: "shared" | "each" =
+    payload.scope === "full_day" ? "each" : "shared";
+
   const totals = sumEntries(payload.entries);
   const itemCount = payload.entries.length;
 
@@ -66,7 +94,15 @@ export function CopyConfirmScreen() {
   const handleConfirm = async () => {
     setConfirming(true);
     try {
-      await copyEntriesToMyLog(payload);
+      await copyEntriesToMyLog(payload, {
+        dayKey,
+        // "each" mode (full_day) preserves each entry's OWN wall clock —
+        // null tells draftsFromFeedEntry to resolve it per entry, exactly
+        // like meal_type below. Only "shared" mode (meal_section) applies
+        // one chosen time to every entry.
+        time: mode === "shared" ? time : null,
+        meal_type: mode === "shared" ? mealType : null,
+      });
       // Go back two screens to Today tab — or just pop to Today
       navigation.popToTop();
       // Small toast-style feedback (native Alert as fallback — replace
@@ -117,25 +153,28 @@ export function CopyConfirmScreen() {
             </View>
           </View>
 
-          {payload.targetMeal && (
+          {mode === "each" && (
             <View style={styles.destinationRow}>
               <Text style={styles.destinationText}>
-                → copied to{" "}
-                <Text style={styles.destinationMeal}>
-                  {payload.targetMeal.charAt(0).toUpperCase() +
-                    payload.targetMeal.slice(1)}
-                </Text>{" "}
-                in today's log
+                → each item copied to its own section
               </Text>
             </View>
           )}
-          {!payload.targetMeal && (
-            <View style={styles.destinationRow}>
-              <Text style={styles.destinationText}>
-                → each meal copied to the same section in today's log
-              </Text>
-            </View>
-          )}
+        </View>
+
+        {/* Copy target: Day always editable; Meal + Time editable only in
+            "shared" mode (a single meal_section) — full_day preserves each
+            entry's own section, so there is nothing for Meal to override. */}
+        <View style={styles.targetCard}>
+          <CopyTargetPicker
+            dayKey={dayKey}
+            onDayKeyChange={setDayKey}
+            time={time}
+            onTimeChange={setTime}
+            mealType={mealType}
+            onMealTypeChange={setMealType}
+            mode={mode}
+          />
         </View>
 
         {/* Entry breakdown */}
@@ -261,9 +300,12 @@ const styles = StyleSheet.create(
     color: Colors.textMuted,
     textAlign: "center",
   },
-  destinationMeal: {
-    color: Colors.text,
-    fontWeight: Typography.semibold,
+
+  // Copy target (Day/Meal/Time)
+  targetCard: {
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+    gap: Spacing.sm,
   },
 
   // Section label

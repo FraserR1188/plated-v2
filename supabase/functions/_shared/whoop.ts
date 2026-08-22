@@ -50,7 +50,6 @@ export const WHOOP_SCOPES = [
   "read:sleep",
   "read:workout",
   "read:profile",
-  "read:body_measurement",
 ].join(" ");
 
 // A hung token call must not hang the Connect button forever.

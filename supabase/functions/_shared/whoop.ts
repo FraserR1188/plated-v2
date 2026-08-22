@@ -110,19 +110,53 @@ export function expiryFrom(expiresIn: unknown): string {
 }
 
 /**
+ * Reads the structured OAuth `error` field out of a JSON body and says
+ * whether it names a dead credential. Returns null — not false — when the
+ * body isn't JSON or has no top-level `error` field, so the caller knows to
+ * fall back rather than treating "couldn't parse" as "not fatal".
+ */
+function fatalOAuthErrorField(body: string): boolean | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+
+  if (
+    !parsed ||
+    typeof parsed !== "object" ||
+    typeof (parsed as { error?: unknown }).error !== "string"
+  ) {
+    return null;
+  }
+
+  const code = (parsed as { error: string }).error;
+  return code === "invalid_grant" || code === "invalid_client";
+}
+
+/**
  * Is this token-endpoint failure the credential's fault, or WHOOP's?
  *
- * Fatal   — 401, and the 400s that OAuth reserves for a dead or wrong
- *           credential (`invalid_grant`, `invalid_client`).
- * Not     — everything else. A 400 we don't recognise, a 429, any 5xx, and
- *           every network-level failure.
+ * Fatal   — 401 unconditionally, and a 400 or 403 whose OAuth `error` field
+ *           names a dead credential (`invalid_grant`, `invalid_client`). 403
+ *           is included alongside 400 because WHOOP does not always use 400
+ *           for a dead credential in practice.
+ * Not     — everything else. A 400/403 we don't recognise, a 429, any 5xx,
+ *           and every network-level failure.
+ *
+ * The body is normally JSON, so the `error` field is checked structurally
+ * first. If it isn't JSON, or has no `error` field, that's a WHOOP response
+ * shape we haven't seen — fall back to a raw substring check rather than
+ * silently classifying it as non-fatal.
  */
-function isFatalTokenFailure(status: number, body: string): boolean {
+export function isFatalTokenFailure(status: number, body: string): boolean {
   if (status === 401) return true;
-  if (status !== 400) return false;
+  if (status !== 400 && status !== 403) return false;
 
-  // The body is form/JSON-ish; we only need to know if the OAuth error code
-  // is one of the two that mean "this credential is finished".
+  const fromField = fatalOAuthErrorField(body);
+  if (fromField !== null) return fromField;
+
   const lowered = body.toLowerCase();
   return (
     lowered.includes("invalid_grant") || lowered.includes("invalid_client")

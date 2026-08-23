@@ -35,6 +35,17 @@
 -- restatement of the live grant, drop-then-recreate under the SAME names,
 -- so a from-scratch `db push` reproduces production exactly.
 --
+-- ⚠ SUPERSEDED, IN PART, BY 20260823130000_drop_legacy_meal_entries_policies.sql.
+-- That migration drops the six legacy-named policies below (both the
+-- "Users can ... own entries" and "Users ... own entries" generations),
+-- keeping only meal_entries_delete_own / _insert_own / _select_own /
+-- _update_own / _select_follower. If you are reading this file to figure
+-- out what the live policy set IS, read 20260823130000 too — this file
+-- alone describes a state that no longer holds once that one has run.
+-- Do NOT recreate the six legacy policies by hand on the strength of this
+-- file; a from-scratch `db push` applies both migrations in order and
+-- ends at 20260823130000's five-policy state, not this one's eleven.
+--
 -- meal_entries_update_own's existence answers the open question from the
 -- read-only pass: useStore's four .update() call sites (updateEntry,
 -- confirmEntries, skipEntries, retimeEntries) are authorised by this

@@ -1,14 +1,33 @@
 // ============================================================
 // src/screens/ConnectedUserLogScreen.tsx
 // ============================================================
-// Shows a connected user's log for a given date.
+// Shows a connected user's log, ±HISTORY_WINDOW_DAYS around today, with a
+// three-page swipe pager (same idiom as TodayScreen's own day pager).
 // Viewer can copy individual ingredients, full meal sections,
 // or the entire day into their own log.
 //
 // ⚠ todayKey() below is the VIEWER's own local "today" — the target day for
-// a copy — and must not be confused with `date` from route params, which is
-// the FRIEND's log date being viewed (see the `route.params` destructure
-// further down). Two different days, same screen.
+// a copy — and must not be confused with `selected`/`today` (this file's
+// OWN `today` state), which track the FRIEND's log day being viewed (see the
+// `route.params` destructure further down). Two different days, same screen.
+//
+// ─── WHY A CHUNKED FETCH, NOT ONE (HISTORY_WINDOW_DAYS + 1)-DAY QUERY ───
+//
+// The whole point of this screen is rendering ONE day at a time. A single
+// request across the full window pulls a friend's entire month of entries
+// to paint one page — fine on wifi, wasteful on a train, and it only gets
+// worse if the window ever grows. So the fetch is chunked: an initial
+// FETCH_CHUNK_DAYS-day window ending today, then another chunk backward
+// each time the viewer swipes within REFETCH_THRESHOLD_DAYS of the earliest
+// date already loaded — merged into one date-keyed map, never re-fetching a
+// chunk already in hand.
+//
+// A date absent from the map (not yet fetched) renders exactly like a date
+// present with zero entries — both are "nothing to show," and the map
+// itself is never consulted to decide between a loading state and an empty
+// one. That's deliberate: a per-page spinner would flicker in and out as
+// chunks land while swiping, which is worse than briefly showing "nothing
+// logged" for a day whose chunk hasn't arrived yet.
 // ============================================================
 
 import React, {
@@ -17,6 +36,7 @@ import React, {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
 } from "react";
 import {
   View,
@@ -25,8 +45,6 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
-  Alert,
-  SectionList,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
@@ -41,8 +59,9 @@ import {
   Fonts,
   withDefaultFont,
 } from "../theme/tokens";
-import { getEntriesForUser } from "../lib/social";
-import { sectionForTime } from "../lib/time";
+import { getEntriesForUserRange } from "../lib/social";
+import { sectionForTime, addDays, formatDayLabel } from "../lib/time";
+import { reportError } from "../lib/reportError";
 import { todayKey } from "../store/useStore";
 import {
   RootStackParamList,
@@ -62,6 +81,26 @@ const MEALS: { key: MealType; label: string }[] = [
   { key: "dinner", label: "Dinner" },
   { key: "snacks", label: "Snacks" },
 ];
+
+/**
+ * How far back a viewer can browse a friend's log. Named so it's changeable
+ * in one place — there's no significance to 30 beyond "roughly a month,"
+ * which is closer to how a friend's log actually gets used than the ±7 this
+ * shipped with initially.
+ *
+ * There is no forward equivalent: meal_entries_select_follower's
+ * `(planned = false or confirmed_at is not null)` clause means a friend's
+ * unconfirmed future entries return zero rows regardless of what this
+ * screen asks for, so the pager's upper bound is simply `today`.
+ */
+const HISTORY_WINDOW_DAYS = 30;
+
+/** Fetch chunk size for the backward-paging history fetch. */
+const FETCH_CHUNK_DAYS = 14;
+
+/** Fetch the next chunk backward once the viewer swipes within this many
+ *  days of the earliest date already loaded. */
+const REFETCH_THRESHOLD_DAYS = 3;
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -116,6 +155,33 @@ function formatMacros(
   return `${Math.round(calories)} kcal · ${protein.toFixed(1)}p · ${carbs.toFixed(1)}c · ${fat.toFixed(1)}f`;
 }
 
+/** Day-aware empty-state copy — was hardcoded to "today," which read wrong
+ *  the moment this screen could show any other day. */
+function emptyStateText(displayName: string, date: string, today: string): string {
+  if (date === today) return `${displayName} hasn't logged anything today yet.`;
+  if (date === addDays(today, -1)) {
+    return `${displayName} didn't log anything yesterday.`;
+  }
+  return `${displayName} didn't log anything on ${formatDayLabel(date)}.`;
+}
+
+/** Seed every date key in [start, end] with an empty array if it isn't
+ *  already present, so "this date has been fetched" is exactly "this date
+ *  is a key in the map" — even for a day with zero real entries. Bounded to
+ *  at most FETCH_CHUNK_DAYS iterations per call; addDays + string
+ *  comparison only, no ms arithmetic. */
+function seedDateRange(
+  map: Map<string, MealEntry[]>,
+  start: string,
+  end: string,
+) {
+  let d = start;
+  while (d <= end) {
+    if (!map.has(d)) map.set(d, []);
+    d = addDays(d, 1);
+  }
+}
+
 // ─── Day summary bar ─────────────────────────────────────────
 
 function DaySummary({ entries }: { entries: MealEntry[] }) {
@@ -125,7 +191,7 @@ function DaySummary({ entries }: { entries: MealEntry[] }) {
       <Text style={styles.daySummaryCalories}>
         {Math.round(totals.calories)}
       </Text>
-      <Text style={styles.daySummaryLabel}>kcal today</Text>
+      <Text style={styles.daySummaryLabel}>kcal</Text>
       <View style={styles.daySummaryMacros}>
         {[
           {
@@ -247,53 +313,35 @@ function MealSection({
   );
 }
 
-// ─── Main screen ─────────────────────────────────────────────
+// ─── One day's page in the pager ──────────────────────────────
+//
+// Mirrors TodayScreen's DayPage: keyed on its own date by the caller, so
+// paging to a new day is always a fresh mount (scroll position resets for
+// free). `entries` is already resolved by the caller (map.get(date) ?? []) —
+// this component doesn't know or care whether that's a real empty day or a
+// not-yet-fetched one; both render identically, which is the point.
 
-export function ConnectedUserLogScreen() {
-  const navigation = useNavigation<Nav>();
-  const route = useRoute<Route>();
-  const { profile, date } = route.params;
+interface FriendDayPageProps {
+  date: string;
+  today: string;
+  width: number;
+  displayName: string;
+  entries: MealEntry[];
+  onCopyIngredient: (entry: MealEntry) => void;
+  onCopySection: (entries: MealEntry[], label: string) => void;
+  onCopyFullDay: (entries: MealEntry[]) => void;
+}
 
-  const [entries, setEntries] = useState<MealEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const displayName = profile.display_name ?? profile.username;
-
-  // ── Set header title ──────────────────────────────────────
-
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      title: `${displayName}'s log`,
-      headerBackTitle: "Friends",
-    });
-  }, [navigation, displayName]);
-
-  // ── Load entries ──────────────────────────────────────────
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-
-    getEntriesForUser(profile.user_id, date)
-      .then((data) => {
-        if (!cancelled) setEntries(data);
-      })
-      .catch(() => {
-        if (!cancelled) setError("Could not load their log. Try again.");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [profile.user_id, date]);
-
-  // ── Group entries by meal ─────────────────────────────────
-
+function FriendDayPage({
+  date,
+  today,
+  width,
+  displayName,
+  entries,
+  onCopyIngredient,
+  onCopySection,
+  onCopyFullDay,
+}: FriendDayPageProps) {
   const entriesByMeal = useMemo(() => {
     const map: Record<MealType, MealEntry[]> = {
       breakfast: [],
@@ -306,6 +354,226 @@ export function ConnectedUserLogScreen() {
     });
     return map;
   }, [entries]);
+
+  return (
+    <View style={{ width }}>
+      <ScrollView
+        contentContainerStyle={styles.scroll}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Day summary */}
+        {entries.length > 0 && <DaySummary entries={entries} />}
+
+        {/* Copy full day CTA */}
+        {entries.length > 0 && (
+          <TouchableOpacity
+            onPress={() => onCopyFullDay(entries)}
+            activeOpacity={0.8}
+            style={styles.copyDayBtn}
+          >
+            <Text style={styles.copyDayBtnText}>
+              Copy {displayName}'s full day
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Meal sections */}
+        <View style={styles.sections}>
+          {MEALS.map((m) => (
+            <MealSection
+              key={m.key}
+              mealType={m.key}
+              label={m.label}
+              entries={entriesByMeal[m.key]}
+              onCopyIngredient={onCopyIngredient}
+              onCopySection={onCopySection}
+            />
+          ))}
+        </View>
+
+        {entries.length === 0 && (
+          <View style={styles.centred}>
+            <Text style={styles.emptyIcon}>🍽️</Text>
+            <Text style={styles.emptyText}>
+              {emptyStateText(displayName, date, today)}
+            </Text>
+          </View>
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
+// ─── Main screen ─────────────────────────────────────────────
+
+export function ConnectedUserLogScreen() {
+  const navigation = useNavigation<Nav>();
+  const route = useRoute<Route>();
+  const { profile, date } = route.params;
+
+  const displayName = profile.display_name ?? profile.username;
+
+  // ── Window bounds ──────────────────────────────────────────
+  // `today` captured once at mount (this screen isn't meant to be kept open
+  // across a midnight boundary) — the upper bound for both the pager and
+  // the header, and the anchor the lower bound is computed from.
+  const [today] = useState(() => todayKey());
+  const lowerBound = useMemo(
+    () => addDays(today, -HISTORY_WINDOW_DAYS),
+    [today],
+  );
+  const clampToLowerBound = useCallback(
+    (key: string) => (key < lowerBound ? lowerBound : key),
+    [lowerBound],
+  );
+
+  // ── Paging cursor ───────────────────────────────────────────
+  const [selected, setSelected] = useState(date);
+
+  // ── History fetch: chunked backward, merged into a date-keyed map ──
+  const [entriesByDate, setEntriesByDate] = useState<Map<string, MealEntry[]>>(
+    () => new Map(),
+  );
+  const [loadedFrom, setLoadedFrom] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const fetchingMoreRef = useRef(false);
+
+  // Initial chunk: FETCH_CHUNK_DAYS ending today, clamped at the lower bound.
+  useEffect(() => {
+    let cancelled = false;
+    setInitialLoading(true);
+    setError(null);
+
+    const rangeStart = clampToLowerBound(
+      addDays(today, -(FETCH_CHUNK_DAYS - 1)),
+    );
+
+    getEntriesForUserRange(profile.user_id, rangeStart, today)
+      .then((data) => {
+        if (cancelled) return;
+        const map = new Map<string, MealEntry[]>();
+        seedDateRange(map, rangeStart, today);
+        data.forEach((e) => map.get(e.date)?.push(e));
+        setEntriesByDate(map);
+        setLoadedFrom(rangeStart);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Could not load their log. Try again.");
+      })
+      .finally(() => {
+        if (!cancelled) setInitialLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [profile.user_id, today, clampToLowerBound]);
+
+  // Backward chunk fetch: fires once `selected` is within
+  // REFETCH_THRESHOLD_DAYS of the earliest date already loaded. A day
+  // absent from the map (this chunk hasn't landed yet) renders as empty via
+  // FriendDayPage's `entries` default below — never as a loading state.
+  useEffect(() => {
+    if (!loadedFrom || loadedFrom <= lowerBound) return;
+    if (fetchingMoreRef.current) return;
+    if (selected > addDays(loadedFrom, REFETCH_THRESHOLD_DAYS)) return;
+
+    fetchingMoreRef.current = true;
+    const chunkEnd = addDays(loadedFrom, -1);
+    const chunkStart = clampToLowerBound(addDays(loadedFrom, -FETCH_CHUNK_DAYS));
+
+    getEntriesForUserRange(profile.user_id, chunkStart, chunkEnd)
+      .then((data) => {
+        setEntriesByDate((prev) => {
+          const next = new Map(prev);
+          seedDateRange(next, chunkStart, chunkEnd);
+          data.forEach((e) => next.get(e.date)?.push(e));
+          return next;
+        });
+        setLoadedFrom(chunkStart);
+      })
+      .catch((err) => {
+        // Not surfaced to the user: loadedFrom doesn't advance on failure,
+        // so the next render near the same edge simply retries.
+        reportError("ConnectedUserLogScreen.fetchMoreHistory", err);
+      })
+      .finally(() => {
+        fetchingMoreRef.current = false;
+      });
+  }, [selected, loadedFrom, lowerBound, profile.user_id, clampToLowerBound]);
+
+  // ── Header: title carries the day, updates as the pager moves ──
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      title: `${displayName} · ${formatDayLabel(selected)}`,
+      headerBackTitle: "Friends",
+    });
+  }, [navigation, displayName, selected]);
+
+  // ── Pager: [prev?, selected, next?], clamped at both window edges ──
+  //
+  // Same 3-page sliding-window idiom as TodayScreen, with one addition:
+  // TodayScreen's window is unbounded in both directions, so its array is
+  // always exactly 3 wide and the centre is always index 1. This screen's
+  // window is NOT unbounded — sitting on `today` must not render a page for
+  // tomorrow (meal_entries_select_follower hides it anyway, but rendering it
+  // would show a permanently-blank page with no explanation), and sitting on
+  // `lowerBound` must not render a page for one day further back. So the
+  // array is built conditionally and the centre index is DERIVED from it,
+  // never assumed to be 1 — both the scroll-reset effect and the
+  // scroll-end handler read it from the same `pageDates`/`centreIndex` pair,
+  // so an edge page (a 2-wide array, centre at 0 or 1) can't disagree with
+  // itself the way a hardcoded "page === 1" would.
+  const pageDates = useMemo(() => {
+    const dates: string[] = [];
+    const prev = addDays(selected, -1);
+    if (prev >= lowerBound) dates.push(prev);
+    dates.push(selected);
+    const next = addDays(selected, 1);
+    if (next <= today) dates.push(next);
+    return dates;
+  }, [selected, lowerBound, today]);
+
+  const centreIndex = pageDates.indexOf(selected);
+
+  const pagerRef = useRef<ScrollView>(null);
+  const [pagerWidth, setPagerWidth] = useState(0);
+
+  useLayoutEffect(() => {
+    if (pagerWidth > 0) {
+      pagerRef.current?.scrollTo({
+        x: pagerWidth * centreIndex,
+        animated: false,
+      });
+    }
+  }, [selected, pagerWidth, centreIndex]);
+
+  const handlePagerLayout = (e: any) => {
+    const w = e.nativeEvent.layout.width;
+    if (w > 0 && w !== pagerWidth) setPagerWidth(w);
+  };
+
+  // Android's pagingEnabled ScrollView can dispatch onMomentumScrollEnd
+  // twice for a single swipe — once for the fling settling, once more for
+  // the snap-to-page correction, both reporting the same landed offset.
+  // Ported verbatim from TodayScreen's pager: this is a bug someone already
+  // paid for, not something to reimplement.
+  const hasHandledRef = useRef(false);
+
+  const handlePagerScrollBegin = () => {
+    hasHandledRef.current = false;
+  };
+
+  const handlePagerScrollEnd = (e: any) => {
+    if (pagerWidth === 0) return;
+    if (hasHandledRef.current) return;
+    const page = Math.round(e.nativeEvent.contentOffset.x / pagerWidth);
+    if (page === centreIndex) return; // bounced back to the centre — no day change
+    hasHandledRef.current = true;
+    setSelected(pageDates[page]);
+  };
 
   // ── Copy: single ingredient ───────────────────────────────
   // Opens ProductScreen pre-filled so the viewer can adjust serving size
@@ -346,21 +614,26 @@ export function ConnectedUserLogScreen() {
   );
 
   // ── Copy: full day ────────────────────────────────────────
+  // Takes the day's entries as an argument now — with the pager, "the
+  // entries currently on screen" is a per-page fact, not screen-level state.
 
-  const handleCopyFullDay = useCallback(() => {
-    if (entries.length === 0) return;
+  const handleCopyFullDay = useCallback(
+    (dayEntries: MealEntry[]) => {
+      if (dayEntries.length === 0) return;
 
-    const payload: CopyPayload = {
-      scope: "full_day",
-      entries,
-      sourceName: `${displayName}'s full day`,
-    };
-    navigation.navigate("CopyConfirm", { payload });
-  }, [navigation, entries, displayName]);
+      const payload: CopyPayload = {
+        scope: "full_day",
+        entries: dayEntries,
+        sourceName: `${displayName}'s full day`,
+      };
+      navigation.navigate("CopyConfirm", { payload });
+    },
+    [navigation, displayName],
+  );
 
   // ── Render ────────────────────────────────────────────────
 
-  if (loading) {
+  if (initialLoading) {
     return (
       <SafeAreaView style={styles.root} edges={["bottom"]}>
         <View style={styles.centred}>
@@ -382,49 +655,32 @@ export function ConnectedUserLogScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={["bottom"]}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Day summary */}
-        {entries.length > 0 && <DaySummary entries={entries} />}
-
-        {/* Copy full day CTA */}
-        {entries.length > 0 && (
-          <TouchableOpacity
-            onPress={handleCopyFullDay}
-            activeOpacity={0.8}
-            style={styles.copyDayBtn}
+      <View style={styles.pager} onLayout={handlePagerLayout}>
+        {pagerWidth > 0 && (
+          <ScrollView
+            ref={pagerRef}
+            horizontal
+            pagingEnabled
+            showsHorizontalScrollIndicator={false}
+            onScrollBeginDrag={handlePagerScrollBegin}
+            onMomentumScrollEnd={handlePagerScrollEnd}
           >
-            <Text style={styles.copyDayBtnText}>
-              Copy {displayName}'s full day
-            </Text>
-          </TouchableOpacity>
+            {pageDates.map((d) => (
+              <FriendDayPage
+                key={d}
+                date={d}
+                today={today}
+                width={pagerWidth}
+                displayName={displayName}
+                entries={entriesByDate.get(d) ?? []}
+                onCopyIngredient={handleCopyIngredient}
+                onCopySection={handleCopySection}
+                onCopyFullDay={handleCopyFullDay}
+              />
+            ))}
+          </ScrollView>
         )}
-
-        {/* Meal sections */}
-        <View style={styles.sections}>
-          {MEALS.map((m) => (
-            <MealSection
-              key={m.key}
-              mealType={m.key}
-              label={m.label}
-              entries={entriesByMeal[m.key]}
-              onCopyIngredient={handleCopyIngredient}
-              onCopySection={handleCopySection}
-            />
-          ))}
-        </View>
-
-        {entries.length === 0 && (
-          <View style={styles.centred}>
-            <Text style={styles.emptyIcon}>🍽️</Text>
-            <Text style={styles.emptyText}>
-              {displayName} hasn't logged anything today yet.
-            </Text>
-          </View>
-        )}
-      </ScrollView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -436,6 +692,9 @@ const styles = StyleSheet.create(
   root: {
     flex: 1,
     backgroundColor: Colors.bg,
+  },
+  pager: {
+    flex: 1,
   },
   scroll: {
     paddingBottom: Spacing.xxl,

@@ -453,6 +453,35 @@ export async function getEntriesForUser(
   return data ?? [];
 }
 
+/**
+ * Fetch a connected user's meal entries across an inclusive date range.
+ *
+ * Same select and the same two filters as getEntriesForUser (RLS's own
+ * (planned = false or confirmed_at is not null) gate already makes them
+ * redundant — same reasoning as that function's comment: defence in depth
+ * on a cross-user read, and it says out loud what this returns). The only
+ * difference is .gte/.lte in place of .eq("date", date), for
+ * ConnectedUserLogScreen's chunked history fetch.
+ */
+export async function getEntriesForUserRange(
+  userId: string,
+  startDate: string,
+  endDate: string,
+): Promise<MealEntry[]> {
+  const { data, error } = await supabase
+    .from("meal_entries")
+    .select("*")
+    .eq("user_id", userId)
+    .gte("date", startDate)
+    .lte("date", endDate)
+    .or("planned.eq.false,confirmed_at.not.is.null")
+    .is("skipped_at", null)
+    .order("eaten_at", { ascending: true });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
 // ─── Copying a friend's food into your own log ───────────────
 
 /**

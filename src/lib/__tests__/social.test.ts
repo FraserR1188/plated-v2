@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { draftsFromFeedEntry, copyEntriesToMyLog } from "../social";
+import {
+  draftsFromFeedEntry,
+  copyEntriesToMyLog,
+  getEntriesForUserRange,
+} from "../social";
 import { supabase } from "../supabase";
 import { dateKey, localHM, sameTimeOnDay } from "../time";
 import { CopyPayload, MealEntry } from "../../types";
@@ -265,5 +269,73 @@ describe("copyEntriesToMyLog", () => {
     expect(row.salt).toBeNull();
     expect(row.fibre).toBeNull();
     expect(row.sugar).toBeNull();
+  });
+});
+
+/** Wire supabase.from("meal_entries").<chain>.<chain>... to a chainable mock
+ *  that records every method call (name + args) in order, and resolves —
+ *  since the real query builder is itself a thenable — via a `.then`.
+ *  Purpose-built for asserting filter CONSTRUCTION (which methods, which
+ *  args, which order), which mockInsert above doesn't cover. */
+function mockRangeQuery(data: unknown[]) {
+  const calls: { method: string; args: unknown[] }[] = [];
+  const builder: Record<string, unknown> = {};
+  const chain =
+    (method: string) =>
+    (...args: unknown[]) => {
+      calls.push({ method, args });
+      return builder;
+    };
+  builder.select = chain("select");
+  builder.eq = chain("eq");
+  builder.gte = chain("gte");
+  builder.lte = chain("lte");
+  builder.or = chain("or");
+  builder.is = chain("is");
+  builder.order = chain("order");
+  builder.then = (resolve: (v: { data: unknown[]; error: null }) => void) =>
+    resolve({ data, error: null });
+  (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue(builder);
+  return calls;
+}
+
+describe("getEntriesForUserRange", () => {
+  it("uses .gte/.lte for the date range, keeping the same select/user filter/planned-confirmed gate/order as getEntriesForUser", async () => {
+    const calls = mockRangeQuery([]);
+
+    await getEntriesForUserRange("friend-1", "2026-08-01", "2026-08-14");
+
+    expect(calls.map((c) => c.method)).toEqual([
+      "select",
+      "eq",
+      "gte",
+      "lte",
+      "or",
+      "is",
+      "order",
+    ]);
+    expect(calls.find((c) => c.method === "eq")?.args).toEqual([
+      "user_id",
+      "friend-1",
+    ]);
+    expect(calls.find((c) => c.method === "gte")?.args).toEqual([
+      "date",
+      "2026-08-01",
+    ]);
+    expect(calls.find((c) => c.method === "lte")?.args).toEqual([
+      "date",
+      "2026-08-14",
+    ]);
+    expect(calls.find((c) => c.method === "or")?.args).toEqual([
+      "planned.eq.false,confirmed_at.not.is.null",
+    ]);
+    expect(calls.find((c) => c.method === "is")?.args).toEqual([
+      "skipped_at",
+      null,
+    ]);
+    expect(calls.find((c) => c.method === "order")?.args).toEqual([
+      "eaten_at",
+      { ascending: true },
+    ]);
   });
 });

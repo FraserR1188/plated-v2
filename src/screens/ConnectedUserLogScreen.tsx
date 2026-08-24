@@ -62,7 +62,7 @@ import {
 import { getEntriesForUserRange } from "../lib/social";
 import { sectionForTime, addDays, formatDayLabel } from "../lib/time";
 import { reportError } from "../lib/reportError";
-import { todayKey } from "../store/useStore";
+import { todayKey, isPending, isEaten } from "../store/useStore";
 import {
   RootStackParamList,
   MealEntry,
@@ -88,12 +88,29 @@ const MEALS: { key: MealType; label: string }[] = [
  * which is closer to how a friend's log actually gets used than the ±7 this
  * shipped with initially.
  *
- * There is no forward equivalent: meal_entries_select_follower's
- * `(planned = false or confirmed_at is not null)` clause means a friend's
- * unconfirmed future entries return zero rows regardless of what this
- * screen asks for, so the pager's upper bound is simply `today`.
+ * Forward days are bounded separately by HISTORY_WINDOW_FORWARD_DAYS below.
+ * Before 20260823150000_share_planned.sql, meal_entries_select_follower's
+ * `(planned = false or confirmed_at is not null)` clause meant a friend's
+ * unconfirmed future entries returned zero rows no matter what this screen
+ * asked for, so a forward window was pointless. That clause now has a third
+ * disjunct — a friend's own opt-in (profiles.share_planned) — so a friend
+ * who has opted in can genuinely have visible planned rows ahead of today.
+ * A friend who hasn't opted in still returns zero rows for those days; this
+ * screen doesn't know or care which case it's in, and renders both
+ * identically (an empty page, no "ask them to share" prompt) — see
+ * emptyStateText.
  */
 const HISTORY_WINDOW_DAYS = 30;
+
+/**
+ * How far forward a viewer can browse — i.e. into a friend's opted-in
+ * planned meals. Small and fixed-fetch (see the initial-chunk effect below):
+ * unlike the backward window, this is never chunked further forward, since
+ * there's no "unbounded future" to page into — meal_entries_select_follower
+ * still only ever surfaces rows that exist, and a friend doesn't plan
+ * indefinitely far ahead.
+ */
+const HISTORY_WINDOW_FORWARD_DAYS = 7;
 
 /** Fetch chunk size for the backward-paging history fetch. */
 const FETCH_CHUNK_DAYS = 14;
@@ -183,24 +200,36 @@ function seedDateRange(
 }
 
 // ─── Day summary bar ─────────────────────────────────────────
+//
+// Mirrors useStore.getSplitTotalsForDate exactly: the headline figure and
+// macro chips are EATEN entries only (isEaten — a normal logged entry, or a
+// planned one the friend confirmed). Planned-but-unconfirmed entries
+// (isPending) are never folded into that sum; their calories surface only
+// as a separate note, same wording/structure as TodayScreen.tsx's own
+// "+N kcal planned, not yet eaten" line. skipped_at rows never reach this
+// component at all — getEntriesForUserRange filters them server-side.
 
 function DaySummary({ entries }: { entries: MealEntry[] }) {
-  const totals = sumEntries(entries);
+  const eatenTotals = sumEntries(entries.filter(isEaten));
+  const plannedCalories = Math.round(
+    sumEntries(entries.filter(isPending)).calories,
+  );
+
   return (
     <View style={styles.daySummary}>
       <Text style={styles.daySummaryCalories}>
-        {Math.round(totals.calories)}
+        {Math.round(eatenTotals.calories)}
       </Text>
       <Text style={styles.daySummaryLabel}>kcal</Text>
       <View style={styles.daySummaryMacros}>
         {[
           {
             label: "protein",
-            value: totals.protein,
+            value: eatenTotals.protein,
             color: MacroColor.protein,
           },
-          { label: "carbs", value: totals.carbs, color: MacroColor.carbs },
-          { label: "fat", value: totals.fat, color: MacroColor.fat },
+          { label: "carbs", value: eatenTotals.carbs, color: MacroColor.carbs },
+          { label: "fat", value: eatenTotals.fat, color: MacroColor.fat },
         ].map((m) => (
           <View key={m.label} style={styles.macroChip}>
             <View style={[styles.macroChipDot, { backgroundColor: m.color }]} />
@@ -209,6 +238,14 @@ function DaySummary({ entries }: { entries: MealEntry[] }) {
           </View>
         ))}
       </View>
+      {plannedCalories > 0 && (
+        <Text style={styles.daySummaryPlannedNote}>
+          <Text style={styles.daySummaryPlannedNoteStrong}>
+            +{plannedCalories.toLocaleString()} kcal
+          </Text>{" "}
+          planned, not yet eaten
+        </Text>
+      )}
     </View>
   );
 }
@@ -238,10 +275,18 @@ function IngredientRow({
   entry: MealEntry;
   onCopy: () => void;
 }) {
+  // Same predicate and treatment as TodayScreen's StreamFoodRow: a 🕐
+  // prefix plus a dimmed row, nothing heavier — this is a browsing list,
+  // not a decision context, so the explicit "Planned"/"Logged" pill (used
+  // in CopyTargetPicker/bundle previews) doesn't belong here.
+  const pending = isPending(entry);
   return (
-    <View style={styles.ingredientRow}>
+    <View
+      style={[styles.ingredientRow, pending && styles.ingredientRowPending]}
+    >
       <View style={styles.ingredientMeta}>
         <Text style={styles.ingredientName} numberOfLines={1}>
+          {pending ? "🕐 " : ""}
           {entry.name}
         </Text>
         <Text style={styles.ingredientSub}>
@@ -422,6 +467,10 @@ export function ConnectedUserLogScreen() {
     () => addDays(today, -HISTORY_WINDOW_DAYS),
     [today],
   );
+  const upperBound = useMemo(
+    () => addDays(today, HISTORY_WINDOW_FORWARD_DAYS),
+    [today],
+  );
   const clampToLowerBound = useCallback(
     (key: string) => (key < lowerBound ? lowerBound : key),
     [lowerBound],
@@ -439,7 +488,14 @@ export function ConnectedUserLogScreen() {
   const [error, setError] = useState<string | null>(null);
   const fetchingMoreRef = useRef(false);
 
-  // Initial chunk: FETCH_CHUNK_DAYS ending today, clamped at the lower bound.
+  // Initial chunk: FETCH_CHUNK_DAYS of history ending today, PLUS the full
+  // forward window through upperBound in the same request — the forward
+  // window is small and fixed, so unlike the backward history it never
+  // needs its own chunking/refetch pass. rangeStart is clamped at the lower
+  // bound; the fetch's end and seedDateRange's end must both be upperBound,
+  // not today, or a friend's opted-in forward entries would be fetched and
+  // then silently dropped (map.get(e.date)?.push — a date that was never
+  // seeded as a key finds no array to push into).
   useEffect(() => {
     let cancelled = false;
     setInitialLoading(true);
@@ -449,11 +505,11 @@ export function ConnectedUserLogScreen() {
       addDays(today, -(FETCH_CHUNK_DAYS - 1)),
     );
 
-    getEntriesForUserRange(profile.user_id, rangeStart, today)
+    getEntriesForUserRange(profile.user_id, rangeStart, upperBound)
       .then((data) => {
         if (cancelled) return;
         const map = new Map<string, MealEntry[]>();
-        seedDateRange(map, rangeStart, today);
+        seedDateRange(map, rangeStart, upperBound);
         data.forEach((e) => map.get(e.date)?.push(e));
         setEntriesByDate(map);
         setLoadedFrom(rangeStart);
@@ -468,7 +524,7 @@ export function ConnectedUserLogScreen() {
     return () => {
       cancelled = true;
     };
-  }, [profile.user_id, today, clampToLowerBound]);
+  }, [profile.user_id, today, upperBound, clampToLowerBound]);
 
   // Backward chunk fetch: fires once `selected` is within
   // REFETCH_THRESHOLD_DAYS of the earliest date already loaded. A day
@@ -517,24 +573,25 @@ export function ConnectedUserLogScreen() {
   // Same 3-page sliding-window idiom as TodayScreen, with one addition:
   // TodayScreen's window is unbounded in both directions, so its array is
   // always exactly 3 wide and the centre is always index 1. This screen's
-  // window is NOT unbounded — sitting on `today` must not render a page for
-  // tomorrow (meal_entries_select_follower hides it anyway, but rendering it
-  // would show a permanently-blank page with no explanation), and sitting on
-  // `lowerBound` must not render a page for one day further back. So the
-  // array is built conditionally and the centre index is DERIVED from it,
-  // never assumed to be 1 — both the scroll-reset effect and the
-  // scroll-end handler read it from the same `pageDates`/`centreIndex` pair,
-  // so an edge page (a 2-wide array, centre at 0 or 1) can't disagree with
-  // itself the way a hardcoded "page === 1" would.
+  // window is NOT unbounded — sitting on `upperBound` must not render a page
+  // one day further forward (a friend's opted-in plans only reach so far
+  // ahead; beyond that it's not "empty," it's out of range and shouldn't be
+  // swipeable to at all), and sitting on `lowerBound` must not render a page
+  // for one day further back. So the array is built conditionally and the
+  // centre index is DERIVED from it, never assumed to be 1 — both the
+  // scroll-reset effect and the scroll-end handler read it from the same
+  // `pageDates`/`centreIndex` pair, so an edge page (a 2-wide array, centre
+  // at 0 or 1) can't disagree with itself the way a hardcoded "page === 1"
+  // would.
   const pageDates = useMemo(() => {
     const dates: string[] = [];
     const prev = addDays(selected, -1);
     if (prev >= lowerBound) dates.push(prev);
     dates.push(selected);
     const next = addDays(selected, 1);
-    if (next <= today) dates.push(next);
+    if (next <= upperBound) dates.push(next);
     return dates;
-  }, [selected, lowerBound, today]);
+  }, [selected, lowerBound, upperBound]);
 
   const centreIndex = pageDates.indexOf(selected);
 
@@ -744,6 +801,22 @@ const styles = StyleSheet.create(
     gap: Spacing.sm,
     marginTop: Spacing.xs,
   },
+  // Same treatment as TodayScreen's plannedNote/plannedNoteStrong — this
+  // card's own `gap: 4` layout means a positive marginTop, not TodayScreen's
+  // negative one (that one pulls the note up under a hero card; this one
+  // just sits below the macro chips).
+  daySummaryPlannedNote: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+    fontFamily: Fonts.sans.medium,
+    marginTop: Spacing.xs,
+  },
+  daySummaryPlannedNoteStrong: {
+    color: Colors.textSub,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
+  },
   macroChip: {
     flexDirection: "row",
     alignItems: "center",
@@ -828,6 +901,11 @@ const styles = StyleSheet.create(
     paddingVertical: Spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: Colors.borderSub,
+  },
+  // Same dimming as TodayScreen's rowPending — a planned entry that hasn't
+  // been eaten (or confirmed) yet.
+  ingredientRowPending: {
+    opacity: 0.62,
   },
   ingredientMeta: {
     flex: 1,

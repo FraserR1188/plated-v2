@@ -300,20 +300,23 @@ function mockRangeQuery(data: unknown[]) {
 }
 
 describe("getEntriesForUserRange", () => {
-  it("uses .gte/.lte for the date range, keeping the same select/user filter/planned-confirmed gate/order as getEntriesForUser", async () => {
+  it("uses .gte/.lte for the date range, keeps the skipped_at gate, and does NOT reinstate a client-side planned/confirmed filter — RLS (meal_entries_select_follower) is the only gate on that now", async () => {
     const calls = mockRangeQuery([]);
 
     await getEntriesForUserRange("friend-1", "2026-08-01", "2026-08-14");
 
+    // Exact method sequence: no "or" in the chain. If someone reinstates a
+    // client-side planned/confirmed filter, this fails immediately, before
+    // even checking its args.
     expect(calls.map((c) => c.method)).toEqual([
       "select",
       "eq",
       "gte",
       "lte",
-      "or",
       "is",
       "order",
     ]);
+    expect(calls.some((c) => c.method === "or")).toBe(false);
     expect(calls.find((c) => c.method === "eq")?.args).toEqual([
       "user_id",
       "friend-1",
@@ -325,9 +328,6 @@ describe("getEntriesForUserRange", () => {
     expect(calls.find((c) => c.method === "lte")?.args).toEqual([
       "date",
       "2026-08-14",
-    ]);
-    expect(calls.find((c) => c.method === "or")?.args).toEqual([
-      "planned.eq.false,confirmed_at.not.is.null",
     ]);
     expect(calls.find((c) => c.method === "is")?.args).toEqual([
       "skipped_at",

@@ -435,12 +435,13 @@ interface AppState {
 /** Re-exported for the screens that already import it from here. */
 export const todayKey = (): string => dateKey();
 
-/** Awaiting an answer: planned, neither confirmed nor skipped. */
-const isPending = (e: MealEntry): boolean =>
+/** Awaiting an answer: planned, neither confirmed nor skipped. Exported so
+ *  callers outside the store (ConnectedUserLogScreen) don't redefine it. */
+export const isPending = (e: MealEntry): boolean =>
   e.planned && !e.confirmed_at && !e.skipped_at;
 
 /** Actually eaten: a normal logged entry, or a planned one the user confirmed. */
-const isEaten = (e: MealEntry): boolean => !e.planned || !!e.confirmed_at;
+export const isEaten = (e: MealEntry): boolean => !e.planned || !!e.confirmed_at;
 
 /** Answered "no". Counts toward nothing — not goals, not correlation, not sections. */
 const isSkipped = (e: MealEntry): boolean => !!e.skipped_at;

@@ -503,13 +503,20 @@ export async function getEntriesForUserRange(
   startDate: string,
   endDate: string,
 ): Promise<MealEntry[]> {
+  // No client-side planned/confirmed filter here — RLS
+  // (meal_entries_select_follower, 20260823150000_share_planned.sql) is now
+  // the only gate on a friend's planned rows, via their own share_planned
+  // opt-in. A client-side .or() re-adding that filter would silently
+  // contradict the policy: it would hide rows the DB has already decided
+  // this viewer is allowed to see. .is("skipped_at", null) stays — it's an
+  // unrelated gate (a friend's "no, I didn't eat this" answer is never
+  // shown, opted in or not), not part of the planned/confirmed decision.
   const { data, error } = await supabase
     .from("meal_entries")
     .select("*")
     .eq("user_id", userId)
     .gte("date", startDate)
     .lte("date", endDate)
-    .or("planned.eq.false,confirmed_at.not.is.null")
     .is("skipped_at", null)
     .order("eaten_at", { ascending: true });
 

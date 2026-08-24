@@ -97,6 +97,41 @@ export async function upsertProfile(
   return data;
 }
 
+/**
+ * Flip the current user's own share_planned flag — see
+ * 20260823150000_share_planned.sql. profiles_update_own already permits
+ * this (own row, no new policy needed).
+ *
+ * Copies acceptFriend's shape, not upsertProfile's: a plain UPDATE against
+ * the caller's own row can, in principle, match zero rows (no profile
+ * created yet), and without .select() PostgREST can't distinguish that from
+ * a successful 1-row update. So this selects the updated row back and
+ * treats zero rows as a failure, same as acceptFriend — not upsertProfile's
+ * upsert-and-.single() shape, which is the username path and carries its
+ * own 23505 handling that doesn't apply here.
+ */
+export async function setSharePlanned(value: boolean): Promise<WriteResult> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: "Not signed in." };
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .update({ share_planned: value })
+    .eq("user_id", user.id)
+    .select();
+
+  if (error) {
+    reportError("setSharePlanned", error);
+    return { error: "Couldn't save that setting. Please try again." };
+  }
+  if (!data || data.length === 0) {
+    return { error: "Couldn't find your profile. Please try again." };
+  }
+  return { error: null };
+}
+
 /** Check if a username is available (case-insensitive). */
 export async function isUsernameAvailable(username: string): Promise<boolean> {
   const {
@@ -361,7 +396,7 @@ export async function getFriends(): Promise<ProfileWithFriendState[]> {
         `
         following_id,
         profiles!follows_following_id_fkey (
-          user_id, username, display_name, avatar_url, created_at
+          user_id, username, display_name, avatar_url, created_at, share_planned
         )
       `,
       )
@@ -373,7 +408,7 @@ export async function getFriends(): Promise<ProfileWithFriendState[]> {
         `
         follower_id,
         profiles!follows_follower_id_fkey (
-          user_id, username, display_name, avatar_url, created_at
+          user_id, username, display_name, avatar_url, created_at, share_planned
         )
       `,
       )
@@ -410,7 +445,7 @@ export async function getIncomingRequests(): Promise<
       `
       follower_id,
       profiles!follows_follower_id_fkey (
-        user_id, username, display_name, avatar_url, created_at
+        user_id, username, display_name, avatar_url, created_at, share_planned
       )
     `,
     )

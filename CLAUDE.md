@@ -56,6 +56,7 @@ These are the source of most historical bugs. Each one is an invariant, not a pr
 - All Supabase CLI commands use the **`npx` prefix**.
 - New function folders must be **siblings of `_shared`**, not children of it.
 - `WHOOP_CLIENT_ID` belongs in **Supabase secrets only** — never as an `EXPO_PUBLIC_` var. Client ID as an EAS env var.
+- `getFriends`/`getIncomingRequests` (`src/lib/social.ts`) cast their `follows`-embedded `profiles!..._fkey (...)` selects through `as unknown as Profile` — a double cast that bypasses structural type-checking entirely. `tsc` will not flag a `Profile` field missing from those embedded selects' column lists. Any new column added to `Profile` must be added to both of those column lists by hand.
 
 ## React Native / Expo gotchas
 

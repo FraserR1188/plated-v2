@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
+  Switch,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -28,6 +29,7 @@ import {
   getMyProfile,
   upsertProfile,
   isUsernameAvailable,
+  setSharePlanned,
 } from "../lib/social";
 import {
   getWhoopConnection,
@@ -130,6 +132,13 @@ export function SettingsScreen() {
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [usernameSaved, setUsernameSaved] = useState(false);
 
+  // ── Share planned meals state ───────────────────────────────
+  const [sharePlannedOn, setSharePlannedOn] = useState(false);
+  const [sharePlannedSaving, setSharePlannedSaving] = useState(false);
+  const [sharePlannedError, setSharePlannedError] = useState<string | null>(
+    null,
+  );
+
   // ── WHOOP state ───────────────────────────────────────────
   const [whoop, setWhoop] = useState<WhoopConnection | null>(null);
   const [whoopLoading, setWhoopLoading] = useState(true);
@@ -146,6 +155,7 @@ export function SettingsScreen() {
           setCurrentUsername(profile.username);
           setUsernameInput(profile.username);
           setDisplayNameInput(profile.display_name ?? "");
+          setSharePlannedOn(profile.share_planned);
         } else {
           setUsernameEditing(true); // no profile yet — show form immediately
         }
@@ -211,6 +221,24 @@ export function SettingsScreen() {
     } finally {
       setUsernameSaving(false);
     }
+  };
+
+  // Wait-then-reflect, matching handleSaveUsername — no optimistic flip.
+  // The Switch is a controlled component bound to sharePlannedOn, so
+  // leaving that state untouched until the write succeeds is what keeps
+  // the thumb in place on failure; there's nothing to roll back.
+  const handleToggleSharePlanned = async (value: boolean) => {
+    setSharePlannedSaving(true);
+    setSharePlannedError(null);
+
+    const { error } = await setSharePlanned(value);
+
+    setSharePlannedSaving(false);
+    if (error) {
+      setSharePlannedError(error);
+      return;
+    }
+    setSharePlannedOn(value);
   };
 
   // ── WHOOP handlers ────────────────────────────────────────
@@ -491,6 +519,46 @@ export function SettingsScreen() {
                 <Text style={styles.editBtnText}>Edit</Text>
               </Pressable>
             </View>
+          )}
+        </View>
+
+        {/* ── Sharing ────────────────────────────────── */}
+        <SectionLabel title="Sharing" />
+        <View style={styles.card}>
+          {usernameLoading ? (
+            <ActivityIndicator
+              color={Colors.green}
+              style={{ paddingVertical: Spacing.md }}
+            />
+          ) : (
+            <>
+              <View style={styles.sharePlannedRow}>
+                <View style={styles.sharePlannedTextWrap}>
+                  <Text style={styles.sharePlannedLabel}>
+                    Share your meal plans
+                  </Text>
+                  <Text style={styles.sharePlannedSub}>
+                    Friends can see meals you've planned but haven't eaten
+                    yet. Off by default.
+                  </Text>
+                </View>
+                {sharePlannedSaving ? (
+                  <ActivityIndicator color={Colors.green} size="small" />
+                ) : (
+                  <Switch
+                    value={sharePlannedOn}
+                    onValueChange={handleToggleSharePlanned}
+                    disabled={sharePlannedSaving}
+                    trackColor={{ false: Colors.border, true: Colors.green }}
+                  />
+                )}
+              </View>
+              {sharePlannedError && (
+                <Text style={styles.sharePlannedErrorText}>
+                  {sharePlannedError}
+                </Text>
+              )}
+            </>
           )}
         </View>
 
@@ -978,6 +1046,33 @@ const styles = StyleSheet.create(
     fontSize: Typography.base,
     fontWeight: Typography.bold,
     color: Colors.bg,
+  },
+
+  // ── Sharing ────────────────────────────────────────────────
+  sharePlannedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: Spacing.md,
+  },
+  sharePlannedTextWrap: {
+    flex: 1,
+  },
+  sharePlannedLabel: {
+    fontSize: Typography.base,
+    fontWeight: Typography.semibold,
+    color: Colors.text,
+  },
+  sharePlannedSub: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    marginTop: 2,
+    lineHeight: 18,
+  },
+  sharePlannedErrorText: {
+    fontSize: Typography.xs,
+    color: Colors.danger,
+    marginTop: Spacing.sm,
   },
 
   // ── Whoop ──────────────────────────────────────────────────

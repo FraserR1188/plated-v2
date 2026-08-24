@@ -518,6 +518,8 @@ export interface Profile {
   display_name: string | null;
   avatar_url: string | null;
   created_at: string;
+  /** Opt-in: shares this user's own planned (unconfirmed) meals with accepted friends. Default false, never backfilled — see 20260823150000_share_planned.sql. */
+  share_planned: boolean;
 }
 
 // 20260819110000_friendship_accept_gate.sql: follows is a mutual friendship

@@ -47,6 +47,7 @@ import {
   MEAL_LABELS,
 } from "../types";
 import { SourceListNotice } from "../components/SourceNotice";
+import { ScanButton } from "../components/ScanButton";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "AddIngredient">;
 type Route = RouteProp<RootStackParamList, "AddIngredient">;
@@ -251,36 +252,22 @@ export function AddIngredientScreen() {
           </View>
 
           <View style={styles.headerActions}>
-            <Pressable
-              style={({ pressed }) => [
-                styles.scanBtn,
-                pressed && { opacity: 0.75 },
-              ]}
+            <ScanButton
+              icon="⌗"
+              label="Scan barcode"
+              accessibilityLabel="Scan barcode"
               onPress={() =>
                 navigation.navigate("Scanner", { date, mealType, eatenAt })
               }
-            >
-              <Text style={styles.scanIcon}>⌗</Text>
-              <Text style={styles.scanLabel}>Scan</Text>
-            </Pressable>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.scanBtn,
-                pressed && { opacity: 0.75 },
-              ]}
+            />
+            <ScanButton
+              icon="📷"
+              label="Scan meal"
+              accessibilityLabel="Scan a meal photo"
               onPress={handleScanMeal}
+              loading={scanningMeal}
               disabled={scanningMeal}
-            >
-              {scanningMeal ? (
-                <ActivityIndicator size="small" color={Colors.textSub} />
-              ) : (
-                <>
-                  <Text style={styles.scanIcon}>📷</Text>
-                  <Text style={styles.scanLabel}>Scan meal</Text>
-                </>
-              )}
-            </Pressable>
+            />
           </View>
         </View>
 
@@ -715,26 +702,6 @@ const styles = StyleSheet.create(
   headerActions: {
     flexDirection: "row",
     gap: Spacing.xs,
-  },
-  scanBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.pill,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 7,
-  },
-  scanIcon: {
-    fontSize: 14,
-    color: Colors.textSub,
-  },
-  scanLabel: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.semibold,
-    color: Colors.textSub,
   },
 
   // Tab bar

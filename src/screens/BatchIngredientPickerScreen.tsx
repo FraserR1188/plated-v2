@@ -53,6 +53,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { searchFood } from "../lib/openfoodfacts";
 import { captureAndScanMealPhoto } from "../lib/mealPhotoCapture";
+import { ScanButton } from "../components/ScanButton";
 import { useStore } from "../store/useStore";
 import {
   Colors,
@@ -258,33 +259,20 @@ export function BatchIngredientPickerScreen() {
             <View style={{ width: 36 }} />
           ) : (
             <View style={styles.headerActions}>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.scanBtn,
-                  pressed && { opacity: 0.75 },
-                ]}
+              <ScanButton
+                icon="⌗"
+                label="Scan barcode"
+                accessibilityLabel="Scan barcode"
                 onPress={handleScanBarcode}
-              >
-                <Text style={styles.scanIcon}>⌗</Text>
-                <Text style={styles.scanLabel}>Scan</Text>
-              </Pressable>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.scanBtn,
-                  pressed && { opacity: 0.75 },
-                ]}
+              />
+              <ScanButton
+                icon="📷"
+                label="Scan meal"
+                accessibilityLabel="Scan a meal photo"
                 onPress={handleScanMeal}
+                loading={scanningMeal}
                 disabled={scanningMeal}
-              >
-                {scanningMeal ? (
-                  <ActivityIndicator size="small" color={Colors.textSub} />
-                ) : (
-                  <>
-                    <Text style={styles.scanIcon}>📷</Text>
-                    <Text style={styles.scanLabel}>Scan meal</Text>
-                  </>
-                )}
-              </Pressable>
+              />
             </View>
           )}
         </View>
@@ -588,26 +576,6 @@ const styles = StyleSheet.create(
     headerActions: {
       flexDirection: "row",
       gap: Spacing.xs,
-    },
-    scanBtn: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 4,
-      backgroundColor: Colors.surface,
-      borderRadius: Radius.pill,
-      borderWidth: 1,
-      borderColor: Colors.border,
-      paddingHorizontal: Spacing.sm,
-      paddingVertical: 7,
-    },
-    scanIcon: {
-      fontSize: 14,
-      color: Colors.textSub,
-    },
-    scanLabel: {
-      fontSize: Typography.xs,
-      fontWeight: Typography.semibold,
-      color: Colors.textSub,
     },
 
     aiCard: {

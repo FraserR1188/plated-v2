@@ -140,8 +140,8 @@ export function AddIngredientScreen() {
     });
 
   // Photo of a PLATE, not a barcode or a label — a different button from
-  // "Scan" above. Nothing reaches meal_entries until the user confirms on
-  // ProductScreen — captureAndScanMealPhoto only builds an editable draft.
+  // "Scan barcode" beside it. Nothing reaches meal_entries until the user
+  // confirms on ProductScreen — captureAndScanMealPhoto only builds an editable draft.
   // (Capture/prepare/scan pipeline lives in lib/mealPhotoCapture.ts, shared
   // with BatchIngredientPickerScreen, which reuses the SAME lookup but
   // never routes the result through this screen's Product-logging path.)
@@ -224,6 +224,11 @@ export function AddIngredientScreen() {
     !searchError &&
     query.trim().length >= 2 &&
     results.length === 0;
+  // Keyed on the query, not on results.length, so the scan pair doesn't
+  // flash back in during the gap between clearing the search box and the
+  // results array emptying.
+  const showPreSearch =
+    !searching && !searchError && query.trim().length < 2;
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
@@ -249,25 +254,6 @@ export function AddIngredientScreen() {
             <View style={styles.mealPill}>
               <Text style={styles.mealPillText}>{mealLabel}</Text>
             </View>
-          </View>
-
-          <View style={styles.headerActions}>
-            <ScanButton
-              icon="⌗"
-              label="Scan barcode"
-              accessibilityLabel="Scan barcode"
-              onPress={() =>
-                navigation.navigate("Scanner", { date, mealType, eatenAt })
-              }
-            />
-            <ScanButton
-              icon="📷"
-              label="Scan meal"
-              accessibilityLabel="Scan a meal photo"
-              onPress={handleScanMeal}
-              loading={scanningMeal}
-              disabled={scanningMeal}
-            />
           </View>
         </View>
 
@@ -434,6 +420,34 @@ export function AddIngredientScreen() {
                       Create "{query.trim()}"
                     </Text>
                   </Pressable>
+                </View>
+              )}
+
+              {/* ── Scan pair — moved here from the header ──── */}
+              {/* Scanning a barcode is far less work than typing a
+                  nutrition label by hand, so it's offered before the
+                  "Can't find it?" last resort below, not after it. Only
+                  shown pre-search — once a search has actually run (results
+                  or no-results), these buttons drop out in favour of the
+                  create card. */}
+              {showPreSearch && (
+                <View style={styles.scanRow}>
+                  <ScanButton
+                    icon="⌗"
+                    label="Scan barcode"
+                    accessibilityLabel="Scan barcode"
+                    onPress={() =>
+                      navigation.navigate("Scanner", { date, mealType, eatenAt })
+                    }
+                  />
+                  <ScanButton
+                    icon="📷"
+                    label="Scan meal"
+                    accessibilityLabel="Scan a meal photo"
+                    onPress={handleScanMeal}
+                    loading={scanningMeal}
+                    disabled={scanningMeal}
+                  />
                 </View>
               )}
 
@@ -699,10 +713,6 @@ const styles = StyleSheet.create(
     fontWeight: Typography.semibold,
     color: Colors.green,
   },
-  headerActions: {
-    flexDirection: "row",
-    gap: Spacing.xs,
-  },
 
   // Tab bar
   tabBar: {
@@ -833,6 +843,15 @@ const styles = StyleSheet.create(
   rowThumbPlaceholder: {
     fontSize: 18,
     opacity: 0.3,
+  },
+
+  // Pre-search scan pair — moved into the body so it's at thumb height with
+  // the keyboard raised, instead of the top-right header corner.
+  scanRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
   },
 
   // Not-found → create card

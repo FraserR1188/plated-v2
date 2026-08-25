@@ -1026,12 +1026,15 @@ function DayPage({
         <Pressable
           onPress={openAddPicker}
           hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel="Add food entry"
           style={({ pressed }) => [
             styles.fab,
             pressed && { opacity: 0.85 },
           ]}
         >
           <Text style={styles.fabText}>＋</Text>
+          <Text style={styles.fabLabel}>Add</Text>
         </Pressable>
       )}
 
@@ -2979,19 +2982,30 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: Spacing.md,
     bottom: Spacing.lg,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    height: 52,
+    borderRadius: 26,
+    flexDirection: "row",
+    paddingHorizontal: Spacing.md,
+    gap: 6,
     backgroundColor: Colors.green,
     alignItems: "center",
     justifyContent: "center",
     ...Shadow.md,
   },
   fabText: {
-    fontSize: 28,
+    fontSize: 22,
     fontWeight: Typography.bold,
     color: Colors.bg,
-    marginTop: -2,
+    // No optical offset here: with the "Add" label as a row sibling,
+    // alignItems: "center" on `fab` centres both children on the same
+    // cross-axis line, which is enough on its own. The old -2 marginTop
+    // was tuned for this glyph alone inside a centered square and doesn't
+    // carry over to a two-child row.
+  },
+  fabLabel: {
+    fontSize: 16,
+    fontWeight: Typography.semibold,
+    color: Colors.bg,
   },
 });
 

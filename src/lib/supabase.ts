@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AppState } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
@@ -11,6 +12,19 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
     persistSession:     true,
     detectSessionInUrl: false,
   },
+});
+
+// React Native suspends JS timers while the app is backgrounded, so the auth
+// client's autoRefreshToken timer does not fire during that time and can
+// leave a stale access token in place on resume. Wiring start/stop to
+// AppState forces a refresh check on foreground and stops the refresh timer
+// while backgrounded, per Supabase's documented React Native setup.
+AppState.addEventListener('change', (state) => {
+  if (state === 'active') {
+    supabase.auth.startAutoRefresh();
+  } else {
+    supabase.auth.stopAutoRefresh();
+  }
 });
 
 export async function signUp(email: string, password: string) {

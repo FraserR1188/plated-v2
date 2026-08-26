@@ -10,11 +10,13 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
-  KeyboardAvoidingView,
   ScrollView,
-  Platform,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import {
+  KeyboardProvider,
+  KeyboardAvoidingView,
+} from "react-native-keyboard-controller";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import { AppNavigator } from "./src/navigation/AppNavigator";
@@ -138,12 +140,14 @@ function App() {
 
   return (
     <SafeAreaProvider>
-      <Sentry.ErrorBoundary
-        fallback={({ resetError }) => <ErrorFallback onReset={resetError} />}
-      >
-        {content}
-      </Sentry.ErrorBoundary>
-      <StatusBar style="light" />
+      <KeyboardProvider>
+        <Sentry.ErrorBoundary
+          fallback={({ resetError }) => <ErrorFallback onReset={resetError} />}
+        >
+          {content}
+        </Sentry.ErrorBoundary>
+        <StatusBar style="light" />
+      </KeyboardProvider>
     </SafeAreaProvider>
   );
 }
@@ -179,15 +183,17 @@ function AuthScreen() {
 
   return (
     <SafeAreaView style={styles.authSafe}>
-      {/* Android relies on the native windowSoftInputMode resize (unset in
-          app.json, so it's the default) plus this ScrollView to shift the
-          card above the keyboard. Adding 'height'/'padding' behavior here
-          on top of that fights the native resize and double-offsets —
-          see DeleteAccountScreen for the same pattern. */}
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.authSafe}
-      >
+      {/* targetSdk 36 + edge-to-edge (enforced from API 35) means the keyboard
+          arrives as a WindowInsets change, not a window resize — there is no
+          native reflow to lean on here (see DeleteAccountScreen, which
+          predates this fix and still assumes one). This is
+          react-native-keyboard-controller's KeyboardAvoidingView, which reads
+          the live IME inset directly and works the same on both platforms —
+          RN's built-in version measures Android's keyboard height as 0 on
+          API 30+ and needed the old Platform.OS branch to do nothing there.
+          The ScrollView below is the actual scroll fallback on short
+          screens; this view supplies the lift. */}
+      <KeyboardAvoidingView behavior="padding" style={styles.authSafe}>
         <ScrollView
           contentContainerStyle={styles.authWrap}
           showsVerticalScrollIndicator={false}

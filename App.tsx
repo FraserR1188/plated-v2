@@ -10,6 +10,9 @@ import {
   ActivityIndicator,
   Alert,
   AppState,
+  KeyboardAvoidingView,
+  ScrollView,
+  Platform,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -176,56 +179,72 @@ function AuthScreen() {
 
   return (
     <SafeAreaView style={styles.authSafe}>
-      <View style={styles.authWrap}>
-        <Text style={styles.authName}>plated.</Text>
-        <Text style={styles.authSub}>Track every ingredient, every macro.</Text>
-        <View style={styles.authCard}>
-          <Text style={styles.authTitle}>
-            {mode === "signin" ? "Sign in" : "Create account"}
+      {/* Android relies on the native windowSoftInputMode resize (unset in
+          app.json, so it's the default) plus this ScrollView to shift the
+          card above the keyboard. Adding 'height'/'padding' behavior here
+          on top of that fights the native resize and double-offsets —
+          see DeleteAccountScreen for the same pattern. */}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.authSafe}
+      >
+        <ScrollView
+          contentContainerStyle={styles.authWrap}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Text style={styles.authName}>plated.</Text>
+          <Text style={styles.authSub}>
+            Track every ingredient, every macro.
           </Text>
-          <TextInput
-            style={styles.input}
-            value={email}
-            onChangeText={setEmail}
-            placeholder="Email address"
-            placeholderTextColor={Colors.textDim}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <TextInput
-            style={styles.input}
-            value={password}
-            onChangeText={setPassword}
-            placeholder="Password"
-            placeholderTextColor={Colors.textDim}
-            secureTextEntry
-          />
-          <TouchableOpacity
-            style={styles.submitBtn}
-            onPress={handleSubmit}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color={Colors.bg} />
-            ) : (
-              <Text style={styles.submitText}>
-                {mode === "signin" ? "Sign in" : "Create account"}
-              </Text>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.switchBtn}
-            onPress={() => setMode(mode === "signin" ? "signup" : "signin")}
-          >
-            <Text style={styles.switchText}>
-              {mode === "signin"
-                ? "Don't have an account? Sign up"
-                : "Already have an account? Sign in"}
+          <View style={styles.authCard}>
+            <Text style={styles.authTitle}>
+              {mode === "signin" ? "Sign in" : "Create account"}
             </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+            <TextInput
+              style={styles.input}
+              value={email}
+              onChangeText={setEmail}
+              placeholder="Email address"
+              placeholderTextColor={Colors.textDim}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <TextInput
+              style={styles.input}
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Password"
+              placeholderTextColor={Colors.textDim}
+              secureTextEntry
+            />
+            <TouchableOpacity
+              style={styles.submitBtn}
+              onPress={handleSubmit}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color={Colors.bg} />
+              ) : (
+                <Text style={styles.submitText}>
+                  {mode === "signin" ? "Sign in" : "Create account"}
+                </Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.switchBtn}
+              onPress={() => setMode(mode === "signin" ? "signup" : "signin")}
+            >
+              <Text style={styles.switchText}>
+                {mode === "signin"
+                  ? "Don't have an account? Sign up"
+                  : "Already have an account? Sign in"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -264,7 +283,11 @@ const styles = StyleSheet.create(
       marginBottom: Spacing.lg,
     },
     authSafe: { flex: 1, backgroundColor: Colors.bg },
-    authWrap: { flex: 1, padding: Spacing.lg, justifyContent: "center" },
+    authWrap: {
+      flexGrow: 1,
+      padding: Spacing.lg,
+      justifyContent: "center",
+    },
     authName: {
       fontSize: Typography.hero - 8,
       fontWeight: Typography.bold,

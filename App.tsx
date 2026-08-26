@@ -23,6 +23,7 @@ import { useFonts } from "expo-font";
 import { AppNavigator } from "./src/navigation/AppNavigator";
 import { supabase, signIn, signUp } from "./src/lib/supabase";
 import { parseRecoveryLink } from "./src/lib/passwordReset";
+import { parseConfirmLink } from "./src/lib/emailConfirmation";
 import { ForgotPasswordScreen } from "./src/screens/ForgotPasswordScreen";
 import {
   ResetPasswordScreen,
@@ -37,7 +38,7 @@ import {
   FontsToLoad,
   withDefaultFont,
 } from "./src/theme/tokens";
-import { syncWhoop } from "./src/lib/whoop";
+import { syncWhoop, REDIRECT_URI as WHOOP_CALLBACK_PREFIX } from "./src/lib/whoop";
 import { reportError } from "./src/lib/reportError";
 
 function ErrorFallback({ onReset }: { onReset: () => void }) {
@@ -132,40 +133,100 @@ function App() {
   // below, is what keeps that from happening.
   useEffect(() => {
     function handleUrl(url: string) {
-      const result = parseRecoveryLink(url);
-      if (result.kind === "not_a_recovery_link") return;
+      const recovery = parseRecoveryLink(url);
+      if (recovery.kind !== "not_a_recovery_link") {
+        if (recovery.kind === "dead") {
+          setRecoveryStatus(recovery.reason);
+          return;
+        }
 
-      if (result.kind === "dead") {
-        setRecoveryStatus(result.reason);
-        return;
-      }
-
-      setRecoveryStatus("verifying");
-      supabase.auth
-        .setSession({
-          access_token: result.access_token,
-          refresh_token: result.refresh_token,
-        })
-        .then(({ error }) => {
-          if (error) {
-            // Tokens parsed fine, but Supabase rejected them — already used,
-            // or expired between the click and this call. Never log `error`
-            // as-is: reportError's scrubErrorForReport already restricts it
-            // to code/name, so this can't leak anything from the tokens.
-            reportError("passwordRecoverySetSession", error, {
+        setRecoveryStatus("verifying");
+        supabase.auth
+          .setSession({
+            access_token: recovery.access_token,
+            refresh_token: recovery.refresh_token,
+          })
+          .then(({ error }) => {
+            if (error) {
+              // Tokens parsed fine, but Supabase rejected them — already used,
+              // or expired between the click and this call. Never log `error`
+              // as-is: reportError's scrubErrorForReport already restricts it
+              // to code/name, so this can't leak anything from the tokens.
+              reportError("passwordRecoverySetSession", error, {
+                fingerprint: ["password-recovery-set-session"],
+              });
+              setRecoveryStatus("expired");
+              return;
+            }
+            setRecoveryStatus("ready");
+          })
+          .catch((e) => {
+            reportError("passwordRecoverySetSession", e, {
               fingerprint: ["password-recovery-set-session"],
             });
             setRecoveryStatus("expired");
-            return;
-          }
-          setRecoveryStatus("ready");
-        })
-        .catch((e) => {
-          reportError("passwordRecoverySetSession", e, {
-            fingerprint: ["password-recovery-set-session"],
           });
-          setRecoveryStatus("expired");
+        return;
+      }
+
+      // ── Email confirmation deep link ──────────────────────────
+      // Deliberately does NOT touch recoveryStatus. That state exists only
+      // to hold a recovery link's session out of the render tree until a
+      // new password is set (see the comment above this effect). A
+      // confirm-email link has no such gate: once setSession() succeeds,
+      // letting the onAuthStateChange subscription above see SIGNED_IN and
+      // flip `session` on its own IS the desired outcome, not a race to
+      // guard against.
+      const confirm = parseConfirmLink(url);
+      if (confirm.kind !== "not_a_confirm_link") {
+        if (confirm.kind === "dead") {
+          // No dedicated screen for an expired/invalid confirm link yet —
+          // UI copy and a resend affordance are a separate piece of work.
+          // Still worth knowing about, so this reports rather than
+          // silently dropping. Its own fingerprint keeps a dead link
+          // (expired/invalid before setSession is ever called) distinct
+          // from emailConfirmSetSession below, which is a session Supabase
+          // rejected after the fact — different failure, different cause.
+          reportError(
+            "emailConfirmDeadLink",
+            { code: confirm.reason, name: "EmailConfirmDeadLink" },
+            { fingerprint: ["email-confirm-dead-link"] },
+          );
+          return;
+        }
+
+        supabase.auth
+          .setSession({
+            access_token: confirm.access_token,
+            refresh_token: confirm.refresh_token,
+          })
+          .then(({ error }) => {
+            if (error) {
+              reportError("emailConfirmSetSession", error, {
+                fingerprint: ["email-confirm-set-session"],
+              });
+            }
+            // No success branch needed: onAuthStateChange already saw
+            // SIGNED_IN and updated `session` on its own.
+          })
+          .catch((e) => {
+            reportError("emailConfirmSetSession", e, {
+              fingerprint: ["email-confirm-set-session"],
+            });
+          });
+        return;
+      }
+
+      // ── Unrecognised plated:// URL ─────────────────────────────
+      // whoop-callback is excluded: connectWhoop() resolves it via
+      // WebBrowser.openAuthSessionAsync's own return value, but the same
+      // redirect also reaches this global Linking listener — without this
+      // guard every WHOOP connect would report a false "unhandled" error.
+      if (url.startsWith("plated://") && !url.startsWith(WHOOP_CALLBACK_PREFIX)) {
+        reportError("unhandledDeepLink", new Error("unrecognized_plated_url"), {
+          fingerprint: ["unhandled-deep-link"],
         });
+      }
     }
 
     Linking.getInitialURL().then((url) => {

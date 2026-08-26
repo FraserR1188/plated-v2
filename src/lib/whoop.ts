@@ -34,7 +34,13 @@ import { reportError } from "./reportError";
 
 // Must match _shared/whoop.ts and the WHOOP dashboard, character for
 // character. No trailing slash.
-const REDIRECT_URI = "plated://whoop-callback";
+//
+// Exported so App.tsx's global Linking listener can recognise and skip
+// this exact redirect — the same Custom Tab redirect that resolves
+// connectWhoop()'s openAuthSessionAsync() promise below also reaches that
+// listener, and without an exact match it would misreport every WHOOP
+// connect as an unhandled deep link.
+export const REDIRECT_URI = "plated://whoop-callback";
 
 // ─── Types ───────────────────────────────────────────────────
 

@@ -7,6 +7,12 @@
     "userInterfaceStyle": "dark",
     "scheme": "plated",
     "icon": "./assets/icon.png",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/7b2c1a05-5a75-4a60-80bf-a09d4e09d768"
+    },
     "android": {
       "package": "com.fraseranalytics.plated",
       "permissions": ["android.permission.CAMERA"],
@@ -17,6 +23,7 @@
     },
     "plugins": [
       "expo-dev-client",
+      "expo-updates",
       [
         "expo-image-picker",
         {

@@ -21,7 +21,7 @@ import * as Linking from "expo-linking";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import { AppNavigator } from "./src/navigation/AppNavigator";
-import { supabase, signIn, signUp } from "./src/lib/supabase";
+import { supabase, signIn, signUp, resendConfirmation } from "./src/lib/supabase";
 import { parseRecoveryLink } from "./src/lib/passwordReset";
 import { parseConfirmLink } from "./src/lib/emailConfirmation";
 import { ForgotPasswordScreen } from "./src/screens/ForgotPasswordScreen";
@@ -351,8 +351,37 @@ function AuthScreen({
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup" | "pending">("signin");
   const [loading, setLoading] = useState(false);
+
+  // Captured at the moment either pending entry point fires, independent of
+  // the email TextInput's live value — pending's render has no email field
+  // to accidentally edit out from under it, but this keeps the two decoupled
+  // on principle rather than by accident of what's currently on screen.
+  const [pendingEmail, setPendingEmail] = useState("");
+
+  // Seconds left before another resend is allowed. Purely client-side and
+  // deliberately dumb: it does not try to track GoTrue's real per-email
+  // cooldown across a visit to "pending" — it just resets to 0 every time
+  // this mode is (re)entered, per the brief. A double-tap right after
+  // re-entering could still hit the server's real cooldown; that surfaces
+  // as an ordinary resend error, not something this timer tries to prevent.
+  const [resendCooldown, setResendCooldown] = useState(0);
+  const [resending, setResending] = useState(false);
+
+  useEffect(() => {
+    if (mode !== "pending") return;
+    const id = setInterval(() => {
+      setResendCooldown((s) => (s > 0 ? s - 1 : 0));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [mode]);
+
+  const enterPending = (confirmedEmail: string) => {
+    setPendingEmail(confirmedEmail);
+    setResendCooldown(0);
+    setMode("pending");
+  };
 
   const handleSubmit = async () => {
     if (!email.trim() || !password) return;
@@ -362,18 +391,87 @@ function AuthScreen({
         await signIn(email.trim(), password);
       } else {
         await signUp(email.trim(), password);
-        Alert.alert(
-          "Account created",
-          "Sign in with your new account to get started.",
-        );
-        setMode("signin");
+        // Not "Account created" — with confirmation on, a duplicate signup
+        // resolves the same way a new one does (see resendConfirmation's
+        // caller below and src/lib/authLinks.ts / emailConfirmation.ts for
+        // the deep-link side of this). Whether the address was already
+        // registered is not something the client can tell apart here.
+        enterPending(email.trim());
       }
     } catch (e: any) {
-      Alert.alert("Error", e.message ?? "Something went wrong.");
+      // Matched on the CODE, not e.message — GoTrue sets this exact code
+      // (verified against the resolved auth-js source, not docs: see
+      // node_modules/@supabase/auth-js/dist/main/lib/fetch.js's handleError,
+      // which reads the response body's `code` straight into
+      // AuthApiError.code). A tester who signed up, left it two days, and
+      // now tries to sign in must land on "pending" here rather than on a
+      // raw "Email not confirmed" alert with no way forward.
+      if (e?.code === "email_not_confirmed") {
+        enterPending(email.trim());
+      } else {
+        Alert.alert("Error", e.message ?? "Something went wrong.");
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  const handleResend = async () => {
+    if (resending || resendCooldown > 0) return;
+    setResending(true);
+    try {
+      await resendConfirmation(pendingEmail);
+      setResendCooldown(60);
+    } catch (e: any) {
+      Alert.alert("Couldn't resend", e.message ?? "Something went wrong.");
+    } finally {
+      setResending(false);
+    }
+  };
+
+  if (mode === "pending") {
+    return (
+      <SafeAreaView style={styles.authSafe}>
+        <View style={styles.authWrap}>
+          <Text style={styles.authName}>plated.</Text>
+          <View style={styles.authCard}>
+            <Text style={styles.authTitle}>Check your email</Text>
+            <Text style={styles.pendingBody}>
+              If {pendingEmail} isn't already registered, we've sent a
+              confirmation link to it.
+            </Text>
+            <TouchableOpacity
+              style={[
+                styles.submitBtn,
+                (resending || resendCooldown > 0) && styles.submitBtnDisabled,
+              ]}
+              onPress={handleResend}
+              disabled={resending || resendCooldown > 0}
+            >
+              {resending ? (
+                <ActivityIndicator color={Colors.bg} />
+              ) : (
+                <Text style={styles.submitText}>
+                  {resendCooldown > 0
+                    ? `Resend in ${resendCooldown}s`
+                    : "Resend confirmation email"}
+                </Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.switchBtn}
+              onPress={() => {
+                setResendCooldown(0);
+                setMode("signin");
+              }}
+            >
+              <Text style={styles.switchText}>I've confirmed — sign in</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.authSafe}>
@@ -543,5 +641,13 @@ const styles = StyleSheet.create(
     switchText: { fontSize: Typography.sm, color: Colors.textMuted },
     forgotBtn: { alignItems: "flex-end", marginBottom: Spacing.xs },
     forgotText: { fontSize: Typography.sm, color: Colors.textMuted },
+    pendingBody: {
+      fontSize: Typography.base,
+      color: Colors.textMuted,
+      textAlign: "center",
+      lineHeight: 20,
+      marginBottom: Spacing.lg,
+    },
+    submitBtnDisabled: { opacity: 0.5 },
   }),
 );

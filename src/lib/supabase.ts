@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
+import { CONFIRM_EMAIL_BRIDGE_URL } from './authLinks';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
@@ -27,10 +28,29 @@ AppState.addEventListener('change', (state) => {
   }
 });
 
+// emailRedirectTo is required for the same reason requestPasswordReset's is
+// below: without it, GoTrue falls back to the Site URL, and the confirmation
+// link never forwards into plated://confirm-email at all.
 export async function signUp(email: string, password: string) {
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const { data, error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: { emailRedirectTo: CONFIRM_EMAIL_BRIDGE_URL },
+  });
   if (error) throw error;
   return data;
+}
+
+// GoTrue only resends when there was a real prior signup/email-change
+// request for this address — calling it for an address that never signed up
+// is a documented no-op on the server, not a client-visible error.
+export async function resendConfirmation(email: string) {
+  const { error } = await supabase.auth.resend({
+    type: 'signup',
+    email,
+    options: { emailRedirectTo: CONFIRM_EMAIL_BRIDGE_URL },
+  });
+  if (error) throw error;
 }
 
 export async function signIn(email: string, password: string) {

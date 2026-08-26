@@ -22,6 +22,13 @@
 // `extra` would leak it uncensored.
 // ============================================================
 
+// Passed as emailRedirectTo for both signUp() and resend({ type: 'signup' })
+// (see supabase.ts). Live at platedapp.uk and already on the Supabase
+// project's Redirect URLs allow-list — GoTrue rejects an emailRedirectTo
+// that isn't allow-listed, so this must stay in sync with that dashboard
+// setting if it ever changes.
+export const CONFIRM_EMAIL_BRIDGE_URL = "https://platedapp.uk/confirm-email";
+
 export type AuthFragmentResult =
   | {
       kind: "tokens";

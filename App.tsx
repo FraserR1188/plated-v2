@@ -163,7 +163,7 @@ function AuthScreen() {
         await signUp(email.trim(), password);
         Alert.alert(
           "Account created",
-          "Check your email to confirm, then sign in.",
+          "Sign in with your new account to get started.",
         );
         setMode("signin");
       }

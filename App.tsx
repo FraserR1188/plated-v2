@@ -1,6 +1,6 @@
 import "./instrument";
 import * as Sentry from "@sentry/react-native";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -17,10 +17,17 @@ import {
   KeyboardProvider,
   KeyboardAvoidingView,
 } from "react-native-keyboard-controller";
+import * as Linking from "expo-linking";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import { AppNavigator } from "./src/navigation/AppNavigator";
 import { supabase, signIn, signUp } from "./src/lib/supabase";
+import { parseRecoveryLink } from "./src/lib/passwordReset";
+import { ForgotPasswordScreen } from "./src/screens/ForgotPasswordScreen";
+import {
+  ResetPasswordScreen,
+  RecoveryStatus,
+} from "./src/screens/ResetPasswordScreen";
 import { useStore } from "./src/store/useStore";
 import {
   Colors,
@@ -48,11 +55,26 @@ function ErrorFallback({ onReset }: { onReset: () => void }) {
 }
 
 function App() {
-  const { setUserId, fetchEntries, fetchGoals, fetchSavedIngredients } =
+  const { setUserId, fetchEntries, fetchGoals, fetchSavedIngredients, reset } =
     useStore();
   const [session, setSession] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [fontsLoaded] = useFonts(FontsToLoad);
+
+  // Pre-auth view (no session at all) vs. recovery status (may arrive with
+  // ANY pre-auth view showing, or with none — a cold start) are kept as two
+  // independent pieces of state on purpose. Recovery must be able to
+  // interrupt "signin" or "forgot" equally, and must also win over a
+  // completed cold-start session check before either has settled — folding
+  // them into one enum would make some of those combinations unrepresentable
+  // and reintroduce exactly the race the recovery effect below exists to
+  // avoid.
+  const [preAuthView, setPreAuthView] = useState<"signin" | "forgot">(
+    "signin",
+  );
+  const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatus | "none">(
+    "none",
+  );
 
   // ── Auth ────────────────────────────────────────────────────
   useEffect(() => {
@@ -83,6 +105,100 @@ function App() {
 
     return () => subscription.unsubscribe();
   }, []);
+
+  // ── Password recovery deep link ────────────────────────────
+  //
+  // Its OWN top-level effect, same reasoning as the WHOOP sync effect below:
+  // this must not be nested inside the auth effect's callback above.
+  //
+  // plated://reset-password never goes through WebBrowser.openAuthSessionAsync
+  // the way whoop-callback does (see src/lib/whoop.ts's connectWhoop) — that
+  // flow works because the APP itself opens the browser and gets the redirect
+  // back as the resolved value of that one promise. A reset link is opened
+  // from an email client or the system browser, possibly while this app is
+  // backgrounded or not running at all, so it needs a real global Linking
+  // subscription (warm/background resume) plus a cold-start check via
+  // getInitialURL() — there is no other listener anywhere in this codebase
+  // that does that today.
+  //
+  // THE SHARP EDGE: setSession() below always fires the ordinary SIGNED_IN
+  // event, never PASSWORD_RECOVERY — that event only comes from auth-js's
+  // own URL-detection code path (verifyOtp / _getSessionFromURL), which
+  // detectSessionInUrl: false disables. So the instant setSession() succeeds,
+  // the auth effect above sees a truthy session and would render
+  // <AppNavigator/> on its own — before a new password has been set. Setting
+  // recoveryStatus to "verifying" HERE, synchronously, before setSession is
+  // even called, and checking it ahead of `session` in the render logic
+  // below, is what keeps that from happening.
+  useEffect(() => {
+    function handleUrl(url: string) {
+      const result = parseRecoveryLink(url);
+      if (result.kind === "not_a_recovery_link") return;
+
+      if (result.kind === "dead") {
+        setRecoveryStatus(result.reason);
+        return;
+      }
+
+      setRecoveryStatus("verifying");
+      supabase.auth
+        .setSession({
+          access_token: result.access_token,
+          refresh_token: result.refresh_token,
+        })
+        .then(({ error }) => {
+          if (error) {
+            // Tokens parsed fine, but Supabase rejected them — already used,
+            // or expired between the click and this call. Never log `error`
+            // as-is: reportError's scrubErrorForReport already restricts it
+            // to code/name, so this can't leak anything from the tokens.
+            reportError("passwordRecoverySetSession", error, {
+              fingerprint: ["password-recovery-set-session"],
+            });
+            setRecoveryStatus("expired");
+            return;
+          }
+          setRecoveryStatus("ready");
+        })
+        .catch((e) => {
+          reportError("passwordRecoverySetSession", e, {
+            fingerprint: ["password-recovery-set-session"],
+          });
+          setRecoveryStatus("expired");
+        });
+    }
+
+    Linking.getInitialURL().then((url) => {
+      if (url) handleUrl(url);
+    });
+    const sub = Linking.addEventListener("url", ({ url }) => handleUrl(url));
+    return () => sub.remove();
+  }, []);
+
+  // The one place this flow signs out and clears local state — reached from
+  // the expired/invalid dead-end screen's own button, AND from a session
+  // that dies mid-form after setSession() had already succeeded (see
+  // ResetPasswordScreen's handleSubmit). Whichever path got here, a
+  // recovery session may genuinely exist in storage even though the flow is
+  // ending, so this always attempts a real sign-out rather than only
+  // clearing local state when we know setSession() itself failed.
+  const handleBackToSignInFromRecovery = useCallback(async () => {
+    reset();
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Best-effort. supabase-js's signOut() only clears local storage
+      // after its server-side revoke call succeeds (401/403/404 and "no
+      // session" are already treated as success inside the SDK) — a plain
+      // network failure at this exact moment can leave a live session in
+      // storage. Null it here directly so THIS render can never fall
+      // through to AppNavigator regardless; a session that outlives a
+      // failed revoke call across a full app restart is a known, narrow gap
+      // consistent with the app's existing no-retry posture elsewhere.
+      setSession(null);
+    }
+    setRecoveryStatus("none");
+  }, [reset]);
 
   // ── WHOOP sync ──────────────────────────────────────────────
   //
@@ -132,10 +248,23 @@ function App() {
         />
       </View>
     );
+  } else if (recoveryStatus !== "none") {
+    // Checked BEFORE `session` — see the recovery effect's comment above.
+    content = (
+      <ResetPasswordScreen
+        status={recoveryStatus}
+        onDone={() => setRecoveryStatus("none")}
+        onBackToSignIn={handleBackToSignInFromRecovery}
+      />
+    );
   } else if (session) {
     content = <AppNavigator />;
+  } else if (preAuthView === "forgot") {
+    content = <ForgotPasswordScreen onBack={() => setPreAuthView("signin")} />;
   } else {
-    content = <AuthScreen />;
+    content = (
+      <AuthScreen onForgotPassword={() => setPreAuthView("forgot")} />
+    );
   }
 
   return (
@@ -154,7 +283,11 @@ function App() {
 
 export default Sentry.wrap(App);
 
-function AuthScreen() {
+function AuthScreen({
+  onForgotPassword,
+}: {
+  onForgotPassword: () => void;
+}) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"signin" | "signup">("signin");
@@ -225,6 +358,14 @@ function AuthScreen() {
               placeholderTextColor={Colors.textDim}
               secureTextEntry
             />
+            {mode === "signin" && (
+              <TouchableOpacity
+                style={styles.forgotBtn}
+                onPress={onForgotPassword}
+              >
+                <Text style={styles.forgotText}>Forgot password?</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={styles.submitBtn}
               onPress={handleSubmit}
@@ -339,5 +480,7 @@ const styles = StyleSheet.create(
     },
     switchBtn: { paddingVertical: Spacing.md, alignItems: "center" },
     switchText: { fontSize: Typography.sm, color: Colors.textMuted },
+    forgotBtn: { alignItems: "flex-end", marginBottom: Spacing.xs },
+    forgotText: { fontSize: Typography.sm, color: Colors.textMuted },
   }),
 );

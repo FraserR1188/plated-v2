@@ -43,3 +43,27 @@ export async function signOut() {
   const { error } = await supabase.auth.signOut();
   if (error) throw error;
 }
+
+// redirectTo is required: without it, Supabase falls back to the Site URL
+// and lands the user on the marketing homepage instead of the page that
+// forwards into the app via plated://reset-password. Confirmed empirically.
+//
+// Never throws "no account with that email" — GoTrue's /recover endpoint
+// always answers success regardless of whether the address has an account,
+// specifically so this can't be used to enumerate registered emails. A
+// thrown error here is a real failure (network, rate limit), not a signal
+// about account existence.
+export async function requestPasswordReset(email: string) {
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: "https://platedapp.uk/reset-password",
+  });
+  if (error) throw error;
+}
+
+// Assumes a live session already exists — see App.tsx's password recovery
+// deep link handler, which calls setSession() with the recovery tokens
+// before this is ever reachable.
+export async function updatePassword(password: string) {
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) throw error;
+}

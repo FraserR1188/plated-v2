@@ -2,6 +2,56 @@ import { FoodProduct } from "../types";
 
 const BASE = "https://world.openfoodfacts.org";
 
+// OFF's API guidelines ask consumers to identify themselves via User-Agent;
+// generic/default clients are more likely to be rate-limited, particularly
+// on the search endpoint.
+const USER_AGENT = "plated/1.0.0 (+https://platedapp.uk)";
+
+const FETCH_TIMEOUT_MS = 10000;
+
+// Wraps fetch with the User-Agent above and a timeout, for every OFF request
+// in this file.
+//
+// The timeout runs on its OWN AbortController rather than replacing a
+// caller-supplied `signal` (searchFood's supersession abort, tied to
+// requestSeq in AddIngredientScreen): the caller's signal aborting also
+// aborts this internal controller, so either source can end the request, but
+// only one AbortController is ever passed to fetch(). On abort, we check
+// which side caused it: if the caller's signal is aborted, this was
+// supersession, so the original AbortError is rethrown unchanged — callers
+// that swallow by `err.name === "AbortError"` keep doing so. If the caller's
+// signal is NOT aborted, this was our own timeout, so a differently-named
+// error is thrown instead, so it surfaces as a real failure rather than
+// being swallowed as a superseded request.
+async function fetchOFF(url: string, signal?: AbortSignal): Promise<Response> {
+  const internalController = new AbortController();
+  const timeoutId = setTimeout(
+    () => internalController.abort(),
+    FETCH_TIMEOUT_MS,
+  );
+  const onExternalAbort = () => internalController.abort();
+  signal?.addEventListener("abort", onExternalAbort);
+
+  try {
+    return await fetch(url, {
+      signal: internalController.signal,
+      headers: { "User-Agent": USER_AGENT },
+    });
+  } catch (err: any) {
+    if (err?.name === "AbortError" && !signal?.aborted) {
+      const timeoutErr = new Error(
+        `Open Food Facts request timed out after ${FETCH_TIMEOUT_MS}ms`,
+      );
+      timeoutErr.name = "OffTimeoutError";
+      throw timeoutErr;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", onExternalAbort);
+  }
+}
+
 // Shared field set for both the search and barcode-lookup requests.
 // The search endpoint is field-restricted, so image fields MUST be listed
 // here or they won't come back. The barcode (v0) endpoint returns the full
@@ -311,7 +361,7 @@ export async function searchFood(
     language: "en",
   });
 
-  const res = await fetch(`${BASE}/cgi/search.pl?${params}`, { signal });
+  const res = await fetchOFF(`${BASE}/cgi/search.pl?${params}`, signal);
   const data = await res.json();
 
   const products = (data.products ?? [])
@@ -327,7 +377,7 @@ export async function lookupBarcode(
   barcode: string,
 ): Promise<FoodProduct | null> {
   const params = new URLSearchParams({ fields: FIELDS });
-  const res = await fetch(`${BASE}/api/v0/product/${barcode}.json?${params}`);
+  const res = await fetchOFF(`${BASE}/api/v0/product/${barcode}.json?${params}`);
   const data = await res.json();
   if (data.status !== 1 || !data.product) return null;
   return parseProduct({ ...data.product, code: barcode });

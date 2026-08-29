@@ -61,8 +61,9 @@ import {
 } from "../theme/tokens";
 import { getEntriesForUserRange } from "../lib/social";
 import { sectionForTime, addDays, formatDayLabel } from "../lib/time";
+import { getDaySummary } from "../lib/entries";
 import { reportError } from "../lib/reportError";
-import { todayKey, isPending, isEaten } from "../store/useStore";
+import { todayKey, isPending } from "../store/useStore";
 import {
   RootStackParamList,
   MealEntry,
@@ -199,37 +200,56 @@ function seedDateRange(
   }
 }
 
-// ─── Day summary bar ─────────────────────────────────────────
+// ─── Day totals bar ────────────────────────────────────────────
 //
-// Mirrors useStore.getSplitTotalsForDate exactly: the headline figure and
-// macro chips are EATEN entries only (isEaten — a normal logged entry, or a
-// planned one the friend confirmed). Planned-but-unconfirmed entries
-// (isPending) are never folded into that sum; their calories surface only
-// as a separate note, same wording/structure as TodayScreen.tsx's own
-// "+N kcal planned, not yet eaten" line. skipped_at rows never reach this
-// component at all — getEntriesForUserRange filters them server-side.
+// Headline figure and macro chips are EATEN only — what the friend actually
+// consumed. Not a goal-progress figure: unlike TodayScreen's ring/macro
+// panel, this screen never shows a goal to measure against, so there's no
+// `.towardGoal`-shaped surface here to feed — the same reasoning that puts
+// HistoryScreen's per-day card on `.eaten` too ("what happened," not "what
+// counts toward a goal"). `.pending` surfaces separately as a note, never
+// folded into the headline — same wording/structure as TodayScreen's
+// "+N kcal planned, not yet eaten" line and HistoryScreen's pendingNote.
+//
+// Previously this ran its own isEaten/isPending split by hand, with a
+// comment claiming it mirrored useStore.getSplitTotalsForDate — dead code as
+// of D7. The split itself was already correct (isEaten/isPending are the
+// same predicates getDaySummary uses internally, so the numbers don't
+// change here), but hand-rolling it is exactly the kind of duplicate that
+// let History's total drift from Today's in the first place. This now
+// routes through the same getDaySummary(entries, date, now) every other
+// day-total surface uses, so it can't drift again even if the definition of
+// "eaten" or "pending" ever changes.
+//
+// ⚠ share_planned: `entries` here already went through
+// meal_entries_select_follower's RLS (see HISTORY_WINDOW_DAYS's comment
+// above), which hides ALL pending rows for a friend who hasn't opted into
+// profiles.share_planned (the default, never backfilled — see the Profile
+// type). For such a friend, `.pending` is ALWAYS empty here — not because
+// they have nothing planned, but because this viewer was never shown it.
+// That's the correct, privacy-respecting outcome. It does mean the absence
+// of a "planned, not yet eaten" note can't be read as "this friend has no
+// plans" — it may just mean they haven't shared them.
 
-function DaySummary({ entries }: { entries: MealEntry[] }) {
-  const eatenTotals = sumEntries(entries.filter(isEaten));
-  const plannedCalories = Math.round(
-    sumEntries(entries.filter(isPending)).calories,
-  );
+function FriendDayTotals({
+  entries,
+  date,
+}: {
+  entries: MealEntry[];
+  date: string;
+}) {
+  const { eaten, pending } = getDaySummary(entries, date, new Date());
+  const plannedCalories = Math.round(pending.calories);
 
   return (
     <View style={styles.daySummary}>
-      <Text style={styles.daySummaryCalories}>
-        {Math.round(eatenTotals.calories)}
-      </Text>
+      <Text style={styles.daySummaryCalories}>{Math.round(eaten.calories)}</Text>
       <Text style={styles.daySummaryLabel}>kcal</Text>
       <View style={styles.daySummaryMacros}>
         {[
-          {
-            label: "protein",
-            value: eatenTotals.protein,
-            color: MacroColor.protein,
-          },
-          { label: "carbs", value: eatenTotals.carbs, color: MacroColor.carbs },
-          { label: "fat", value: eatenTotals.fat, color: MacroColor.fat },
+          { label: "protein", value: eaten.protein, color: MacroColor.protein },
+          { label: "carbs", value: eaten.carbs, color: MacroColor.carbs },
+          { label: "fat", value: eaten.fat, color: MacroColor.fat },
         ].map((m) => (
           <View key={m.label} style={styles.macroChip}>
             <View style={[styles.macroChipDot, { backgroundColor: m.color }]} />
@@ -406,8 +426,10 @@ function FriendDayPage({
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
-        {/* Day summary */}
-        {entries.length > 0 && <DaySummary entries={entries} />}
+        {/* Day totals */}
+        {entries.length > 0 && (
+          <FriendDayTotals entries={entries} date={date} />
+        )}
 
         {/* Copy full day CTA */}
         {entries.length > 0 && (

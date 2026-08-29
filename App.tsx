@@ -21,7 +21,12 @@ import * as Linking from "expo-linking";
 import { StatusBar } from "expo-status-bar";
 import { useFonts } from "expo-font";
 import { AppNavigator } from "./src/navigation/AppNavigator";
-import { supabase, signIn, signUp, resendConfirmation } from "./src/lib/supabase";
+import {
+  supabase,
+  signIn,
+  signUp,
+  resendConfirmation,
+} from "./src/lib/supabase";
 import { parseRecoveryLink } from "./src/lib/passwordReset";
 import { parseConfirmLink } from "./src/lib/emailConfirmation";
 import { ForgotPasswordScreen } from "./src/screens/ForgotPasswordScreen";
@@ -38,7 +43,10 @@ import {
   FontsToLoad,
   withDefaultFont,
 } from "./src/theme/tokens";
-import { syncWhoop, REDIRECT_URI as WHOOP_CALLBACK_PREFIX } from "./src/lib/whoop";
+import {
+  syncWhoop,
+  REDIRECT_URI as WHOOP_CALLBACK_PREFIX,
+} from "./src/lib/whoop";
 import { reportError } from "./src/lib/reportError";
 
 function ErrorFallback({ onReset }: { onReset: () => void }) {
@@ -70,9 +78,7 @@ function App() {
   // them into one enum would make some of those combinations unrepresentable
   // and reintroduce exactly the race the recovery effect below exists to
   // avoid.
-  const [preAuthView, setPreAuthView] = useState<"signin" | "forgot">(
-    "signin",
-  );
+  const [preAuthView, setPreAuthView] = useState<"signin" | "forgot">("signin");
   const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatus | "none">(
     "none",
   );
@@ -222,7 +228,10 @@ function App() {
       // WebBrowser.openAuthSessionAsync's own return value, but the same
       // redirect also reaches this global Linking listener — without this
       // guard every WHOOP connect would report a false "unhandled" error.
-      if (url.startsWith("plated://") && !url.startsWith(WHOOP_CALLBACK_PREFIX)) {
+      if (
+        url.startsWith("plated://") &&
+        !url.startsWith(WHOOP_CALLBACK_PREFIX)
+      ) {
         reportError("unhandledDeepLink", new Error("unrecognized_plated_url"), {
           fingerprint: ["unhandled-deep-link"],
         });
@@ -323,9 +332,7 @@ function App() {
   } else if (preAuthView === "forgot") {
     content = <ForgotPasswordScreen onBack={() => setPreAuthView("signin")} />;
   } else {
-    content = (
-      <AuthScreen onForgotPassword={() => setPreAuthView("forgot")} />
-    );
+    content = <AuthScreen onForgotPassword={() => setPreAuthView("forgot")} />;
   }
 
   return (
@@ -344,11 +351,7 @@ function App() {
 
 export default Sentry.wrap(App);
 
-function AuthScreen({
-  onForgotPassword,
-}: {
-  onForgotPassword: () => void;
-}) {
+function AuthScreen({ onForgotPassword }: { onForgotPassword: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"signin" | "signup" | "pending">("signin");

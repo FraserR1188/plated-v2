@@ -4,14 +4,15 @@
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
+    "android": "expo run:android",
     "build:dev": "eas build -p android --profile development --local",
     "build:preview": "eas build -p android --profile preview",
     "postinstall": "patch-package",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:functions": "deno check --node-modules-dir=none --no-lock supabase/functions/*/index.ts"
+    "check:functions": "deno check --node-modules-dir=none --no-lock supabase/functions/*/index.ts",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@expo-google-fonts/hanken-grotesk": "^0.4.3",

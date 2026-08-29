@@ -45,10 +45,50 @@
 //
 // getChanges() invalidates a token after ~30 days of inactivity
 // (changesTokenExpired: true). There is no way to resume from where an
-// expired token left off — the only correct move is a BOUNDED re-pull
-// (30 days, not the full 180-day initial window — re-importing a year of
-// history for a user who simply hadn't opened the app in five weeks would
-// be its own kind of wrong) plus minting a fresh token to pick up from now.
+// expired token left off — the only correct move is a bounded re-pull, at
+// whatever depth hasHistory currently supports (currentWindowDays() below
+// — this used to be hardcoded to 30 regardless of hasHistory, which meant
+// the expiry recovery path could never reach as deep as a first sync
+// would; see the backfill section below for why that mattered), plus
+// minting a fresh token to pick up from now.
+//
+// ── STORED VALUE SHAPE, AND THE LATE-HISTORY-GRANT BACKFILL ─────────────
+//
+// The stored value is a HealthConnectTokenRecord, not a bare token string:
+// { token, baselineWindowDays, baselineAt }. baselineWindowDays records how
+// far back the pull that most recently re-anchored this token actually
+// reached — NOT just "when was this token last written" (every ordinary
+// incremental advance rewrites the token but does not change what the
+// baseline covered).
+//
+// Why this exists: hasHistory (PERMISSION_READ_HEALTH_DATA_HISTORY) used
+// to be consulted in exactly one place — choosing 180 vs 30 days when
+// there was no stored token yet, i.e. only on the very first sync ever
+// for that record type. Once a token existed, every later sync took the
+// incremental getChanges() branch, which never looked at hasHistory again
+// and had no record of what window its baseline had covered. A user who
+// granted history AFTER that first sync was then permanently capped at
+// 30 days, with no code path that ever revisited the 31-180 day gap —
+// confirmed on-device (oldest sleep session exactly 30 days back despite
+// "Access past data" being on).
+//
+// The fix: every sync compares the CURRENT hasHistory against the stored
+// baselineWindowDays. If history is granted now and the baseline was ever
+// narrower than the full window, one bounded pull covers exactly the gap
+// (31-180 days back), then the stored baseline widens so it doesn't
+// repeat. This is a comparison against live permission state, not a
+// separate "have I backfilled" flag — a flag can drift from what's
+// actually granted; recomputing "is the stored baseline still narrower
+// than what's available now" from scratch every time cannot. A user who
+// revokes history after backfilling and later re-grants it lands
+// correctly for the same reason: baselineWindowDays stays at 180 across
+// the revoke (nothing about revoking un-syncs already-ingested data), so
+// the comparison correctly finds nothing left to backfill on re-grant.
+//
+// Re-reading records the backfill may have already synced (e.g. a partial
+// prior attempt, or a shorter re-run) is safe: health-connect-ingest
+// upserts on (user_id, origin_package, provider_record_id), so replaying
+// an already-ingested record is an idempotent overwrite, not a duplicate.
 // ============================================================
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -67,9 +107,13 @@ import { reportError } from "./reportError";
 
 const INITIAL_WINDOW_DAYS = 180;
 const NO_HISTORY_WINDOW_DAYS = 30; // Health Connect's own hard floor without the history permission
-const REPULL_WINDOW_DAYS = 30; // bounded fallback after a changes-token expiry — NOT the full 180
 const PAGE_SIZE = 200;
 const DAY_MS = 86_400_000;
+
+/** The window a fresh bounded pull should use right now, given the current history grant. Used for the very first sync AND for the token-expiry re-pull — both are "start over at whatever depth is available today". */
+function currentWindowDays(hasHistory: boolean): number {
+  return hasHistory ? INITIAL_WINDOW_DAYS : NO_HISTORY_WINDOW_DAYS;
+}
 
 type SyncableDomain = "sleep" | "hrv" | "resting_hr" | "workouts";
 const SYNCABLE_DOMAINS: SyncableDomain[] = [
@@ -91,18 +135,86 @@ function tokenStorageKey(recordType: string): string {
   return `health_connect_changes_token:${recordType}`;
 }
 
-async function getStoredToken(recordType: string): Promise<string | null> {
+type HealthConnectTokenRecord = {
+  token: string;
+  /** How many days back the pull that most recently re-anchored `token` actually reached — not merely when `token` was last written. */
+  baselineWindowDays: number;
+  /** ISO timestamp of that pull, or "unknown" for a record migrated from a pre-backfill-fix installation (see parseStoredTokenRecord). */
+  baselineAt: string;
+};
+
+/**
+ * Distinguishes a genuine HealthConnectTokenRecord from a pre-migration
+ * bare token string. Returns null for anything that isn't a well-formed
+ * record — including a plain string, which JSON.parse either throws on
+ * (not valid JSON) or happily parses into something with no `.token`
+ * field (e.g. a numeric-looking string) — so the caller has one place to
+ * decide what "not a record" means, rather than duplicating the shape
+ * check at every read site.
+ */
+function parseStoredTokenRecord(raw: string): HealthConnectTokenRecord | null {
   try {
-    return await AsyncStorage.getItem(tokenStorageKey(recordType));
-  } catch (e) {
-    reportError("healthConnectSync:getStoredToken", e);
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof (parsed as { token?: unknown }).token === "string" &&
+      typeof (parsed as { baselineWindowDays?: unknown }).baselineWindowDays ===
+        "number"
+    ) {
+      const p = parsed as { token: string; baselineWindowDays: number; baselineAt?: unknown };
+      return {
+        token: p.token,
+        baselineWindowDays: p.baselineWindowDays,
+        baselineAt: typeof p.baselineAt === "string" ? p.baselineAt : "unknown",
+      };
+    }
+    return null;
+  } catch {
     return null;
   }
 }
 
-async function setStoredToken(recordType: string, token: string): Promise<void> {
+/**
+ * Reading must not throw, and a pre-migration bare string must NOT be
+ * treated as "no stored token" (null) — that would silently discard a
+ * perfectly valid existing changes-token cursor and restart this record
+ * type's sync from scratch. It's read instead as a legacy token whose
+ * baseline is deliberately ASSUMED to be the narrower 30-day window: the
+ * true baseline of a pre-migration token is unrecoverable (nothing about
+ * its era recorded what window it covered), and assuming 30 is what makes
+ * the backfill below trigger for exactly the installs this bug affects.
+ * Assuming 180 instead would silently perpetuate the bug for anyone who
+ * happened to grant history after their first-ever sync — which is the
+ * whole population this fix exists for.
+ */
+async function getStoredTokenRecord(
+  recordType: string,
+): Promise<HealthConnectTokenRecord | null> {
+  let raw: string | null;
   try {
-    await AsyncStorage.setItem(tokenStorageKey(recordType), token);
+    raw = await AsyncStorage.getItem(tokenStorageKey(recordType));
+  } catch (e) {
+    reportError("healthConnectSync:getStoredToken", e);
+    return null;
+  }
+  if (!raw) return null;
+
+  return (
+    parseStoredTokenRecord(raw) ?? {
+      token: raw,
+      baselineWindowDays: NO_HISTORY_WINDOW_DAYS,
+      baselineAt: "unknown",
+    }
+  );
+}
+
+async function setStoredTokenRecord(
+  recordType: string,
+  record: HealthConnectTokenRecord,
+): Promise<void> {
+  try {
+    await AsyncStorage.setItem(tokenStorageKey(recordType), JSON.stringify(record));
   } catch (e) {
     reportError("healthConnectSync:setStoredToken", e);
   }
@@ -161,15 +273,12 @@ async function postBatch(
   }
 }
 
-/** Pages through readRecords() for one record type over one bounded window, posting each page as it arrives. */
-async function boundedPull(
+/** Pages through readRecords() for one record type over an explicit [startTime, endTime) window, posting each page as it arrives. */
+async function pullTimeRange(
   recordType: RecordType,
-  windowDays: number,
+  startTime: string,
+  endTime: string,
 ): Promise<number> {
-  const now = Date.now();
-  const startTime = new Date(now - windowDays * DAY_MS).toISOString();
-  const endTime = new Date(now).toISOString();
-
   let pageToken: string | undefined;
   let total = 0;
 
@@ -191,10 +300,54 @@ async function boundedPull(
   return total;
 }
 
-/** Mints a fresh changes-token anchor. Discards whatever it reports — there is no meaningful prior state to diff on a first call. */
-async function bootstrapToken(recordType: RecordType): Promise<void> {
+/** The common case: a bounded pull from `windowDays` ago through now. */
+async function boundedPull(
+  recordType: RecordType,
+  windowDays: number,
+): Promise<number> {
+  const now = Date.now();
+  return pullTimeRange(
+    recordType,
+    new Date(now - windowDays * DAY_MS).toISOString(),
+    new Date(now).toISOString(),
+  );
+}
+
+/**
+ * Covers exactly the gap between what an existing, narrower baseline
+ * already reached and the full history window now available — NOT a
+ * re-pull of the whole 180 days, which boundedPull() would do and which
+ * would needlessly re-read the 0-30-day range a normal sync already keeps
+ * current via getChanges(). Re-reading anything already ingested here is
+ * harmless: health-connect-ingest upserts on
+ * (user_id, origin_package, provider_record_id), so replaying a record
+ * that's already in the database is an idempotent overwrite, not a
+ * duplicate row — see the module header for why that's what makes this
+ * safe to compute purely from the old baseline depth.
+ */
+async function backfillHistoryGap(
+  recordType: RecordType,
+  previousBaselineWindowDays: number,
+): Promise<number> {
+  const now = Date.now();
+  return pullTimeRange(
+    recordType,
+    new Date(now - INITIAL_WINDOW_DAYS * DAY_MS).toISOString(),
+    new Date(now - previousBaselineWindowDays * DAY_MS).toISOString(),
+  );
+}
+
+/** Mints a fresh changes-token anchor and records what window the pull preceding it covered. Discards the changes payload itself — there is no meaningful prior state to diff on a first call. */
+async function bootstrapToken(
+  recordType: RecordType,
+  baselineWindowDays: number,
+): Promise<void> {
   const bootstrap = await getChanges({ recordTypes: [recordType] });
-  await setStoredToken(recordType, bootstrap.nextChangesToken);
+  await setStoredTokenRecord(recordType, {
+    token: bootstrap.nextChangesToken,
+    baselineWindowDays,
+    baselineAt: new Date().toISOString(),
+  });
 }
 
 async function syncRecordType(
@@ -210,17 +363,41 @@ async function syncRecordType(
   // so this costs nothing when it's already been done.
   await ensureHealthConnectInitialized();
 
-  const storedToken = await getStoredToken(recordType);
+  const stored = await getStoredTokenRecord(recordType);
 
-  if (!storedToken) {
-    const windowDays = hasHistory ? INITIAL_WINDOW_DAYS : NO_HISTORY_WINDOW_DAYS;
+  if (!stored) {
+    const windowDays = currentWindowDays(hasHistory);
     const total = await boundedPull(recordType, windowDays);
-    await bootstrapToken(recordType);
+    await bootstrapToken(recordType, windowDays);
     return total;
   }
 
-  let currentToken = storedToken;
   let total = 0;
+  let baselineWindowDays = stored.baselineWindowDays;
+  let baselineAt = stored.baselineAt;
+
+  // The late-history-grant backfill: see the module header. Comparing
+  // against the CURRENT hasHistory every sync — not a one-shot flag — is
+  // what makes a later revoke-then-re-grant land correctly, since
+  // baselineWindowDays only ever widens and a re-grant after an earlier
+  // successful backfill finds nothing left to do.
+  if (hasHistory && baselineWindowDays < INITIAL_WINDOW_DAYS) {
+    total += await backfillHistoryGap(recordType, baselineWindowDays);
+    baselineWindowDays = INITIAL_WINDOW_DAYS;
+    baselineAt = new Date().toISOString();
+    // Persisted immediately, before the incremental loop below: if that
+    // loop fails partway through, the backfill itself already landed
+    // (postBatch succeeded for every page it read) and must not be
+    // redone on the next attempt just because this sync pass overall
+    // errored.
+    await setStoredTokenRecord(recordType, {
+      token: stored.token,
+      baselineWindowDays,
+      baselineAt,
+    });
+  }
+
+  let currentToken = stored.token;
 
   for (;;) {
     const result = await getChanges({
@@ -230,8 +407,9 @@ async function syncRecordType(
 
     if (result.changesTokenExpired) {
       await clearStoredToken(recordType);
-      total += await boundedPull(recordType, REPULL_WINDOW_DAYS);
-      await bootstrapToken(recordType);
+      const windowDays = currentWindowDays(hasHistory);
+      total += await boundedPull(recordType, windowDays);
+      await bootstrapToken(recordType, windowDays);
       return total;
     }
 
@@ -244,7 +422,14 @@ async function syncRecordType(
     }
 
     // Advanced ONLY after a successful post — see postBatch's doc comment.
-    await setStoredToken(recordType, result.nextChangesToken);
+    // baselineWindowDays/baselineAt are carried through unchanged here —
+    // an ordinary incremental advance doesn't change what window the
+    // baseline covers, only the cursor position within it.
+    await setStoredTokenRecord(recordType, {
+      token: result.nextChangesToken,
+      baselineWindowDays,
+      baselineAt,
+    });
     currentToken = result.nextChangesToken;
 
     if (!result.hasMore) break;

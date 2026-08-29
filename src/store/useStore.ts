@@ -14,7 +14,14 @@ import {
   CompositionKind,
 } from "../types";
 import { dateKey, TimeOfDay } from "../lib/time";
-import { applyEntries, draftsFromDay, draftsForTarget } from "../lib/entries";
+import {
+  applyEntries,
+  draftsFromDay,
+  draftsForTarget,
+  getDaySummary,
+  DaySummary,
+  DayBucket,
+} from "../lib/entries";
 import * as compositionApi from "../lib/compositions";
 import { reportError } from "../lib/reportError";
 
@@ -228,6 +235,20 @@ interface AppState {
   loading: boolean;
 
   /**
+   * The day TodayScreen is showing. Lives here, not TodayScreen's local
+   * `useState`, so History's per-day card can set it and switch tabs in one
+   * action: setViewedDate(date) then navigation.navigate("Today"). Not a
+   * route param — BottomTabParamList.Today stays `undefined` on purpose. A
+   * tab screen stays mounted across tab switches (it isn't remounted on
+   * navigate), so a param handed to it once would go stale the moment you
+   * left and came back without a fresh navigate call; store state doesn't
+   * have that problem. Same handoff convention as compositionApplyDraft.
+   * Defaults to todayKey(); TodayScreen's "Return to today" sets it back.
+   */
+  viewedDate: string;
+  setViewedDate: (date: string) => void;
+
+  /**
    * Incoming pending friend-request count — the Friends tab badge. Lives here
    * (not screen state) because TabBar needs it and FriendsScreen already has
    * the underlying rows. Deliberately eventually-consistent: refreshed on
@@ -415,10 +436,29 @@ interface AppState {
   saveIngredient: (product: FoodProduct) => Promise<SavedIngredientScored | null>;
   deleteIngredient: (id: string) => Promise<void>;
 
-  /** Counts toward goals: logged + confirmed + unconfirmed-planned. Excludes skipped. */
+  /**
+   * ⚠ DEAD as of D7: no in-app caller. `total` sums eaten + planned
+   * UNCONDITIONALLY, which is exactly the ambiguous, date-independent
+   * meaning that let History fold unconfirmed plans into daily intake — see
+   * getDaySummaryForDate below for the settled-day-aware replacement.
+   * Kept only as a thin wrapper so nothing importing it breaks.
+   */
   getTotalsForDate: (date: string) => DayTotals;
-  /** Same set, split into eaten vs planned, for the two-arc ring. */
+  /**
+   * ⚠ DEAD as of D7: no in-app caller (TodayScreen now reads
+   * getDaySummaryForDate). Kept as a thin wrapper over it — `total` here
+   * still means "eaten + planned, always", not the settled-day-aware
+   * `towardGoal`. Do not add new callers; use getDaySummaryForDate.
+   */
   getSplitTotalsForDate: (date: string) => SplitTotals;
+  /**
+   * THE day-total selector. Splits a day into what was actually eaten vs
+   * what's still pending, and derives `towardGoal` from whether the day has
+   * settled (see DaySummary in lib/entries.ts): a live day's goal still
+   * counts its pending plans, a settled day's doesn't. Every screen showing
+   * a day total should read from this, not recompute its own.
+   */
+  getDaySummaryForDate: (date: string) => DaySummary;
   getEntriesForMeal: (date: string, mealType: MealType) => MealEntry[];
   /** Everything visible on a day, across all four sections. What copy-a-day copies. */
   getEntriesForDate: (date: string) => MealEntry[];
@@ -446,35 +486,23 @@ export const isEaten = (e: MealEntry): boolean => !e.planned || !!e.confirmed_at
 /** Answered "no". Counts toward nothing — not goals, not correlation, not sections. */
 const isSkipped = (e: MealEntry): boolean => !!e.skipped_at;
 
-const EMPTY_TOTALS: DayTotals = {
-  calories: 0,
-  protein: 0,
-  carbs: 0,
-  fat: 0,
-  satFat: 0,
-  salt: 0,
-  fibre: 0,
-  sugar: 0,
-};
-
-function sumMacros(entries: MealEntry[]): DayTotals {
-  return entries.reduce<DayTotals>(
-    (t, e) => ({
-      calories: t.calories + e.calories,
-      protein: t.protein + e.protein,
-      carbs: t.carbs + e.carbs,
-      fat: t.fat + e.fat,
-      // Coalesce on the READ. A single NULL from an old row would otherwise turn
-      // the whole total into NaN. (On a WRITE this idiom is destructive — see
-      // the note in src/types/index.ts.)
-      satFat: t.satFat + (e.sat_fat ?? 0),
-      salt: t.salt + (e.salt ?? 0),
-      fibre: t.fibre + (e.fibre ?? 0),
-      sugar: t.sugar + (e.sugar ?? 0),
-    }),
-    { ...EMPTY_TOTALS },
-  );
-}
+/**
+ * getSplitTotalsForDate's legacy shape (DayTotals: every macro a plain
+ * `number`) predates DayBucket's null-vs-zero distinction. Coalesce on the
+ * READ here — same idiom sumMacros used, same reason: a single unknown row
+ * must not turn a straggling caller's total into NaN, and this wrapper's
+ * whole job is to be numerically identical to what sumMacros used to return.
+ */
+const bucketToTotals = (b: DayBucket): DayTotals => ({
+  calories: b.calories,
+  protein: b.protein,
+  carbs: b.carbs,
+  fat: b.fat,
+  satFat: b.satFat ?? 0,
+  salt: b.salt ?? 0,
+  fibre: b.fibre ?? 0,
+  sugar: b.sugar ?? 0,
+});
 
 const addTotals = (a: DayTotals, b: DayTotals): DayTotals => ({
   calories: a.calories + b.calories,
@@ -504,12 +532,14 @@ export const useStore = create<AppState>((set, get) => ({
   savedIngredients: [],
   goals: DEFAULT_GOALS,
   loading: false,
+  viewedDate: todayKey(),
   incomingRequestCount: 0,
   batchDraft: EMPTY_BATCH_DRAFT,
   compositionApplyDraft: null,
   manualEntryResult: null,
 
   setUserId: (id) => set({ userId: id }),
+  setViewedDate: (date) => set({ viewedDate: date }),
 
   /** Wipe every trace of the signed-in user. Called on sign-out. */
   reset: () =>
@@ -521,6 +551,7 @@ export const useStore = create<AppState>((set, get) => ({
       savedIngredients: [],
       goals: DEFAULT_GOALS,
       loading: false,
+      viewedDate: todayKey(),
       incomingRequestCount: 0,
       batchDraft: EMPTY_BATCH_DRAFT,
       compositionApplyDraft: null,
@@ -1492,14 +1523,18 @@ export const useStore = create<AppState>((set, get) => ({
     return totals.total;
   },
 
+  // Thin wrapper over getDaySummaryForDate — see the ⚠ DEAD comments on both
+  // in AppState. bucketToTotals coalesces the nullable macros back to 0,
+  // matching sumMacros' old behaviour exactly, so any straggling caller sees
+  // bit-for-bit the same DayTotals shape it always did.
   getSplitTotalsForDate: (date) => {
-    const relevant = get().entries.filter(
-      (e) => e.date === date && !isSkipped(e),
-    );
-    const eaten = sumMacros(relevant.filter(isEaten));
-    const planned = sumMacros(relevant.filter(isPending));
+    const summary = get().getDaySummaryForDate(date);
+    const eaten = bucketToTotals(summary.eaten);
+    const planned = bucketToTotals(summary.pending);
     return { eaten, planned, total: addTotals(eaten, planned) };
   },
+
+  getDaySummaryForDate: (date) => getDaySummary(get().entries, date, new Date()),
 
   getEntriesForMeal: (date, mealType) =>
     get()

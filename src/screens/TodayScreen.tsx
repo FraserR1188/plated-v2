@@ -111,6 +111,8 @@ export function TodayScreen() {
     fetchEntries,
     fetchCompositions,
     fetchWorkouts,
+    viewedDate,
+    setViewedDate,
   } = useStore();
 
   // Bundles-only view — see bundlesOnly() in lib/compositions.ts for why
@@ -120,8 +122,10 @@ export function TodayScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
 
-  // ── The selected day ────────────────────────────────────────
-  const [selected, setSelected] = useState(todayKey());
+  // ── The viewed day ──────────────────────────────────────────
+  // viewedDate/setViewedDate live in useStore, not local useState — see the
+  // doc comment on viewedDate there for why (History's per-day card sets it
+  // and switches tabs in one action).
   const [showJump, setShowJump] = useState(false);
 
   // Ticks once a minute purely so "today" gets RE-EVALUATED across a midnight
@@ -137,29 +141,38 @@ export function TodayScreen() {
 
   // ── Day pager ────────────────────────────────────────────────
   //
-  // A 3-page sliding window — [yesterday, selected, tomorrow] — rather than a
-  // library pager: nothing in this repo already depends on gesture-handler or
-  // reanimated, and adding either means a new dev-client build. Each page is
-  // its own DayPage, keyed on its date, so paging to a new day always mounts
-  // fresh (scroll position and the sticky bar both reset for free — nothing
-  // to manually rewind).
+  // A 3-page sliding window — [yesterday, viewedDate, tomorrow] — rather than
+  // a library pager: nothing in this repo already depends on gesture-handler
+  // or reanimated, and adding either means a new dev-client build. Each page
+  // is its own DayPage, keyed on its date, so paging to a new day always
+  // mounts fresh (scroll position and the sticky bar both reset for free —
+  // nothing to manually rewind). The SAME "fresh mount, no animation" path
+  // is what makes a jump from an arbitrary distance — the calendar picker,
+  // or History's per-day card setting viewedDate from another tab entirely
+  // — land directly on the right day instead of animating through every day
+  // in between: pageDates below recomputes from whatever viewedDate now is,
+  // three brand-new keyed pages mount, and the effect after it snaps the
+  // ScrollView to the centre slot with animated: false. There's no "swipe
+  // through the intervening days" step to skip, because nothing ever visits
+  // them.
   //
-  // On landing (onMomentumScrollEnd), `selected` moves to whichever page the
-  // swipe landed on, which shifts the window, and the effect below snaps the
-  // ScrollView straight back to the centre slot — same visual day, new centre
-  // index — so the next swipe always has a page in reserve on both sides.
+  // On landing (onMomentumScrollEnd), `viewedDate` moves to whichever page
+  // the swipe landed on, which shifts the window, and the effect below snaps
+  // the ScrollView straight back to the centre slot — same visual day, new
+  // centre index — so the next swipe always has a page in reserve on both
+  // sides.
   const pagerRef = useRef<ScrollView>(null);
   const [pagerWidth, setPagerWidth] = useState(0);
   const pageDates = useMemo(
-    () => [addDays(selected, -1), selected, addDays(selected, 1)],
-    [selected],
+    () => [addDays(viewedDate, -1), viewedDate, addDays(viewedDate, 1)],
+    [viewedDate],
   );
 
   useLayoutEffect(() => {
     if (pagerWidth > 0) {
       pagerRef.current?.scrollTo({ x: pagerWidth, animated: false });
     }
-  }, [selected, pagerWidth]);
+  }, [viewedDate, pagerWidth]);
 
   const handlePagerLayout = (e: any) => {
     const w = e.nativeEvent.layout.width;
@@ -170,7 +183,7 @@ export function TodayScreen() {
   // for a single swipe — once for the fling settling, once more for the
   // snap-to-page correction that follows it — both reporting the same landed
   // offset. Without a guard, the second firing runs against the closure from
-  // the FIRST firing's setSelected, advancing the day twice per swipe. This
+  // the FIRST firing's setViewedDate, advancing the day twice per swipe. This
   // ref makes only the first REAL (non-centre) firing per gesture count;
   // onScrollBeginDrag reliably precedes momentum on Android, so it's the
   // right place to reset the lock for the next swipe.
@@ -186,7 +199,7 @@ export function TodayScreen() {
     const page = Math.round(e.nativeEvent.contentOffset.x / pagerWidth);
     if (page === 1) return; // bounced back to the centre — no day change, no lock consumed
     hasHandledRef.current = true;
-    setSelected(addDays(selected, page - 1));
+    setViewedDate(addDays(viewedDate, page - 1));
   };
 
   // ── Selection mode ──────────────────────────────────────────
@@ -365,7 +378,7 @@ export function TodayScreen() {
   const onJump = (event: any, picked?: Date) => {
     setShowJump(false);
     if (event?.type === "dismissed" || !picked) return;
-    setSelected(dateKey(picked));
+    setViewedDate(dateKey(picked));
   };
 
   // Copy — shared mode: every selected entry lands on ONE chosen
@@ -390,7 +403,7 @@ export function TodayScreen() {
       return;
     }
     exitSelection();
-    setSelected(target.dayKey); // land on the day you just filled. Show, don't tell.
+    setViewedDate(target.dayKey); // land on the day you just filled. Show, don't tell.
   };
 
   // Copy — each mode: every selected entry keeps its OWN wall clock and its
@@ -410,7 +423,7 @@ export function TodayScreen() {
       return;
     }
     exitSelection();
-    setSelected(targetDayKey); // land on the day you just filled. Show, don't tell.
+    setViewedDate(targetDayKey); // land on the day you just filled. Show, don't tell.
   };
 
   // Bulk retime: one time, applied to every selected row (each keeps its own
@@ -436,7 +449,7 @@ export function TodayScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       {showJump && (
         <DateTimePicker
-          value={parseDateKey(selected)}
+          value={parseDateKey(viewedDate)}
           mode="date"
           display="default"
           onChange={onJump}
@@ -494,7 +507,7 @@ export function TodayScreen() {
                 hasBundles={bundles.length > 0}
                 onOpenBundles={() => setSheet("apply")}
                 onOpenCalendarJump={() => setShowJump(true)}
-                onReturnToToday={() => setSelected(today)}
+                onReturnToToday={() => setViewedDate(today)}
               />
             ))}
           </ScrollView>
@@ -520,7 +533,7 @@ export function TodayScreen() {
       <ApplyBundleSheet
         visible={sheet === "apply"}
         bundles={bundles}
-        dayKey={selected}
+        dayKey={viewedDate}
         onClose={() => setSheet(null)}
         onApply={(bundle, anchor) => {
           // The anchor step (time picker, inside ApplyBundleSheet) is
@@ -528,7 +541,7 @@ export function TodayScreen() {
           // review draft and hands off to BundleApplyReviewScreen for
           // per-item quantity adjustment before anything is inserted.
           setSheet(null);
-          startCompositionApplyDraft(bundle, selected, anchor);
+          startCompositionApplyDraft(bundle, viewedDate, anchor);
           navigation.navigate("BundleApplyReview");
         }}
       />
@@ -580,10 +593,10 @@ export function TodayScreen() {
 // fresh date is a fresh mount — scroll position and the sticky bar's
 // Animated.Value both start over for free, with no manual reset to write.
 //
-// `date` is the page's own day — never `selected`. Every read (totals,
+// `date` is the page's own day — never `viewedDate`. Every read (totals,
 // entries, isFuture) and every write (AddIngredient's target day) goes
 // through it, so the currently-centred page is the only one that happens to
-// match `selected`; the neighbours are honestly showing a different day.
+// match `viewedDate`; the neighbours are honestly showing a different day.
 
 function DayPage({
   date,
@@ -630,8 +643,12 @@ function DayPage({
 }) {
   const navigation =
     useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const { goals, getSplitTotalsForDate, getEntriesForDate, getWorkoutsForDate } =
-    useStore();
+  const {
+    goals,
+    getDaySummaryForDate,
+    getEntriesForDate,
+    getWorkoutsForDate,
+  } = useStore();
 
   const isPageToday = date === today;
   const isFuture = isFutureDay(date);
@@ -647,7 +664,7 @@ function DayPage({
       : { day: "numeric", month: "long" },
   );
 
-  const totals = getSplitTotalsForDate(date);
+  const summary = getDaySummaryForDate(date);
   const dayEntries = getEntriesForDate(date);
   // getWorkoutsForDate returns [] on a future day (WHOOP has no future
   // workouts), so planned days are untouched by this for free. Workouts
@@ -688,9 +705,14 @@ function DayPage({
     navigation.navigate("AddIngredient", { date, eatenAt });
   };
 
-  const kcalEaten = Math.round(totals.eaten.calories);
-  const kcalPlanned = Math.round(totals.planned.calories);
-  const kcalTotal = Math.round(totals.total.calories);
+  const kcalEaten = Math.round(summary.eaten.calories);
+  const kcalPlanned = Math.round(summary.pending.calories);
+  // What counts toward the goal — eaten + pending while the day's still
+  // live, eaten alone once it's settled (see DaySummary.towardGoal). Ring
+  // consumed/planned ARCS above still read .eaten/.pending directly: the
+  // ghost arc is informational (there's a plan, resolved or not), not a
+  // goal comparison.
+  const kcalTotal = Math.round(summary.towardGoal.calories);
   const over = kcalTotal > goals.calories;
   const kcalRemaining = Math.abs(goals.calories - kcalTotal);
 
@@ -720,14 +742,37 @@ function DayPage({
     extrapolate: "clamp",
   });
 
+  // towardGoal, not eaten+pending unconditionally — same settled-day gate as
+  // kcalTotal above. satFat/salt/fibre/sugar are nullable on the bucket
+  // (unknown vs zero — see DayBucket in lib/entries.ts); coalesced to 0 here
+  // at the display boundary, same convention the rest of the app reads
+  // nullable macros with.
   const stripSegments = [
-    { color: MacroColor.protein, fraction: frac(totals.total.protein, goals.protein) },
-    { color: MacroColor.carbs, fraction: frac(totals.total.carbs, goals.carbs) },
-    { color: MacroColor.fat, fraction: frac(totals.total.fat, goals.fat) },
-    { color: MacroColor.satFat, fraction: frac(totals.total.satFat, goals.satFat) },
-    { color: MacroColor.salt, fraction: frac(totals.total.salt, goals.salt) },
-    { color: MacroColor.fibre, fraction: frac(totals.total.fibre, goals.fibre) },
-    { color: MacroColor.sugar, fraction: frac(totals.total.sugar, goals.sugar) },
+    {
+      color: MacroColor.protein,
+      fraction: frac(summary.towardGoal.protein, goals.protein),
+    },
+    {
+      color: MacroColor.carbs,
+      fraction: frac(summary.towardGoal.carbs, goals.carbs),
+    },
+    { color: MacroColor.fat, fraction: frac(summary.towardGoal.fat, goals.fat) },
+    {
+      color: MacroColor.satFat,
+      fraction: frac(summary.towardGoal.satFat ?? 0, goals.satFat),
+    },
+    {
+      color: MacroColor.salt,
+      fraction: frac(summary.towardGoal.salt ?? 0, goals.salt),
+    },
+    {
+      color: MacroColor.fibre,
+      fraction: frac(summary.towardGoal.fibre ?? 0, goals.fibre),
+    },
+    {
+      color: MacroColor.sugar,
+      fraction: frac(summary.towardGoal.sugar ?? 0, goals.sugar),
+    },
   ];
 
   return (
@@ -869,10 +914,16 @@ function DayPage({
         </View>
 
         {/* ── Macros card ─────────────────────────────────── */}
-        {/* Macro bars measure against GOALS, and a plan counts toward a goal —
-            dropping tomorrow's protein off tomorrow's screen makes planning
-            pointless. So these use `total`, not `eaten`. The correlation is the
-            one place a plan is not evidence, and it has its own gate.
+        {/* Macro bars measure against GOALS, and a plan counts toward a goal
+            WHILE THE DAY IS STILL LIVE — dropping tomorrow's protein off
+            tomorrow's screen makes planning pointless. So these read
+            `towardGoal`, not `eaten` alone. But once the day has SETTLED,
+            towardGoal collapses to eaten only: an unconfirmed plan on a day
+            that's already over never happened, and counting it here is
+            exactly the bug that inflated History's per-day macros. See
+            DaySummary.towardGoal in lib/entries.ts. The WHOOP correlation is
+            a separate, stricter gate — a plan is never evidence there,
+            settled or not.
 
             Compact 2-column grid: same MacroBar component, its existing
             `compact` prop (previously unused). Salt is alone on the last row —
@@ -884,7 +935,7 @@ function DayPage({
               <MacroBar
                 compact
                 macro="protein"
-                consumed={Math.round(totals.total.protein)}
+                consumed={Math.round(summary.towardGoal.protein)}
                 goal={goals.protein}
               />
             </View>
@@ -892,7 +943,7 @@ function DayPage({
               <MacroBar
                 compact
                 macro="carbs"
-                consumed={Math.round(totals.total.carbs)}
+                consumed={Math.round(summary.towardGoal.carbs)}
                 goal={goals.carbs}
               />
             </View>
@@ -900,7 +951,7 @@ function DayPage({
               <MacroBar
                 compact
                 macro="fat"
-                consumed={Math.round(totals.total.fat)}
+                consumed={Math.round(summary.towardGoal.fat)}
                 goal={goals.fat}
               />
             </View>
@@ -909,7 +960,7 @@ function DayPage({
                 compact
                 macro="satFat"
                 label="Sat fat"
-                consumed={Math.round(totals.total.satFat)}
+                consumed={Math.round(summary.towardGoal.satFat ?? 0)}
                 goal={goals.satFat}
               />
             </View>
@@ -917,7 +968,7 @@ function DayPage({
               <MacroBar
                 compact
                 macro="fibre"
-                consumed={Math.round(totals.total.fibre)}
+                consumed={Math.round(summary.towardGoal.fibre ?? 0)}
                 goal={goals.fibre}
               />
             </View>
@@ -925,7 +976,7 @@ function DayPage({
               <MacroBar
                 compact
                 macro="sugar"
-                consumed={Math.round(totals.total.sugar)}
+                consumed={Math.round(summary.towardGoal.sugar ?? 0)}
                 goal={goals.sugar}
               />
             </View>
@@ -935,7 +986,7 @@ function DayPage({
               <MacroBar
                 compact
                 macro="salt"
-                consumed={roundSalt(totals.total.salt)}
+                consumed={roundSalt(summary.towardGoal.salt ?? 0)}
                 goal={goals.salt}
                 unit="g"
               />
@@ -1028,10 +1079,7 @@ function DayPage({
           hitSlop={6}
           accessibilityRole="button"
           accessibilityLabel="Add food entry"
-          style={({ pressed }) => [
-            styles.fab,
-            pressed && { opacity: 0.85 },
-          ]}
+          style={({ pressed }) => [styles.fab, pressed && { opacity: 0.85 }]}
         >
           <Text style={styles.fabText}>＋</Text>
           <Text style={styles.fabLabel}>Add</Text>
@@ -1759,7 +1807,9 @@ function CopyToSheet({
   const eachLoggedCount = eachDrafts.length - eachPlannedCount;
 
   const title =
-    entries.length === 1 ? `Copy "${entries[0].name}"` : `Copy ${entries.length} items`;
+    entries.length === 1
+      ? `Copy "${entries[0].name}"`
+      : `Copy ${entries.length} items`;
 
   const eachSummary =
     eachLoggedCount > 0 && eachPlannedCount > 0
@@ -2530,9 +2580,7 @@ function StreamFoodRow({
             C {entry.carbs.toFixed(1)}
           </Text>
           {"  "}
-          <Text style={{ color: Colors.coral }}>
-            F {entry.fat.toFixed(1)}
-          </Text>
+          <Text style={{ color: Colors.coral }}>F {entry.fat.toFixed(1)}</Text>
         </Text>
       </View>
 
@@ -2589,7 +2637,9 @@ function WorkoutCard({
   const durationLabel = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
   const distanceKm =
-    workout.distanceMeter != null ? (workout.distanceMeter / 1000).toFixed(2) : null;
+    workout.distanceMeter != null
+      ? (workout.distanceMeter / 1000).toFixed(2)
+      : null;
 
   const kcal = kjToKcal(workout.energyKilojoule);
 

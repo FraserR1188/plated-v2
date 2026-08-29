@@ -29,9 +29,16 @@
 // ============================================================
 
 import { supabase } from "./supabase";
-import { EntryDraft, MealEntry, MealType } from "../types";
+import { DayTotals, EntryDraft, MealEntry, MealType } from "../types";
 import { dateKey, localHM, sameTimeOnDay, TimeOfDay } from "./time";
 import { reportError } from "./reportError";
+// Store → lib/entries already runs the other way (applyEntries etc. are
+// imported by useStore.ts), so this closes a cycle. Safe here because both
+// bindings are only ever read inside a function body below (getDaySummary),
+// never at module-evaluation time — by the time either runs, both modules
+// have finished loading. Reused rather than reimplemented so this selector's
+// eaten/pending split can never drift from the store's own definitions.
+import { isEaten, isPending } from "../store/useStore";
 
 /**
  * Insert a set of fully-resolved drafts into the current user's log.
@@ -267,4 +274,139 @@ export function draftsForTarget(
     image_path: e.image_path ?? null,
     custom_food_id: e.custom_food_id ?? null,
   }));
+}
+
+// ============================================================
+// D7 — getDaySummary: the one place a day total should be computed
+//
+// History's average card, Today's ring, Today's macro panel and the
+// past-day view each grew their own answer to "what happened on this day",
+// and disagreed (History counted skipped/pending rows the ring didn't).
+// This is the shared selector: filter once, split once, hand back typed
+// buckets. It does not decide what any screen DISPLAYS — only what the
+// numbers ARE.
+// ============================================================
+
+/**
+ * A day's macro sum, plus how many rows contributed.
+ *
+ * Deliberately NOT `DayTotals & { count: number }`. calories/protein/carbs/
+ * fat are NOT NULL on MealEntry, so their sum is always a number — 0 for
+ * zero rows is the truth, not a guess. satFat/salt/fibre/sugar are NULLABLE
+ * per row (NULL = unknown, 0 = zero grams — see the NULLABILITY comment on
+ * MealEntry in src/types/index.ts), so a bucket where every contributing row
+ * is null for one of those must itself stay null: coalescing to 0 would
+ * silently assert "definitely zero" where the truth is "we don't know".
+ * DayTotals types all eight fields as plain `number` and can't express that.
+ */
+export type DayBucket = Omit<
+  DayTotals,
+  "satFat" | "salt" | "fibre" | "sugar"
+> & {
+  satFat: number | null;
+  salt: number | null;
+  fibre: number | null;
+  sugar: number | null;
+  count: number;
+};
+
+export interface DaySummary {
+  /** Logged entries + confirmed planned entries. What actually went in you. */
+  eaten: DayBucket;
+  /** Planned, unconfirmed, unskipped. The intention, not yet acted on. */
+  pending: DayBucket;
+  /** Whether `date`'s calendar day has already ended, relative to `now`. */
+  isSettled: boolean;
+  /**
+   * What should count toward the day's goal. A day still in progress counts
+   * its pending plans too (CLAUDE.md: "Plans count toward daily goals").
+   * Once the day is settled, an unconfirmed plan never happened — only
+   * `eaten` counts, so this equals `eaten` exactly.
+   */
+  towardGoal: DayBucket;
+}
+
+/** Sums one bucket of rows. Null-per-row macros stay null until the first
+ *  non-null contribution — a null row contributes nothing and does NOT, on
+ *  its own, turn the running total into 0. See the DayBucket comment. */
+function sumBucket(rows: MealEntry[]): DayBucket {
+  let calories = 0;
+  let protein = 0;
+  let carbs = 0;
+  let fat = 0;
+  let satFat: number | null = null;
+  let salt: number | null = null;
+  let fibre: number | null = null;
+  let sugar: number | null = null;
+
+  for (const e of rows) {
+    calories += e.calories;
+    protein += e.protein;
+    carbs += e.carbs;
+    fat += e.fat;
+    if (e.sat_fat != null) satFat = (satFat ?? 0) + e.sat_fat;
+    if (e.salt != null) salt = (salt ?? 0) + e.salt;
+    if (e.fibre != null) fibre = (fibre ?? 0) + e.fibre;
+    if (e.sugar != null) sugar = (sugar ?? 0) + e.sugar;
+  }
+
+  return {
+    calories,
+    protein,
+    carbs,
+    fat,
+    satFat,
+    salt,
+    fibre,
+    sugar,
+    count: rows.length,
+  };
+}
+
+/** Null-safe bucket addition: null + null stays null; either side non-null
+ *  sums with the other coalesced to 0 — the same "a null contributes
+ *  nothing" rule as sumBucket, applied across two already-summed buckets. */
+function addBuckets(a: DayBucket, b: DayBucket): DayBucket {
+  const addNullable = (x: number | null, y: number | null): number | null =>
+    x == null && y == null ? null : (x ?? 0) + (y ?? 0);
+
+  return {
+    calories: a.calories + b.calories,
+    protein: a.protein + b.protein,
+    carbs: a.carbs + b.carbs,
+    fat: a.fat + b.fat,
+    satFat: addNullable(a.satFat, b.satFat),
+    salt: addNullable(a.salt, b.salt),
+    fibre: addNullable(a.fibre, b.fibre),
+    sugar: addNullable(a.sugar, b.sugar),
+    count: a.count + b.count,
+  };
+}
+
+/**
+ * The shared day-total selector. `now` is an explicit parameter — never
+ * read from the clock in here — so callers control it and this stays
+ * trivially testable across a midnight boundary.
+ */
+export function getDaySummary(
+  entries: MealEntry[],
+  date: string,
+  now: Date,
+): DaySummary {
+  // Skipped rows are evidence a plan was abandoned, not activity — dropped
+  // before the split so they land in neither bucket. useStore's isSkipped
+  // isn't exported, so the equivalent check is inlined rather than adding a
+  // second, competing definition of "skipped" here.
+  const relevant = entries.filter((e) => e.date === date && !e.skipped_at);
+
+  const eaten = sumBucket(relevant.filter(isEaten));
+  const pending = sumBucket(relevant.filter(isPending));
+
+  // LOCAL calendar-day comparison — never toISOString().split('T')[0]. See
+  // dateKey()'s comment in lib/time.ts for the BST bug that rule prevents.
+  const isSettled = dateKey(now) > date;
+
+  const towardGoal = isSettled ? eaten : addBuckets(eaten, pending);
+
+  return { eaten, pending, isSettled, towardGoal };
 }

@@ -1,7 +1,10 @@
 import React, { useState } from "react";
 import { View, Text, ScrollView, StyleSheet, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useNavigation } from "@react-navigation/native";
+import { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import { useStore } from "../store/useStore";
+import { BottomTabParamList } from "../types";
 import {
   Colors,
   Spacing,
@@ -14,8 +17,15 @@ import {
 
 type Range = "7d" | "30d";
 
+// Today and History are sibling tabs under the same Tab.Navigator (see
+// AppNavigator.tsx) — navigating "to Today" is a same-navigator tab switch,
+// not a push onto RootStackParamList, so this is typed off BottomTabParamList
+// rather than the NativeStackNavigationProp every push-modal screen uses.
+type Nav = BottomTabNavigationProp<BottomTabParamList>;
+
 export function HistoryScreen() {
-  const { entries, goals } = useStore();
+  const { goals, getDaySummaryForDate, setViewedDate } = useStore();
+  const navigation = useNavigation<Nav>();
   const [range, setRange] = useState<Range>("7d");
   const days = range === "7d" ? 7 : 30;
 
@@ -26,19 +36,34 @@ export function HistoryScreen() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   });
 
+  // Headline figures (calories/macros/count/"logged") are EATEN only — what
+  // actually happened that day. Previously this filtered `entries` by date
+  // alone, with no regard for planned/skipped/confirmed, so an unconfirmed
+  // plan (or even a skipped one) inflated every number below it: the
+  // average, "N of 7 logged" and adherence % all derive from `dayData`, so
+  // that one unfiltered filter was inflating four surfaces at once. See
+  // getDaySummaryForDate in useStore.ts / getDaySummary in lib/entries.ts.
   const dayData = dayArray.map((date) => {
-    const de = entries.filter((e) => e.date === date);
+    const summary = getDaySummaryForDate(date);
+    const eaten = summary.eaten;
     return {
       date,
-      calories: de.reduce((s, e) => s + e.calories, 0),
-      protein: de.reduce((s, e) => s + e.protein, 0),
-      carbs: de.reduce((s, e) => s + e.carbs, 0),
-      fat: de.reduce((s, e) => s + e.fat, 0),
-      satFat: de.reduce((s, e) => s + (e.sat_fat ?? 0), 0),
-      salt: de.reduce((s, e) => s + (e.salt ?? 0), 0),
-      fibre: de.reduce((s, e) => s + (e.fibre ?? 0), 0),
-      sugar: de.reduce((s, e) => s + (e.sugar ?? 0), 0),
-      count: de.length,
+      calories: eaten.calories,
+      protein: eaten.protein,
+      carbs: eaten.carbs,
+      fat: eaten.fat,
+      // Nullable on the bucket (unknown vs zero — see DayBucket in
+      // lib/entries.ts); coalesced to 0 here at the display boundary, same
+      // as everywhere else in the app that reads a nullable macro.
+      satFat: eaten.satFat ?? 0,
+      salt: eaten.salt ?? 0,
+      fibre: eaten.fibre ?? 0,
+      sugar: eaten.sugar ?? 0,
+      count: eaten.count,
+      // Surfaced separately, never folded into the headline figures above —
+      // same "+X kcal planned, not yet eaten" register as TodayScreen's ring.
+      pendingCalories: summary.pending.calories,
+      pendingCount: summary.pending.count,
     };
   });
 
@@ -215,11 +240,31 @@ export function HistoryScreen() {
             goals.calories > 0 ? Math.min(day.calories / goals.calories, 1) : 0;
           const over = day.calories > goals.calories;
           const isEmpty = day.count === 0;
+          const hasPending = day.pendingCount > 0;
 
           return (
-            <View
+            <Pressable
               key={day.date}
-              style={[styles.dayRow, isEmpty && styles.dayRowEmpty]}
+              onPress={() => {
+                // Store, not a route param — BottomTabParamList.Today stays
+                // `undefined`. Today is a tab, not a pushed screen: it stays
+                // mounted across tab switches, so a param handed to it once
+                // would go stale the next time you arrived here without a
+                // fresh navigate call. Setting store state first means
+                // TodayScreen (already mounted, subscribed to the store) has
+                // re-rendered onto the right day before the tab switch even
+                // finishes — see the viewedDate doc comment in useStore.ts.
+                setViewedDate(day.date);
+                navigation.navigate("Today");
+              }}
+              // Not dimmed when there's nothing eaten but something pending —
+              // "0 eaten, 3 planned" is a day worth reading clearly, not one
+              // to fade into the empty-day styling.
+              style={({ pressed }) => [
+                styles.dayRow,
+                isEmpty && !hasPending && styles.dayRowEmpty,
+                pressed && styles.dayRowPressed,
+              ]}
             >
               <View style={styles.dayTop}>
                 <Text style={[styles.dayName, isEmpty && styles.dayNameEmpty]}>
@@ -277,7 +322,17 @@ export function HistoryScreen() {
                   </View>
                 </>
               )}
-            </View>
+
+              {hasPending && (
+                <Text style={styles.pendingNote}>
+                  <Text style={styles.pendingNoteStrong}>
+                    +{Math.round(day.pendingCalories)} kcal
+                  </Text>{" "}
+                  planned, not yet eaten · {day.pendingCount} item
+                  {day.pendingCount !== 1 ? "s" : ""}
+                </Text>
+              )}
+            </Pressable>
           );
         })}
 
@@ -525,6 +580,9 @@ const styles = StyleSheet.create(
   dayRowEmpty: {
     opacity: 0.45,
   },
+  dayRowPressed: {
+    opacity: 0.7,
+  },
   dayTop: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -584,6 +642,19 @@ const styles = StyleSheet.create(
     fontSize: Typography.xs,
     color: Colors.textMuted,
     fontWeight: Typography.medium,
+  },
+  // Same register as TodayScreen's plannedNote — a plan is never folded into
+  // the headline figures above, only ever noted alongside them.
+  pendingNote: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    fontWeight: Typography.medium,
+    marginTop: 6,
+  },
+  pendingNoteStrong: {
+    color: Colors.textSub,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.mono.bold,
   },
   }),
 );

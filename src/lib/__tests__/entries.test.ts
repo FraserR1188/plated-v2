@@ -4,6 +4,7 @@ import {
   draftsFromDay,
   draftsForTarget,
   sharedMealType,
+  getDaySummary,
 } from "../entries";
 import { supabase } from "../supabase";
 import { dateKey, localHM, willBePlanned } from "../time";
@@ -395,5 +396,207 @@ describe("each-mode pill survives a DST-switch day (draftsFromDay → willBePlan
     const plannedCount = plannedFlags.filter(Boolean).length;
     expect(plannedCount).toBe(1); // "1 logged · 1 planned"
     expect(drafts.length - plannedCount).toBe(1);
+  });
+});
+
+// ─── D7: getDaySummary — the shared day-total selector ──────────────────
+//
+// History's average card, Today's ring/macro panel and the past-day view
+// each grew their own answer to "what happened on this day" and disagreed
+// (History counted skipped and pending rows the ring didn't). This is the
+// one fixture exercising all four rows getDaySummary has to tell apart:
+// a plain eaten row, a confirmed plan (also "eaten"), a still-pending plan,
+// and a skipped plan (must vanish from every bucket).
+describe("getDaySummary", () => {
+  const DATE = "2026-07-20";
+  // Local-component constructors, not ISO strings with a Z — dateKey() reads
+  // local Y/M/D, and an ISO UTC string can land on a different local day
+  // depending on the test runner's timezone. See lib/time.ts's dateKey comment.
+  const LIVE_NOW = new Date(2026, 6, 20, 12, 0, 0); // same local day as DATE
+  const SETTLED_NOW = new Date(2026, 6, 21, 9, 0, 0); // the day after
+
+  const plainEaten = makeEntry({
+    id: "eaten-1",
+    date: DATE,
+    planned: false,
+    confirmed_at: null,
+    skipped_at: null,
+    calories: 400,
+    protein: 20,
+    carbs: 40,
+    fat: 10,
+    sat_fat: 3,
+    salt: 1,
+    fibre: 5,
+    sugar: 8,
+  });
+
+  const confirmedPlan = makeEntry({
+    id: "eaten-2-confirmed",
+    date: DATE,
+    planned: true,
+    confirmed_at: "2026-07-20T09:00:00.000Z",
+    skipped_at: null,
+    calories: 300,
+    protein: 15,
+    carbs: 30,
+    fat: 8,
+    sat_fat: 2,
+    salt: 0.5,
+    fibre: 4,
+    sugar: 6,
+  });
+
+  const pendingPlan = makeEntry({
+    id: "pending-1",
+    date: DATE,
+    planned: true,
+    confirmed_at: null,
+    skipped_at: null,
+    calories: 500,
+    protein: 25,
+    carbs: 50,
+    fat: 12,
+    sat_fat: 4,
+    salt: 2,
+    fibre: 6,
+    sugar: 10,
+  });
+
+  const skippedPlan = makeEntry({
+    id: "skipped-1",
+    date: DATE,
+    planned: true,
+    confirmed_at: null,
+    skipped_at: "2026-07-19T20:00:00.000Z",
+    // Deliberately absurd values — if this row leaks into any bucket, the
+    // totals below are wrong by a mile, not by a rounding error.
+    calories: 999,
+    protein: 99,
+    carbs: 99,
+    fat: 99,
+    sat_fat: 99,
+    salt: 99,
+    fibre: 99,
+    sugar: 99,
+  });
+
+  const fixture = [plainEaten, confirmedPlan, pendingPlan, skippedPlan];
+
+  const expectedEaten = {
+    calories: 700,
+    protein: 35,
+    carbs: 70,
+    fat: 18,
+    satFat: 5,
+    salt: 1.5,
+    fibre: 9,
+    sugar: 14,
+    count: 2,
+  };
+
+  const expectedPending = {
+    calories: 500,
+    protein: 25,
+    carbs: 50,
+    fat: 12,
+    satFat: 4,
+    salt: 2,
+    fibre: 6,
+    sugar: 10,
+    count: 1,
+  };
+
+  describe("live day (now is the same calendar day as date)", () => {
+    it("splits eaten (plain + confirmed) from pending, dropping the skipped row from both", () => {
+      const summary = getDaySummary(fixture, DATE, LIVE_NOW);
+      expect(summary.eaten).toEqual(expectedEaten);
+      expect(summary.pending).toEqual(expectedPending);
+    });
+
+    it("is not settled", () => {
+      expect(getDaySummary(fixture, DATE, LIVE_NOW).isSettled).toBe(false);
+    });
+
+    it("towardGoal counts eaten + pending", () => {
+      const summary = getDaySummary(fixture, DATE, LIVE_NOW);
+      expect(summary.towardGoal).toEqual({
+        calories: 1200,
+        protein: 60,
+        carbs: 120,
+        fat: 30,
+        satFat: 9,
+        salt: 3.5,
+        fibre: 15,
+        sugar: 24,
+        count: 3,
+      });
+    });
+  });
+
+  describe("settled day (now is the day after date)", () => {
+    it("splits the same eaten/pending buckets as the live day", () => {
+      const summary = getDaySummary(fixture, DATE, SETTLED_NOW);
+      expect(summary.eaten).toEqual(expectedEaten);
+      expect(summary.pending).toEqual(expectedPending);
+    });
+
+    it("is settled", () => {
+      expect(getDaySummary(fixture, DATE, SETTLED_NOW).isSettled).toBe(true);
+    });
+
+    it("towardGoal equals eaten exactly — an unconfirmed plan on an ended day never happened", () => {
+      const summary = getDaySummary(fixture, DATE, SETTLED_NOW);
+      expect(summary.towardGoal).toEqual(summary.eaten);
+    });
+  });
+
+  it("pending's count and macros are identical whether the day is live or settled", () => {
+    const live = getDaySummary(fixture, DATE, LIVE_NOW);
+    const settled = getDaySummary(fixture, DATE, SETTLED_NOW);
+    expect(settled.pending).toEqual(live.pending);
+  });
+
+  it("a date whose only rows are pending returns eaten.count === 0", () => {
+    const onlyPending = makeEntry({
+      id: "pending-only",
+      date: "2026-07-25",
+      planned: true,
+      confirmed_at: null,
+      skipped_at: null,
+    });
+    const summary = getDaySummary([onlyPending], "2026-07-25", LIVE_NOW);
+    expect(summary.eaten.count).toBe(0);
+    // Zero rows contributed to any nullable macro — null, not a false "0".
+    expect(summary.eaten.satFat).toBeNull();
+    expect(summary.eaten.salt).toBeNull();
+    expect(summary.eaten.fibre).toBeNull();
+    expect(summary.eaten.sugar).toBeNull();
+  });
+
+  // The rule stated alongside DayBucket: a null macro contributes nothing to
+  // a sum, but a bucket where EVERY contributing row is null for a macro must
+  // itself report null, not 0 — 0 would assert "we know it's zero" when the
+  // truth is "we don't know". Covered separately from the main fixture above
+  // since every row there has real macro values.
+  describe("null-vs-zero macro aggregation", () => {
+    it("stays null when every row in the bucket has a null value for that macro", () => {
+      const a = makeEntry({ id: "a", date: DATE, sat_fat: null, salt: null, fibre: null, sugar: null });
+      const b = makeEntry({ id: "b", date: DATE, sat_fat: null, salt: null, fibre: null, sugar: null });
+      const summary = getDaySummary([a, b], DATE, LIVE_NOW);
+      expect(summary.eaten.satFat).toBeNull();
+      expect(summary.eaten.salt).toBeNull();
+      expect(summary.eaten.fibre).toBeNull();
+      expect(summary.eaten.sugar).toBeNull();
+      // calories/protein/carbs/fat are NOT NULL on MealEntry — always summed.
+      expect(summary.eaten.calories).toBe(a.calories + b.calories);
+    });
+
+    it("a null row contributes nothing — does not zero out a bucket with a real value", () => {
+      const known = makeEntry({ id: "known", date: DATE, salt: 2.5 });
+      const unknown = makeEntry({ id: "unknown", date: DATE, salt: null });
+      const summary = getDaySummary([known, unknown], DATE, LIVE_NOW);
+      expect(summary.eaten.salt).toBe(2.5);
+    });
   });
 });

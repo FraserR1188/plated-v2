@@ -49,6 +49,7 @@ import {
   type HealthConnectAvailability,
   type HealthConnectGrantState,
 } from "../lib/healthConnect";
+import { syncHealthConnect } from "../lib/healthConnectSync";
 import { reportError } from "../lib/reportError";
 
 import { supabase } from "../lib/supabase";
@@ -171,6 +172,8 @@ export function SettingsScreen() {
   // "we asked, and the result came back fully empty."
   const [hcHasRequested, setHcHasRequested] = useState(false);
   const [hcError, setHcError] = useState<string | null>(null);
+  const [hcSyncing, setHcSyncing] = useState(false);
+  const [hcSyncNote, setHcSyncNote] = useState<string | null>(null);
 
   // Load existing profile on mount
   useEffect(() => {
@@ -378,6 +381,27 @@ export function SettingsScreen() {
 
   const handleOpenHealthConnectSettings = () => {
     openHealthConnectSettingsScreen();
+  };
+
+  const handleSyncHealthConnect = async () => {
+    setHcSyncing(true);
+    setHcError(null);
+    setHcSyncNote(null);
+
+    const result = await syncHealthConnect();
+
+    if (!result.ok) {
+      const firstError = Object.values(result.errors)[0];
+      setHcError(firstError ?? "Couldn't sync Health Connect.");
+    }
+
+    const total = Object.values(result.counts).reduce(
+      (a, b) => a + (b ?? 0),
+      0,
+    );
+    setHcSyncNote(total > 0 ? `Synced ${total} records.` : "Nothing new.");
+
+    setHcSyncing(false);
   };
 
   // ── Goal handlers ─────────────────────────────────────────
@@ -815,13 +839,33 @@ export function SettingsScreen() {
                   styles.whoopSyncBtn,
                   pressed && { opacity: 0.85 },
                 ]}
-                onPress={handleConnectHealthConnect}
-                disabled={hcBusy}
+                onPress={handleSyncHealthConnect}
+                disabled={hcSyncing || hcBusy}
               >
-                {hcBusy ? (
+                {hcSyncing ? (
                   <ActivityIndicator color={Colors.green} size="small" />
                 ) : (
-                  <Text style={styles.whoopSyncBtnText}>Update access</Text>
+                  <Text style={styles.whoopSyncBtnText}>Sync now</Text>
+                )}
+              </Pressable>
+
+              {hcSyncNote && (
+                <Text style={styles.whoopNoteText}>{hcSyncNote}</Text>
+              )}
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.hcUpdateBtn,
+                  { marginTop: Spacing.sm },
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleConnectHealthConnect}
+                disabled={hcBusy || hcSyncing}
+              >
+                {hcBusy ? (
+                  <ActivityIndicator color={Colors.textSub} size="small" />
+                ) : (
+                  <Text style={styles.hcUpdateBtnText}>Update access</Text>
                 )}
               </Pressable>
             </View>
@@ -1386,6 +1430,19 @@ const styles = StyleSheet.create(
   hcGrantStatus: {
     fontSize: Typography.xs,
     fontWeight: Typography.semibold,
+  },
+  hcUpdateBtn: {
+    backgroundColor: Colors.surface2,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingVertical: 13,
+    alignItems: "center",
+  },
+  hcUpdateBtnText: {
+    fontSize: Typography.base,
+    fontWeight: Typography.bold,
+    color: Colors.textSub,
   },
 
   signOutBtn: {

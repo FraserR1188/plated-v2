@@ -139,7 +139,8 @@ export async function openHealthConnectPlayStore(): Promise<void> {
 
 export type HealthConnectDomain = "sleep" | "hrv" | "resting_hr" | "workouts";
 
-const DOMAIN_RECORD_TYPE: Record<HealthConnectDomain, string> = {
+/** Exported so healthConnectSync.ts uses the exact same mapping — one source of truth. */
+export const DOMAIN_RECORD_TYPE: Record<HealthConnectDomain, string> = {
   sleep: "SleepSession",
   hrv: "HeartRateVariabilityRmssd",
   resting_hr: "RestingHeartRate",

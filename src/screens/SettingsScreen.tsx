@@ -381,6 +381,15 @@ export function SettingsScreen() {
   // ── Health Connect handlers ───────────────────────────────
 
   const handleConnectHealthConnect = async () => {
+    // A successful run of this handler is, by design, otherwise silent —
+    // reportError only fires on failure. That made a fast, correct no-op
+    // (e.g. requestPermission() resolving instantly because everything is
+    // already granted, which Android does without showing any UI) visually
+    // indistinguishable from the button never having been wired up at all.
+    // This line exists purely so "was this ever invoked" stops being a
+    // guessing game the next time that happens.
+    if (__DEV__) console.log("healthConnect: Connect/Update access tapped");
+
     setHcBusy(true);
     setHcError(null);
     setHcNativeError(null);
@@ -408,22 +417,61 @@ export function SettingsScreen() {
   };
 
   const handleSyncHealthConnect = async () => {
+    // See handleConnectHealthConnect's comment — same silent-success gap.
+    if (__DEV__) console.log("healthConnect: Sync now tapped");
+
     setHcSyncing(true);
     setHcError(null);
     setHcSyncNote(null);
 
     const result = await syncHealthConnect();
 
-    if (!result.ok) {
+    // Four genuinely different outcomes, each needing its own text —
+    // conflating any of these is exactly the bug being fixed here (a
+    // sync where every granted domain failed was previously ALSO shown
+    // as "Nothing new.", alongside the separate error text, as if it had
+    // simply found nothing to do).
+    const succeededCount = Object.keys(result.counts).length;
+    const failedCount = Object.keys(result.errors).length;
+
+    if (result.ok) {
+      // Ran; every attempted domain succeeded (there may have been zero
+      // attempted at all only if nothing is granted, which this button
+      // isn't reachable from — see the render branch this lives in).
+      const total = Object.values(result.counts).reduce(
+        (a, b) => a + (b ?? 0),
+        0,
+      );
+      setHcSyncNote(total > 0 ? `Synced ${total} records.` : "Nothing new.");
+    } else if (failedCount === 0) {
+      // Did NOT run at all — the grant-state read itself failed before any
+      // domain was even attempted (getHealthConnectGrantState() already
+      // reported why). "Nothing new." would claim a check that never
+      // happened.
+      setHcError("Couldn't check Health Connect access. Try again.");
+      setHcSyncNote(null);
+    } else if (succeededCount === 0) {
+      // Ran, but every attempted domain failed. Not "nothing new" — nothing
+      // was confirmed either way.
       const firstError = Object.values(result.errors)[0];
       setHcError(firstError ?? "Couldn't sync Health Connect.");
+      setHcSyncNote(null);
+    } else {
+      // Partial: some domains synced, at least one didn't. Say both, rather
+      // than letting a genuine record count mask a real failure sitting
+      // right next to it.
+      const total = Object.values(result.counts).reduce(
+        (a, b) => a + (b ?? 0),
+        0,
+      );
+      const firstError = Object.values(result.errors)[0];
+      setHcError(firstError ?? "Some Health Connect data couldn't sync.");
+      setHcSyncNote(
+        total > 0
+          ? `Synced ${total} records — some data couldn't sync.`
+          : "Some Health Connect data couldn't sync.",
+      );
     }
-
-    const total = Object.values(result.counts).reduce(
-      (a, b) => a + (b ?? 0),
-      0,
-    );
-    setHcSyncNote(total > 0 ? `Synced ${total} records.` : "Nothing new.");
 
     setHcSyncing(false);
   };

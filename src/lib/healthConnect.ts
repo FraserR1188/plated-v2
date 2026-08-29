@@ -70,10 +70,16 @@ export async function getHealthConnectAvailability(): Promise<HealthConnectAvail
       default:
         return { status: "unsupported" };
     }
-  } catch {
+  } catch (e) {
     // getSdkStatus() is not documented to reject, but "never throws" is
     // the contract of this function regardless of what the native module
-    // actually does today.
+    // actually does today. That contract is about the RETURN VALUE, not
+    // about silence: a genuine native failure here was previously
+    // rendered as the confident, permanent "this device can't use Health
+    // Connect" message with no trace anywhere that anything went wrong —
+    // the same error-laundering class fixed in 5790543 for the grant-state
+    // functions, just missed here.
+    reportError("healthConnect:getAvailability", e);
     return { status: "unsupported" };
   }
 }

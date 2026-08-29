@@ -46,6 +46,11 @@ vi.mock("expo-linking", () => ({
   openURL: vi.fn(),
 }));
 
+// Spied on directly (rather than relying on vitest.setup.ts's Sentry mock
+// underneath it) so tests can assert a native failure was actually
+// reported, not just that the function resolved to some fallback value.
+vi.mock("../reportError", () => ({ reportError: vi.fn() }));
+
 import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import {
@@ -69,6 +74,7 @@ import {
   type HealthConnectGrantState,
   type HealthConnectGrantResult,
 } from "../healthConnect";
+import { reportError } from "../reportError";
 
 const FULL_GRANT = [
   { accessType: "read", recordType: "SleepSession" },
@@ -137,6 +143,17 @@ describe("getHealthConnectAvailability", () => {
     await expect(getHealthConnectAvailability()).resolves.toEqual({
       status: "unsupported",
     });
+  });
+
+  it("reports a getSdkStatus() rejection via reportError — a genuine native failure must not be silent just because the fallback value happens to look like a normal, permanent state", async () => {
+    vi.mocked(getSdkStatus).mockRejectedValue(new Error("native boom"));
+
+    await getHealthConnectAvailability();
+
+    expect(reportError).toHaveBeenCalledWith(
+      "healthConnect:getAvailability",
+      expect.any(Error),
+    );
   });
 });
 

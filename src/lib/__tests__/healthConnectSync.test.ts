@@ -110,6 +110,78 @@ describe("syncHealthConnect — grant-state result handling", () => {
   });
 });
 
+describe("syncHealthConnect — distinguishing outcomes (the 'Nothing new.' masking bug)", () => {
+  // SettingsScreen.handleSyncHealthConnect previously rendered "Nothing
+  // new." any time result.counts summed to zero — which is ALSO true when
+  // every domain failed (counts stays {}), so a total outage and a
+  // genuinely empty, successful sync were shown identically, with the
+  // real failure only visible as separate, easy-to-miss error text. These
+  // three shapes are what SettingsScreen now branches on to tell the
+  // difference; they must actually be different.
+
+  it("nothing to fetch: ok:true, with a REAL zero recorded per attempted domain — not the same shape as a failure", async () => {
+    vi.mocked(getHealthConnectGrantState).mockResolvedValue({
+      status: "ok",
+      grants: { ...EMPTY_GRANTS, sleep: true, hrv: true },
+    });
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    vi.mocked(readRecords).mockResolvedValue({
+      records: [],
+      pageToken: undefined,
+    } as never);
+    vi.mocked(getChanges).mockResolvedValue({
+      upsertionChanges: [],
+      deletionChanges: [],
+      nextChangesToken: "tok1",
+      hasMore: false,
+      changesTokenExpired: false,
+    } as never);
+
+    const result = await syncHealthConnect();
+
+    expect(result).toEqual({
+      ok: true,
+      counts: { sleep: 0, hrv: 0 },
+      errors: {},
+    });
+  });
+
+  it("every attempted domain failed: ok:false, counts stays EMPTY (nothing succeeded) — must not collapse to the same shape as 'nothing to fetch'", async () => {
+    vi.mocked(getHealthConnectGrantState).mockResolvedValue({
+      status: "ok",
+      grants: { ...EMPTY_GRANTS, sleep: true, hrv: true },
+    });
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    vi.mocked(readRecords).mockRejectedValue(new Error("Health Connect read failed"));
+
+    const result = await syncHealthConnect();
+
+    expect(result.ok).toBe(false);
+    expect(result.counts).toEqual({}); // nothing succeeded — distinct from { sleep: 0, hrv: 0 } above
+    expect(Object.keys(result.errors).sort()).toEqual(["hrv", "sleep"]);
+  });
+
+  it("partial failure: one domain succeeds, one fails — both counts AND errors are non-empty, distinguishable from either pure outcome", async () => {
+    vi.mocked(getHealthConnectGrantState).mockResolvedValue({
+      status: "ok",
+      grants: { ...EMPTY_GRANTS, sleep: true, hrv: true },
+    });
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+    vi.mocked(readRecords).mockImplementation(async (recordType: unknown) => {
+      if (recordType === "SleepSession") {
+        return { records: [], pageToken: undefined } as never;
+      }
+      throw new Error("hrv read failed");
+    });
+
+    const result = await syncHealthConnect();
+
+    expect(result.ok).toBe(false);
+    expect(result.counts).toEqual({ sleep: 0 });
+    expect(Object.keys(result.errors)).toEqual(["hrv"]);
+  });
+});
+
 describe("syncHealthConnect — client initialisation", () => {
   it("initializes the client before reading any granted domain's records — the same precondition getGrantedPermissions() has, which this module never satisfied before this fix", async () => {
     vi.mocked(getHealthConnectGrantState).mockResolvedValue({

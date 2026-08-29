@@ -39,6 +39,16 @@ import {
   classifySyncStatus,
   type WhoopConnection,
 } from "../lib/whoop";
+import {
+  getHealthConnectAvailability,
+  getHealthConnectGrantState,
+  requestHealthConnectAccess,
+  openHealthConnectSettingsScreen,
+  openHealthConnectPlayStore,
+  isHealthConnectFullyDenied,
+  type HealthConnectAvailability,
+  type HealthConnectGrantState,
+} from "../lib/healthConnect";
 import { reportError } from "../lib/reportError";
 
 import { supabase } from "../lib/supabase";
@@ -147,6 +157,21 @@ export function SettingsScreen() {
   const [whoopSyncing, setWhoopSyncing] = useState(false); // ← ADD
   const [syncNote, setSyncNote] = useState<string | null>(null); // ← ADD
 
+  // ── Health Connect state ─────────────────────────────────────
+  const [hcAvailability, setHcAvailability] =
+    useState<HealthConnectAvailability | null>(null);
+  const [hcGrants, setHcGrants] = useState<HealthConnectGrantState | null>(
+    null,
+  );
+  const [hcLoading, setHcLoading] = useState(true);
+  const [hcBusy, setHcBusy] = useState(false);
+  // Tracks whether THIS screen instance has already asked once. Android
+  // permanently suppresses the dialog after two denials, and there is no
+  // API to ask "has the wall gone up yet" — the only observable signal is
+  // "we asked, and the result came back fully empty."
+  const [hcHasRequested, setHcHasRequested] = useState(false);
+  const [hcError, setHcError] = useState<string | null>(null);
+
   // Load existing profile on mount
   useEffect(() => {
     getMyProfile()
@@ -176,6 +201,25 @@ export function SettingsScreen() {
   useEffect(() => {
     refreshWhoop();
   }, [refreshWhoop]);
+
+  // Load Health Connect availability + grant state on mount. Grant state is
+  // read fresh from getGrantedPermissions() every time, never cached — a
+  // user can revoke from Android's own Health Connect settings app at any
+  // point, and this screen has no other way to notice that happened.
+  const refreshHealthConnect = useCallback(async () => {
+    const availability = await getHealthConnectAvailability();
+    setHcAvailability(availability);
+
+    if (availability.status === "available") {
+      const grants = await getHealthConnectGrantState();
+      setHcGrants(grants);
+    }
+    setHcLoading(false);
+  }, []);
+
+  useEffect(() => {
+    refreshHealthConnect();
+  }, [refreshHealthConnect]);
 
   const handleUsernameChange = (text: string) => {
     setUsernameInput(text.toLowerCase().replace(/[^a-z0-9_]/g, ""));
@@ -313,6 +357,27 @@ export function SettingsScreen() {
     // and the card needs to switch to "Reconnect" without a restart.
     await refreshWhoop();
     setWhoopSyncing(false);
+  };
+
+  // ── Health Connect handlers ───────────────────────────────
+
+  const handleConnectHealthConnect = async () => {
+    setHcBusy(true);
+    setHcError(null);
+
+    const grants = await requestHealthConnectAccess();
+
+    setHcGrants(grants);
+    setHcHasRequested(true);
+    setHcBusy(false);
+  };
+
+  const handleInstallHealthConnect = async () => {
+    await openHealthConnectPlayStore();
+  };
+
+  const handleOpenHealthConnectSettings = () => {
+    openHealthConnectSettingsScreen();
   };
 
   // ── Goal handlers ─────────────────────────────────────────
@@ -686,6 +751,133 @@ export function SettingsScreen() {
           )}
         </View>
 
+        {/* ── Health Connect ─────────────────────────── */}
+        <SectionLabel title="Health Connect" />
+        <View style={styles.card}>
+          {hcLoading ? (
+            <ActivityIndicator
+              color={Colors.green}
+              style={{ paddingVertical: Spacing.md }}
+            />
+          ) : hcAvailability?.status === "unsupported" ? (
+            /* Not actionable — nothing to install, nothing to ask for. */
+            <Text style={styles.whoopBody}>
+              This device can't use Health Connect — the version of Android
+              on it is too old, and there's no update that adds support.
+            </Text>
+          ) : hcAvailability?.status === "not_installed" ? (
+            /* Actionable — Health Connect is a separate Play Store app on
+               this OS version, not something the device already has. */
+            <View>
+              <Text style={styles.whoopBody}>
+                Health Connect isn't installed yet. Once it is, plated can
+                see how your meals line up with sleep, heart rate
+                variability, resting heart rate and workouts collected by
+                apps like Fitbit or Garmin.
+              </Text>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.whoopConnectBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleInstallHealthConnect}
+              >
+                <Text style={styles.whoopConnectBtnText}>
+                  Install Health Connect
+                </Text>
+              </Pressable>
+            </View>
+          ) : hcGrants && !isHealthConnectFullyDenied(hcGrants) ? (
+            /* At least one domain granted. Shown per-type, honestly — a
+               user who grants sleep but denies HRV sees exactly that, not
+               a single all-or-nothing "connected" flag. */
+            <View>
+              <View style={styles.hcGrantList}>
+                <HcGrantRow label="Sleep" granted={hcGrants.sleep} />
+                <HcGrantRow
+                  label="Heart rate variability"
+                  granted={hcGrants.hrv}
+                />
+                <HcGrantRow
+                  label="Resting heart rate"
+                  granted={hcGrants.resting_hr}
+                />
+                <HcGrantRow label="Workouts" granted={hcGrants.workouts} />
+              </View>
+
+              <Text style={[styles.whoopBody, { marginTop: Spacing.md }]}>
+                plated reads what you've granted from Health Connect so it
+                can sit alongside what you've eaten.
+              </Text>
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.whoopSyncBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleConnectHealthConnect}
+                disabled={hcBusy}
+              >
+                {hcBusy ? (
+                  <ActivityIndicator color={Colors.green} size="small" />
+                ) : (
+                  <Text style={styles.whoopSyncBtnText}>Update access</Text>
+                )}
+              </Pressable>
+            </View>
+          ) : hcHasRequested ? (
+            /* Fully denied AFTER at least one request this session — the
+               two-denials wall. Re-prompting from here would either show
+               nothing or silently re-deny; Health Connect's own settings
+               is the only way forward. */
+            <View>
+              <Text style={styles.whoopBody}>
+                Health Connect access is off. Android won't show the
+                request again from inside plated — turn it on from Health
+                Connect's own settings instead.
+              </Text>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.whoopConnectBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleOpenHealthConnectSettings}
+              >
+                <Text style={styles.whoopConnectBtnText}>
+                  Open Health Connect settings
+                </Text>
+              </Pressable>
+            </View>
+          ) : (
+            /* Never asked yet. */
+            <View>
+              <Text style={styles.whoopBody}>
+                Connect Health Connect and see how your meals line up with
+                sleep, heart rate variability, resting heart rate and
+                workouts collected by apps like Fitbit or Garmin.
+              </Text>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.whoopConnectBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleConnectHealthConnect}
+                disabled={hcBusy}
+              >
+                {hcBusy ? (
+                  <ActivityIndicator color={Colors.bg} />
+                ) : (
+                  <Text style={styles.whoopConnectBtnText}>
+                    Connect Health Connect
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+          )}
+
+          {hcError && <Text style={styles.whoopErrorText}>{hcError}</Text>}
+        </View>
+
         {/* ── Daily goals ────────────────────────────── */}
         <SectionLabel title="Daily goals" />
         <View style={styles.card}>
@@ -855,6 +1047,23 @@ export function SettingsScreen() {
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+// ─── Health Connect grant row ─────────────────────────────────────────────────
+// Colors.amber is reserved for the carbs macro elsewhere in the app —
+// Colors.warning is the correct semantic token for "not granted" here.
+
+function HcGrantRow({ label, granted }: { label: string; granted: boolean }) {
+  const color = granted ? Colors.green : Colors.warning;
+  return (
+    <View style={styles.hcGrantRow}>
+      <View style={[styles.whoopDot, { backgroundColor: color }]} />
+      <Text style={styles.hcGrantLabel}>{label}</Text>
+      <Text style={[styles.hcGrantStatus, { color }]}>
+        {granted ? "Granted" : "Not granted"}
+      </Text>
+    </View>
   );
 }
 
@@ -1159,6 +1368,26 @@ const styles = StyleSheet.create(
     marginTop: Spacing.sm,
     textAlign: "center",
   },
+  // ── Health Connect ─────────────────────────────────────────
+  hcGrantList: {
+    gap: Spacing.sm,
+  },
+  hcGrantRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+  },
+  hcGrantLabel: {
+    flex: 1,
+    fontSize: Typography.sm,
+    fontWeight: Typography.medium,
+    color: Colors.text,
+  },
+  hcGrantStatus: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.semibold,
+  },
+
   signOutBtn: {
     backgroundColor: Colors.surface2,
     borderRadius: Radius.pill,

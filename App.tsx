@@ -47,6 +47,7 @@ import {
   syncWhoop,
   REDIRECT_URI as WHOOP_CALLBACK_PREFIX,
 } from "./src/lib/whoop";
+import { syncHealthConnect } from "./src/lib/healthConnectSync";
 import { reportError } from "./src/lib/reportError";
 
 function ErrorFallback({ onReset }: { onReset: () => void }) {
@@ -294,12 +295,22 @@ function App() {
         fingerprint: ["whoop-background-sync"],
       }),
     );
+    syncHealthConnect().catch((e) =>
+      reportError("healthConnectSync:foreground", e, {
+        fingerprint: ["health-connect-foreground-sync"],
+      }),
+    );
 
     const sub = AppState.addEventListener("change", (next) => {
       if (next === "active") {
         syncWhoop().catch((e) =>
           reportError("whoopBackgroundSync", e, {
             fingerprint: ["whoop-background-sync"],
+          }),
+        );
+        syncHealthConnect().catch((e) =>
+          reportError("healthConnectSync:foreground", e, {
+            fingerprint: ["health-connect-foreground-sync"],
           }),
         );
       }

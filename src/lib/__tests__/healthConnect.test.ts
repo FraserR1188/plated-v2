@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // vitest.setup.ts's expo-linking/expo-web-browser mocks for whoop.ts.
 vi.mock("react-native-health-connect", () => ({
   getSdkStatus: vi.fn(),
+  initialize: vi.fn().mockResolvedValue(true),
   requestPermission: vi.fn(),
   getGrantedPermissions: vi.fn(),
   openHealthConnectSettings: vi.fn(),
@@ -49,6 +50,7 @@ import { Platform } from "react-native";
 import * as Linking from "expo-linking";
 import {
   getSdkStatus,
+  initialize,
   SdkAvailabilityStatus,
   requestPermission,
   getGrantedPermissions,
@@ -59,11 +61,13 @@ import {
   getHealthConnectPlayStoreUrl,
   getHealthConnectPlayStoreWebUrl,
   openHealthConnectPlayStore,
+  ensureHealthConnectInitialized,
   getHealthConnectGrantState,
   requestHealthConnectAccess,
   isHealthConnectFullyDenied,
   openHealthConnectSettingsScreen,
   type HealthConnectGrantState,
+  type HealthConnectGrantResult,
 } from "../healthConnect";
 
 const FULL_GRANT = [
@@ -73,6 +77,14 @@ const FULL_GRANT = [
   { accessType: "read", recordType: "ExerciseSession" },
   { accessType: "read", recordType: "ReadHealthDataHistory" },
 ];
+
+const EMPTY_GRANTS_OBJECT: HealthConnectGrantState = {
+  sleep: false,
+  hrv: false,
+  resting_hr: false,
+  workouts: false,
+  history: false,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -176,17 +188,62 @@ describe("openHealthConnectPlayStore", () => {
   });
 });
 
+describe("ensureHealthConnectInitialized", () => {
+  it("calls the native initialize() on Android", async () => {
+    await ensureHealthConnectInitialized();
+    expect(initialize).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing on iOS — no native call at all", async () => {
+    Platform.OS = "ios";
+
+    await ensureHealthConnectInitialized();
+    expect(initialize).not.toHaveBeenCalled();
+  });
+
+  it("propagates a rejection — callers decide how to handle init failure, this does not swallow it", async () => {
+    vi.mocked(initialize).mockRejectedValue(
+      Object.assign(new Error("Health Connect client is not initialized"), {
+        code: "CLIENT_NOT_INITIALIZED",
+      }),
+    );
+
+    await expect(ensureHealthConnectInitialized()).rejects.toThrow(
+      "Health Connect client is not initialized",
+    );
+  });
+});
+
 describe("getHealthConnectGrantState", () => {
+  it("initializes the client BEFORE reading granted permissions — the bug this module shipped with was calling getGrantedPermissions() first", async () => {
+    const order: string[] = [];
+    vi.mocked(initialize).mockImplementation(async () => {
+      order.push("initialize");
+      return true;
+    });
+    vi.mocked(getGrantedPermissions).mockImplementation(async () => {
+      order.push("getGrantedPermissions");
+      return FULL_GRANT as never;
+    });
+
+    await getHealthConnectGrantState();
+
+    expect(order).toEqual(["initialize", "getGrantedPermissions"]);
+  });
+
   it("reports every domain granted, including history, when all five are present", async () => {
     vi.mocked(getGrantedPermissions).mockResolvedValue(FULL_GRANT as never);
 
     await expect(getHealthConnectGrantState()).resolves.toEqual({
-      sleep: true,
-      hrv: true,
-      resting_hr: true,
-      workouts: true,
-      history: true,
-    } satisfies HealthConnectGrantState);
+      status: "ok",
+      grants: {
+        sleep: true,
+        hrv: true,
+        resting_hr: true,
+        workouts: true,
+        history: true,
+      },
+    } satisfies HealthConnectGrantResult);
   });
 
   it("reports a PARTIAL grant honestly — sleep granted, hrv denied, not collapsed to one flag", async () => {
@@ -195,12 +252,15 @@ describe("getHealthConnectGrantState", () => {
     ] as never);
 
     await expect(getHealthConnectGrantState()).resolves.toEqual({
-      sleep: true,
-      hrv: false,
-      resting_hr: false,
-      workouts: false,
-      history: false,
-    } satisfies HealthConnectGrantState);
+      status: "ok",
+      grants: {
+        sleep: true,
+        hrv: false,
+        resting_hr: false,
+        workouts: false,
+        history: false,
+      },
+    } satisfies HealthConnectGrantResult);
   });
 
   it("ignores a write-access grant for a record type we only ever request read for", async () => {
@@ -209,37 +269,57 @@ describe("getHealthConnectGrantState", () => {
     ] as never);
 
     await expect(getHealthConnectGrantState()).resolves.toEqual({
-      sleep: false,
-      hrv: false,
-      resting_hr: false,
-      workouts: false,
-      history: false,
-    } satisfies HealthConnectGrantState);
+      status: "ok",
+      grants: {
+        sleep: false,
+        hrv: false,
+        resting_hr: false,
+        workouts: false,
+        history: false,
+      },
+    } satisfies HealthConnectGrantResult);
   });
 
-  it("is all-false on iOS without calling the native module", async () => {
+  it("is 'ok' with all-false on iOS without calling the native module — nothing to grant, not an error", async () => {
     Platform.OS = "ios";
 
     await expect(getHealthConnectGrantState()).resolves.toEqual({
-      sleep: false,
-      hrv: false,
-      resting_hr: false,
-      workouts: false,
-      history: false,
-    } satisfies HealthConnectGrantState);
+      status: "ok",
+      grants: {
+        sleep: false,
+        hrv: false,
+        resting_hr: false,
+        workouts: false,
+        history: false,
+      },
+    } satisfies HealthConnectGrantResult);
     expect(getGrantedPermissions).not.toHaveBeenCalled();
   });
 
-  it("never throws — a getGrantedPermissions() rejection resolves to all-false", async () => {
+  it("never throws — a getGrantedPermissions() rejection resolves to an 'error' result, NOT all-false", async () => {
     vi.mocked(getGrantedPermissions).mockRejectedValue(new Error("boom"));
 
     await expect(getHealthConnectGrantState()).resolves.toEqual({
-      sleep: false,
-      hrv: false,
-      resting_hr: false,
-      workouts: false,
-      history: false,
-    } satisfies HealthConnectGrantState);
+      status: "error",
+      message: "boom",
+    } satisfies HealthConnectGrantResult);
+  });
+
+  it("CLIENT_NOT_INITIALIZED from a failed initialize() surfaces as an 'error' result, never as empty grants — this is the exact bug being fixed", async () => {
+    vi.mocked(initialize).mockRejectedValue(
+      Object.assign(new Error("Health Connect client is not initialized"), {
+        code: "CLIENT_NOT_INITIALIZED",
+      }),
+    );
+
+    const result = await getHealthConnectGrantState();
+
+    expect(result.status).toBe("error");
+    if (result.status === "error") {
+      expect(result.message).toBe("Health Connect client is not initialized");
+    }
+    // The native read must never even be attempted once init has failed.
+    expect(getGrantedPermissions).not.toHaveBeenCalled();
   });
 });
 
@@ -270,6 +350,31 @@ describe("isHealthConnectFullyDenied", () => {
 });
 
 describe("requestHealthConnectAccess", () => {
+  it("initializes the client BEFORE requesting permission (and again before the grant-state re-read that follows — initialize() is idempotent, so both calls are deliberate, not a bug)", async () => {
+    const order: string[] = [];
+    vi.mocked(initialize).mockImplementation(async () => {
+      order.push("initialize");
+      return true;
+    });
+    vi.mocked(requestPermission).mockImplementation(async () => {
+      order.push("requestPermission");
+      return FULL_GRANT as never;
+    });
+    vi.mocked(getGrantedPermissions).mockImplementation(async () => {
+      order.push("getGrantedPermissions");
+      return FULL_GRANT as never;
+    });
+
+    await requestHealthConnectAccess();
+
+    expect(order).toEqual([
+      "initialize",
+      "requestPermission",
+      "initialize",
+      "getGrantedPermissions",
+    ]);
+  });
+
   it("requests all four record types plus history in one call", async () => {
     vi.mocked(getGrantedPermissions).mockResolvedValue(FULL_GRANT as never);
 
@@ -291,34 +396,71 @@ describe("requestHealthConnectAccess", () => {
     vi.mocked(getGrantedPermissions).mockResolvedValue([] as never);
 
     await expect(requestHealthConnectAccess()).resolves.toEqual({
-      sleep: false,
-      hrv: false,
-      resting_hr: false,
-      workouts: false,
-      history: false,
-    } satisfies HealthConnectGrantState);
+      status: "ok",
+      grants: {
+        sleep: false,
+        hrv: false,
+        resting_hr: false,
+        workouts: false,
+        history: false,
+      },
+    } satisfies HealthConnectGrantResult);
   });
 
-  it("never throws — falls through to the real grant state even when requestPermission() rejects", async () => {
-    vi.mocked(requestPermission).mockRejectedValue(new Error("boom"));
+  it("never throws, but does NOT fall through to grant state when requestPermission() itself rejects — nothing was actually decided", async () => {
+    // This is the behavior that changed: the previous version reported
+    // and swallowed this rejection, then re-derived an answer from
+    // getGrantedPermissions() as if the request had genuinely completed.
+    // A request that never reached the OS must not be reported as a
+    // completed, denied one.
+    vi.mocked(requestPermission).mockRejectedValue(
+      Object.assign(new Error("Health Connect client is not initialized"), {
+        code: "CLIENT_NOT_INITIALIZED",
+      }),
+    );
     vi.mocked(getGrantedPermissions).mockResolvedValue(FULL_GRANT as never);
 
     await expect(requestHealthConnectAccess()).resolves.toEqual({
-      sleep: true,
-      hrv: true,
-      resting_hr: true,
-      workouts: true,
-      history: true,
-    } satisfies HealthConnectGrantState);
+      status: "error",
+      message: "Health Connect client is not initialized",
+    } satisfies HealthConnectGrantResult);
+    expect(getGrantedPermissions).not.toHaveBeenCalled();
   });
 
   it("does nothing on iOS — no native call at all", async () => {
     Platform.OS = "ios";
 
-    await requestHealthConnectAccess();
-
+    await expect(requestHealthConnectAccess()).resolves.toEqual({
+      status: "ok",
+      grants: {
+        sleep: false,
+        hrv: false,
+        resting_hr: false,
+        workouts: false,
+        history: false,
+      },
+    } satisfies HealthConnectGrantResult);
     expect(requestPermission).not.toHaveBeenCalled();
     expect(getGrantedPermissions).not.toHaveBeenCalled();
+  });
+
+  it("can be called again after a fully-denied result — nothing in this module blocks a retry (there is no signal from the library to key a permanent block on; see openHealthConnectSettingsScreen's doc comment)", async () => {
+    // Explicit resolved values for both — a prior test in this file leaves
+    // requestPermission mocked to reject, and vi.clearAllMocks() in
+    // beforeEach clears call history but not a mock's implementation.
+    vi.mocked(requestPermission).mockResolvedValue([] as never);
+    vi.mocked(getGrantedPermissions).mockResolvedValue([] as never);
+
+    const first = await requestHealthConnectAccess();
+    const second = await requestHealthConnectAccess();
+
+    expect(first).toEqual({ status: "ok", grants: EMPTY_GRANTS_OBJECT });
+    expect(second).toEqual({ status: "ok", grants: EMPTY_GRANTS_OBJECT });
+    // Both attempts genuinely reached the OS — a real dialog would have
+    // been (re-)shown both times, or Android silently re-denied both
+    // times; either way, this module never short-circuits the second call
+    // on the strength of the first one's outcome.
+    expect(requestPermission).toHaveBeenCalledTimes(2);
   });
 });
 

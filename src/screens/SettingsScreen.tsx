@@ -166,11 +166,22 @@ export function SettingsScreen() {
   );
   const [hcLoading, setHcLoading] = useState(true);
   const [hcBusy, setHcBusy] = useState(false);
-  // Tracks whether THIS screen instance has already asked once. Android
-  // permanently suppresses the dialog after two denials, and there is no
-  // API to ask "has the wall gone up yet" — the only observable signal is
-  // "we asked, and the result came back fully empty."
+  // Tracks whether a request that GENUINELY COMPLETED (dialog resolved,
+  // one way or another) has come back with nothing granted. Only set on a
+  // successful ('ok') requestHealthConnectAccess() result — NOT set when
+  // the request itself errored, since then nothing was actually decided.
+  // Android's permission system is generally documented to auto-suppress
+  // a repeated request after enough refusals, but there is no signal from
+  // this library distinguishing that wall from a single dismissal — both
+  // resolve identically. So this state means "asked, got nothing back",
+  // not "permanently blocked"; the UI offers retry AND the settings deep
+  // link rather than asserting which one is true.
   const [hcHasRequested, setHcHasRequested] = useState(false);
+  // A genuine native failure (e.g. CLIENT_NOT_INITIALIZED) from the last
+  // grant-state read or request — distinct from hcHasRequested/denial.
+  // Must win over every other Health Connect branch: there is no
+  // trustworthy permission data to render underneath it.
+  const [hcNativeError, setHcNativeError] = useState<string | null>(null);
   const [hcError, setHcError] = useState<string | null>(null);
   const [hcSyncing, setHcSyncing] = useState(false);
   const [hcSyncNote, setHcSyncNote] = useState<string | null>(null);
@@ -214,8 +225,13 @@ export function SettingsScreen() {
     setHcAvailability(availability);
 
     if (availability.status === "available") {
-      const grants = await getHealthConnectGrantState();
-      setHcGrants(grants);
+      const result = await getHealthConnectGrantState();
+      if (result.status === "ok") {
+        setHcGrants(result.grants);
+        setHcNativeError(null);
+      } else {
+        setHcNativeError(result.message);
+      }
     }
     setHcLoading(false);
   }, []);
@@ -367,11 +383,19 @@ export function SettingsScreen() {
   const handleConnectHealthConnect = async () => {
     setHcBusy(true);
     setHcError(null);
+    setHcNativeError(null);
 
-    const grants = await requestHealthConnectAccess();
+    const result = await requestHealthConnectAccess();
 
-    setHcGrants(grants);
-    setHcHasRequested(true);
+    if (result.status === "ok") {
+      setHcGrants(result.grants);
+      setHcHasRequested(true);
+    } else {
+      // Nothing was actually decided — do NOT set hcHasRequested here,
+      // that would misrepresent a failed request as a completed, denied one.
+      setHcNativeError(result.message);
+    }
+
     setHcBusy(false);
   };
 
@@ -811,6 +835,34 @@ export function SettingsScreen() {
                 </Text>
               </Pressable>
             </View>
+          ) : hcNativeError ? (
+            /* A genuine native failure reading or requesting grant state —
+               NOT a permission decision. Must win over the granted/blocked/
+               never-asked branches below: there is no trustworthy grant
+               data to render underneath it, and treating this as "denied"
+               is exactly the bug this branch exists to prevent. */
+            <View>
+              <Text style={styles.whoopBody}>
+                Health Connect couldn't be reached just now — this isn't
+                about your permissions, something went wrong talking to it.
+                Try again in a moment.
+              </Text>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.whoopConnectBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleConnectHealthConnect}
+                disabled={hcBusy}
+              >
+                {hcBusy ? (
+                  <ActivityIndicator color={Colors.bg} />
+                ) : (
+                  <Text style={styles.whoopConnectBtnText}>Try again</Text>
+                )}
+              </Pressable>
+              <Text style={styles.whoopErrorText}>{hcNativeError}</Text>
+            </View>
           ) : hcGrants && !isHealthConnectFullyDenied(hcGrants) ? (
             /* At least one domain granted. Shown per-type, honestly — a
                user who grants sleep but denies HRV sees exactly that, not
@@ -870,24 +922,41 @@ export function SettingsScreen() {
               </Pressable>
             </View>
           ) : hcHasRequested ? (
-            /* Fully denied AFTER at least one request this session — the
-               two-denials wall. Re-prompting from here would either show
-               nothing or silently re-deny; Health Connect's own settings
-               is the only way forward. */
+            /* A request genuinely completed and nothing came back granted.
+               This MAY be Android's own two-refusal wall, or it may just be
+               a single dismissal — requestPermission() exposes no signal
+               distinguishing the two (see requestHealthConnectAccess's doc
+               comment), so we don't claim either. Offer both a retry (works
+               if it wasn't the wall) and the settings deep link (works
+               either way). */
             <View>
               <Text style={styles.whoopBody}>
-                Health Connect access is off. Android won't show the
-                request again from inside plated — turn it on from Health
-                Connect's own settings instead.
+                Health Connect access is off. You can try connecting again,
+                or turn it on directly from Health Connect's own settings.
               </Text>
               <Pressable
                 style={({ pressed }) => [
                   styles.whoopConnectBtn,
                   pressed && { opacity: 0.85 },
                 ]}
+                onPress={handleConnectHealthConnect}
+                disabled={hcBusy}
+              >
+                {hcBusy ? (
+                  <ActivityIndicator color={Colors.bg} />
+                ) : (
+                  <Text style={styles.whoopConnectBtnText}>Try again</Text>
+                )}
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.hcUpdateBtn,
+                  { marginTop: Spacing.sm },
+                  pressed && { opacity: 0.85 },
+                ]}
                 onPress={handleOpenHealthConnectSettings}
               >
-                <Text style={styles.whoopConnectBtnText}>
+                <Text style={styles.hcUpdateBtnText}>
                   Open Health Connect settings
                 </Text>
               </Pressable>

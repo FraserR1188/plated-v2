@@ -32,6 +32,7 @@ import * as Linking from "expo-linking";
 import {
   getSdkStatus,
   SdkAvailabilityStatus,
+  initialize,
   requestPermission,
   getGrantedPermissions,
   openHealthConnectSettings,
@@ -122,6 +123,43 @@ export async function openHealthConnectPlayStore(): Promise<void> {
 }
 
 // ============================================================
+// Client initialisation.
+//
+// getSdkStatus() (above) calls the static HealthConnectClient.getSdkStatus()
+// directly — no client instance involved — which is why availability checks
+// have never needed this. EVERY other native call (requestPermission,
+// getGrantedPermissions, readRecords, getChanges, ...) is gated on the
+// native side by a `lateinit var healthConnectClient` that only initialize()
+// assigns; calling any of them first rejects with error.code
+// "CLIENT_NOT_INITIALIZED" (node_modules/react-native-health-connect/
+// android/src/main/java/dev/matinzd/healthconnect/HealthConnectManager.kt:
+// throwUnlessClientIsAvailable). Nothing in this module or
+// healthConnectSync.ts called initialize() before now — every permission
+// request and every grant-state read was rejecting on that check, which
+// this file was then laundering into "nothing granted" (see
+// getHealthConnectGrantState below).
+//
+// initialize() itself (HealthConnectClient.getOrCreate(...)) is safe to
+// call repeatedly and from concurrent callers: it just reassigns that
+// lateinit var to a fresh getOrCreate() result, and AndroidX's own
+// getOrCreate() is documented as a cached-per-process singleton accessor.
+// No hand-rolled single-flight guard, so — every function below that needs
+// a live client calls this first, unconditionally, rather than relying on
+// some other function in the call graph having already done so.
+// ============================================================
+
+export async function ensureHealthConnectInitialized(): Promise<void> {
+  if (Platform.OS !== "android") return;
+  await initialize();
+}
+
+function healthConnectErrorMessage(e: unknown): string {
+  return e instanceof Error && e.message
+    ? e.message
+    : "Health Connect ran into a problem.";
+}
+
+// ============================================================
 // Permission request and grant state.
 //
 // The four domains below deliberately use the exact same names as
@@ -135,6 +173,16 @@ export async function openHealthConnectPlayStore(): Promise<void> {
 // grant all four domains and still decline history specifically (limiting
 // reads to the last 30 days), and that is a legitimate partial grant, not
 // a failure state.
+//
+// getHealthConnectGrantState() and requestHealthConnectAccess() both return
+// a HealthConnectGrantResult rather than a bare HealthConnectGrantState —
+// a native failure (CLIENT_NOT_INITIALIZED chief among them, but not the
+// only one — SecurityException/IOException/etc. are all real, distinct
+// failure modes on the native side, see errors.ts's rejectWithException)
+// is NOT the same fact as "the user has legitimately granted nothing," and
+// collapsing the two into one all-false shape is exactly the bug this
+// module shipped with: a real error rendered, and behaved, as a permission
+// state with a dead-end remedy.
 // ============================================================
 
 export type HealthConnectDomain = "sleep" | "hrv" | "resting_hr" | "workouts";
@@ -165,6 +213,17 @@ const EMPTY_GRANTS: HealthConnectGrantState = {
 };
 
 /**
+ * 'ok' with EMPTY_GRANTS covers both iOS (there is genuinely nothing to
+ * grant) and a real read where the user has denied everything — both are
+ * legitimate, non-error outcomes. 'error' is reserved for a native call
+ * actually failing (init failure, permission-controller exception, etc.);
+ * it must never be treated as, or default to, a permission state.
+ */
+export type HealthConnectGrantResult =
+  | { status: "ok"; grants: HealthConnectGrantState }
+  | { status: "error"; message: string };
+
+/**
  * getGrantedPermissions()'s declared return type (as shipped in
  * react-native-health-connect@4.1.3's .d.ts) is
  * `(Permission | WriteExerciseRoutePermission | BackgroundAccessPermission)[]`
@@ -177,16 +236,18 @@ const EMPTY_GRANTS: HealthConnectGrantState = {
 type AnyGrantedPermission = { accessType?: string; recordType?: string };
 
 /**
- * Never throws. Reads the CURRENT OS-level grant state fresh every call —
- * this is intentionally not cached anywhere client-side (same reasoning as
- * WHOOP's getWhoopConnection(): a cached copy would go stale the moment a
- * user revokes a permission from Android's own Health Connect settings
- * app, which this app cannot observe any other way).
+ * Never throws — resolves to an 'error' result instead. Reads the CURRENT
+ * OS-level grant state fresh every call; this is intentionally not cached
+ * anywhere client-side (same reasoning as WHOOP's getWhoopConnection(): a
+ * cached copy would go stale the moment a user revokes a permission from
+ * Android's own Health Connect settings app, which this app cannot observe
+ * any other way).
  */
-export async function getHealthConnectGrantState(): Promise<HealthConnectGrantState> {
-  if (Platform.OS !== "android") return EMPTY_GRANTS;
+export async function getHealthConnectGrantState(): Promise<HealthConnectGrantResult> {
+  if (Platform.OS !== "android") return { status: "ok", grants: EMPTY_GRANTS };
 
   try {
+    await ensureHealthConnectInitialized();
     const granted = (await getGrantedPermissions()) as AnyGrantedPermission[];
     const grantedTypes = new Set(
       granted
@@ -196,15 +257,23 @@ export async function getHealthConnectGrantState(): Promise<HealthConnectGrantSt
     );
 
     return {
-      sleep: grantedTypes.has(DOMAIN_RECORD_TYPE.sleep),
-      hrv: grantedTypes.has(DOMAIN_RECORD_TYPE.hrv),
-      resting_hr: grantedTypes.has(DOMAIN_RECORD_TYPE.resting_hr),
-      workouts: grantedTypes.has(DOMAIN_RECORD_TYPE.workouts),
-      history: grantedTypes.has("ReadHealthDataHistory"),
+      status: "ok",
+      grants: {
+        sleep: grantedTypes.has(DOMAIN_RECORD_TYPE.sleep),
+        hrv: grantedTypes.has(DOMAIN_RECORD_TYPE.hrv),
+        resting_hr: grantedTypes.has(DOMAIN_RECORD_TYPE.resting_hr),
+        workouts: grantedTypes.has(DOMAIN_RECORD_TYPE.workouts),
+        history: grantedTypes.has("ReadHealthDataHistory"),
+      },
     };
   } catch (e) {
+    // Loud, deliberately: this is a genuine native failure (initialize()
+    // failing, or getGrantedPermissions() itself rejecting), not a user
+    // decision. CLIENT_NOT_INITIALIZED landing here means
+    // ensureHealthConnectInitialized() above it also failed — reported
+    // once, here, rather than swallowed and re-derived as "denied".
     reportError("healthConnect:getGrantState", e);
-    return EMPTY_GRANTS;
+    return { status: "error", message: healthConnectErrorMessage(e) };
   }
 }
 
@@ -219,16 +288,21 @@ export function isHealthConnectFullyDenied(state: HealthConnectGrantState): bool
  * per line item on that one screen. There is no separate "ask for history
  * after the rest" step.
  *
- * Never throws: a rejection from requestPermission() itself is reported
- * and swallowed, and either way the function falls through to
- * getHealthConnectGrantState() for the real answer — what the OS actually
- * recorded is the only trustworthy source, not whether the request call
- * itself resolved cleanly.
+ * Never throws — resolves to an 'error' result instead. UNLIKE the
+ * previous version of this function, a rejection from requestPermission()
+ * is NOT swallowed-then-re-derived via getHealthConnectGrantState(): if the
+ * request itself failed (most commonly because initialize() failed), no
+ * dialog was ever shown and nothing was actually decided, so falling
+ * through to read "what got granted" would report a stale or unrelated
+ * prior state as if it were this request's outcome. Only a request that
+ * genuinely completed — dialog resolved, one way or another — falls
+ * through to getHealthConnectGrantState() for the authoritative read.
  */
-export async function requestHealthConnectAccess(): Promise<HealthConnectGrantState> {
-  if (Platform.OS !== "android") return EMPTY_GRANTS;
+export async function requestHealthConnectAccess(): Promise<HealthConnectGrantResult> {
+  if (Platform.OS !== "android") return { status: "ok", grants: EMPTY_GRANTS };
 
   try {
+    await ensureHealthConnectInitialized();
     await requestPermission([
       { accessType: "read", recordType: "SleepSession" },
       { accessType: "read", recordType: "HeartRateVariabilityRmssd" },
@@ -238,6 +312,7 @@ export async function requestHealthConnectAccess(): Promise<HealthConnectGrantSt
     ]);
   } catch (e) {
     reportError("healthConnect:requestPermission", e);
+    return { status: "error", message: healthConnectErrorMessage(e) };
   }
 
   return getHealthConnectGrantState();
@@ -245,11 +320,15 @@ export async function requestHealthConnectAccess(): Promise<HealthConnectGrantSt
 
 /**
  * Opens the Health Connect app's own settings, where the user can grant
- * per-domain access directly. This is the escape hatch for Android's
- * "two denials permanently suppresses the dialog" rule: once
- * requestHealthConnectAccess() comes back fully denied, calling it again
- * either shows nothing or silently re-denies — the only way forward is
- * sending the user here, not re-prompting into a wall.
+ * per-domain access directly. Offered as a SECONDARY path alongside
+ * re-requesting, not a replacement for it: Android's permission system is
+ * generally documented to auto-suppress a repeated request after enough
+ * refusals, but requestPermission()'s own contract (see
+ * requestHealthConnectAccess's doc comment) exposes no signal that
+ * distinguishes "the wall is up" from "the user dismissed it once" — both
+ * resolve identically, with an empty granted set. Do not resurrect a
+ * one-shot "permanently denied" branch on the strength of that OS-level
+ * claim; there is nothing in this library to verify it against per-call.
  */
 export function openHealthConnectSettingsScreen(): void {
   openHealthConnectSettings();

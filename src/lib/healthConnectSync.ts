@@ -57,7 +57,11 @@ import {
   getChanges,
   type RecordType,
 } from "react-native-health-connect";
-import { getHealthConnectGrantState, DOMAIN_RECORD_TYPE } from "./healthConnect";
+import {
+  getHealthConnectGrantState,
+  ensureHealthConnectInitialized,
+  DOMAIN_RECORD_TYPE,
+} from "./healthConnect";
 import { supabase } from "./supabase";
 import { reportError } from "./reportError";
 
@@ -197,6 +201,15 @@ async function syncRecordType(
   recordType: RecordType,
   hasHistory: boolean,
 ): Promise<number> {
+  // Belt-and-braces: syncHealthConnect() below already calls this
+  // transitively (via getHealthConnectGrantState()) before ever reaching
+  // this function, but readRecords()/getChanges() have the exact same
+  // native precondition as getGrantedPermissions() — a live client — and
+  // this function should not depend on a caller upstream having happened
+  // to satisfy it first. initialize() is idempotent (see healthConnect.ts),
+  // so this costs nothing when it's already been done.
+  await ensureHealthConnectInitialized();
+
   const storedToken = await getStoredToken(recordType);
 
   if (!storedToken) {
@@ -253,7 +266,16 @@ async function syncRecordType(
  * mirroring WHOOP's own cadence.
  */
 export async function syncHealthConnect(): Promise<HealthConnectSyncResult> {
-  const grants = await getHealthConnectGrantState();
+  const grantResult = await getHealthConnectGrantState();
+  // A native failure reading grant state, not a legitimate "nothing
+  // granted" — getHealthConnectGrantState() has already reported it.
+  // There is nothing trustworthy to sync against, so stop here rather than
+  // treating the error as "every domain denied."
+  if (grantResult.status === "error") {
+    return { ok: false, counts: {}, errors: {} };
+  }
+  const grants = grantResult.grants;
+
   const counts: Partial<Record<SyncableDomain, number>> = {};
   const errors: Partial<Record<SyncableDomain, string>> = {};
 

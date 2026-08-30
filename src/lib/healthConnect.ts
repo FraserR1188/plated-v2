@@ -280,6 +280,20 @@ export async function getHealthConnectGrantState(): Promise<HealthConnectGrantRe
     // library's own result mapping ever reports history at all, as opposed
     // to what our .filter()/.map() below chooses to keep from it.
     devLog("healthConnect:rawGrantedPermissions", granted);
+    // This array can legitimately contain more read entries than the five
+    // permissions this app ever requested. PermissionUtils.kt's
+    // mapPermissionResult() loops over EVERY record type the library
+    // knows, pushing one entry per record type whose underlying Android
+    // permission string is granted — and several record types share the
+    // same permission (e.g. CyclingPedalingCadence and Speed grant
+    // alongside ExerciseSession, all under READ_EXERCISE). Seeing e.g.
+    // 'CyclingPedalingCadence' here is the library's reverse mapping of a
+    // permission this app DID ask for, surfaced under a record type it
+    // did not — not an extra grant Android handed out unprompted. The
+    // .has(DOMAIN_RECORD_TYPE.xxx) checks below only ever look for the
+    // four record types this app actually requested, so this is naturally
+    // harmless here — worth knowing if this array is ever logged or
+    // consumed more broadly in the future.
     const grantedTypes = new Set(
       granted
         .filter((p) => p.accessType === "read")

@@ -85,21 +85,37 @@ function App() {
   );
 
   // ── Auth ────────────────────────────────────────────────────
+  //
+  // Deliberately does NOT also call supabase.auth.getSession() alongside
+  // this subscription. onAuthStateChange() ALWAYS fires its callback once,
+  // immediately, with event 'INITIAL_SESSION' — confirmed from source, not
+  // assumed (node_modules/@supabase/auth-js/dist/main/GoTrueClient.js:
+  // onAuthStateChange() -> _emitInitialSession(), unconditional, on every
+  // subscription). getSession() is `await this.initializePromise; return
+  // this._useSession(...)` — the EXACT SAME internal call
+  // _emitInitialSession() makes. A prior version of this effect called
+  // both, which meant every cold launch with a persisted session produced
+  // TWO separate, differently-referenced session objects landing in state
+  // in quick succession (whichever this effect happened to receive first,
+  // then the other) — each one a genuine change from React's point of
+  // view, each re-firing every effect keyed on [session] below, including
+  // the WHOOP/Health Connect foreground sync. Confirmed as one real
+  // contributor to syncHealthConnect() running multiple times on a single
+  // launch (see that effect's own comment for the rest of the story and
+  // the module-level guard that protects against whatever remaining
+  // duplication this doesn't fully eliminate — e.g. a genuine
+  // TOKEN_REFRESHED event arriving shortly after INITIAL_SESSION).
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      if (session?.user) {
-        setUserId(session.user.id);
-        fetchEntries();
-        fetchGoals();
-        fetchSavedIngredients();
-      }
-      setLoading(false);
-    });
-
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      // Durable, not a one-off debug print: this is exactly what would
+      // have made "syncHealthConnect ran 4 times" explainable from a
+      // logcat tail on the first report, instead of requiring a source
+      // trace afterward. If this ever fires more than twice on one cold
+      // launch (INITIAL_SESSION, plus a genuine follow-up event) again,
+      // the event names printed here say why.
+      if (__DEV__) console.log("App:onAuthStateChange", _event);
       setSession(session);
       if (session?.user) {
         setUserId(session.user.id);
@@ -109,6 +125,13 @@ function App() {
       } else {
         setUserId(null);
       }
+      // Moved from the removed getSession() callback — this now runs on
+      // every event including the guaranteed first INITIAL_SESSION one,
+      // which is exactly when the splash screen needs to stop showing.
+      // Calling it again on later events (a real SIGNED_IN/TOKEN_REFRESHED)
+      // is a harmless no-op: React bails out on setting state to the same
+      // primitive value.
+      setLoading(false);
     });
 
     return () => subscription.unsubscribe();

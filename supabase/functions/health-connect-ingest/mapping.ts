@@ -161,6 +161,13 @@ export function mapSleepSession(
   };
 }
 
+// Confirmed on-device: WHOOP writes zero HeartRateVariabilityRmssd records
+// to Health Connect — 180 sleep sessions and the HRV read permission both
+// present from WHOOP's own origin package over the same 180-day window,
+// zero HRV rows. This is WHOOP's own provider behaviour (it simply does
+// not export HRV through Health Connect), not a mapping bug in this file
+// or a permission problem — do not re-investigate this from the ingest
+// side; there is nothing here to fix.
 export function mapHrv(userId: string, originPackage: string, r: RawRecord) {
   return {
     user_id: userId,

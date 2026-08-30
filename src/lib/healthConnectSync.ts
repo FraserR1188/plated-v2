@@ -610,12 +610,12 @@ async function syncRecordType(recordType: RecordType): Promise<number> {
  * the module header on health-connect-ingest for why these four domains
  * have no cross-dependency the way WHOOP's cycle-linked collections do.
  *
- * Safe to call freely — there is no server-side throttle here (no
- * connections table exists for Health Connect in this commit), so the
- * caller (App foreground listener, "Sync now" button) is what paces this,
- * mirroring WHOOP's own cadence.
+ * This is the UNGUARDED implementation — see syncHealthConnect() below,
+ * the exported entry point, for the concurrency/repeat-invocation guard
+ * that wraps it. Never call this directly from outside the module; that
+ * would bypass the guard entirely.
  */
-export async function syncHealthConnect(): Promise<HealthConnectSyncResult> {
+async function runSyncHealthConnect(): Promise<HealthConnectSyncResult> {
   const grantResult = await getHealthConnectGrantState();
   // A native failure reading grant state, not a legitimate "nothing
   // granted" — getHealthConnectGrantState() has already reported it.
@@ -654,4 +654,112 @@ export async function syncHealthConnect(): Promise<HealthConnectSyncResult> {
   };
   devLog("healthConnectSync:result", result);
   return result;
+}
+
+// ── Concurrency / repeat-invocation guard ────────────────────────────────
+//
+// A single cold launch was observed running four complete four-domain
+// syncs — four identical healthConnectSync:result lines, each domain's
+// backfill re-posting the SAME records (456 ExerciseSession records
+// ingested four times over). Traced to App.tsx: onAuthStateChange()
+// unconditionally fires once with 'INITIAL_SESSION' on every subscription
+// (confirmed in @supabase/auth-js's GoTrueClient.js), which was ALSO being
+// requested separately via getSession() in the same effect — two
+// differently-referenced session objects landing in state in quick
+// succession on every cold launch, each a genuine change from React's
+// point of view, each re-firing the [session]-dependent sync effect. That
+// redundancy is fixed at the source (see App.tsx's auth effect comment).
+// This guard exists anyway, in the sync module rather than only at that
+// one call site, because:
+//   1. Every future caller (a second screen, a background task, a retry
+//      button) gets the same protection for free, without having to
+//      remember App.tsx's history.
+//   2. Two truly CONCURRENT calls for the same record type would race on
+//      the SAME AsyncStorage token key with no lock — both read the old
+//      token, both call getChanges() with it, both write back a new
+//      token — a correctness risk (a lost update or a duplicate post),
+//      not just a cost one.
+//   3. It is strictly cheaper to ask "is one already running" once, in
+//      memory, than to let four full passes discover independently that
+//      there was nothing new for three of them to do.
+//
+// Two distinct mechanisms, not one, because they answer different
+// questions:
+//
+// SINGLE-FLIGHT (unconditional, every caller): if a sync is already
+// running, every other caller — forced or not — gets that SAME promise
+// rather than starting a second one. This is not a throttle in the
+// user-facing sense: nobody is told "try again later"; they get the
+// real, current sync's real result, which is what they'd want anyway.
+// This is what actually fixes the reported bug — any near-simultaneous
+// burst of calls, regardless of exact count or cause, collapses to one.
+//
+// NO time-based throttle for the AUTOMATIC (non-forced) path, unlike
+// WHOOP's 15-minute THROTTLE_MS. Deliberately not copied: WHOOP throttles
+// because its data lives behind a real, rate-limited REMOTE API that a
+// naive poll-on-every-foreground would hammer needlessly. Health
+// Connect's read is a local, on-device call with no such limit, and once
+// a record type's baseline is fully backfilled (see the module header),
+// a routine incremental sync that finds nothing new costs a handful of
+// local getChanges() calls and ZERO Edge Function invocations — the
+// actually-expensive part the task that reported this cares about is
+// already gated on there being real new data, which is precisely when a
+// sync SHOULD run, not when it should be delayed. A time-based floor here
+// would only delay genuinely new data reaching the database, which is
+// the opposite of what this feature is for.
+//
+// A SHORT anti-hammering floor for the FORCED path only (the "Sync now"
+// button), because the single-flight guard above does not cover the
+// specific case it was asked to allow for: a user tapping the button
+// repeatedly in QUICK SUCCESSION, each tap arriving only after the
+// previous one has already finished (so nothing is "in flight" for
+// single-flight to catch). Each such repeat sync would already be nearly
+// free in practice (getChanges() has nothing new to report a fraction of
+// a second after the last real check), so this floor exists to avoid
+// spamming Health Connect's own native API in a tight loop, not because
+// of Edge Function cost — a short, forgiving window is enough for that,
+// not WHOOP's 60-second FORCE_THROTTLE_MS (whose floor exists to bound
+// how often WHOOP's own remote API gets hit, a concern that doesn't apply
+// here). A forced call within the floor is answered with the just-
+// completed result rather than doing nothing — the button never shows a
+// "you're going too fast" message, it just doesn't repeat work nothing
+// could have changed since.
+const FORCED_REPEAT_FLOOR_MS = 3_000;
+
+let inFlightSync: Promise<HealthConnectSyncResult> | null = null;
+let lastSyncCompletedAt = 0;
+let lastSyncResult: HealthConnectSyncResult | null = null;
+
+export async function syncHealthConnect(
+  options: { force?: boolean } = {},
+): Promise<HealthConnectSyncResult> {
+  if (inFlightSync) {
+    devLog("healthConnectSync:guard", {
+      outcome: "coalesced-into-in-flight-sync",
+      force: options.force ?? false,
+    });
+    return inFlightSync;
+  }
+
+  if (
+    options.force &&
+    lastSyncResult &&
+    Date.now() - lastSyncCompletedAt < FORCED_REPEAT_FLOOR_MS
+  ) {
+    devLog("healthConnectSync:guard", {
+      outcome: "reused-recent-result-forced-repeat-too-soon",
+      msSinceLastSync: Date.now() - lastSyncCompletedAt,
+    });
+    return lastSyncResult;
+  }
+
+  inFlightSync = runSyncHealthConnect();
+  try {
+    const result = await inFlightSync;
+    lastSyncResult = result;
+    return result;
+  } finally {
+    inFlightSync = null;
+    lastSyncCompletedAt = Date.now();
+  }
 }

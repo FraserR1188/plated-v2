@@ -18,6 +18,14 @@
 //      bounded backfill attempt covering the gap and widens the stored
 //      baseline on success; and the token-expiry re-pull reaches the
 //      same depth a first sync would.
+//   5. (the four-syncs-on-one-launch fix) two near-simultaneous calls to
+//      syncHealthConnect() must collapse into one real sync via a
+//      single-flight guard; a forced (manual button) repeat within a
+//      short floor reuses the just-completed result instead of running
+//      again; and the automatic (non-forced) path is NEVER time-throttled
+//      — see healthConnectSync.ts's guard section for why that last part
+//      is a deliberate divergence from WHOOP's own shape, not an
+//      oversight.
 //
 // IMPORTANT — why these are NOT mock-matches-implementation tests:
 // getHealthConnectGrantState().grants.history is confirmed to always be
@@ -528,5 +536,114 @@ describe("syncHealthConnect — token-expiry re-pull depth is determined empiric
     const { startTime } = readRecordsCall(1).timeRangeFilter;
     expect(daysAgoMs(startTime)).toBeGreaterThan(29 * DAY_MS);
     expect(daysAgoMs(startTime)).toBeLessThan(31 * DAY_MS);
+  });
+});
+
+// ── Concurrency / repeat-invocation guard ────────────────────────────────
+//
+// syncHealthConnect()'s guard state (inFlightSync / lastSyncCompletedAt /
+// lastSyncResult) lives in healthConnectSync.ts's own module scope, NOT
+// behind a mock — beforeEach's vi.clearAllMocks() does not, and cannot,
+// reset it. Each test below is written to be correct regardless of
+// whatever a PRIOR test left behind: the concurrency test never touches
+// `force`, so the floor logic (gated on `options.force &&`) never even
+// reads the leaked state; the floor tests use fake timers and set the
+// clock explicitly from their own first call, overwriting whatever real
+// wall-clock timestamp an earlier test's real-time run left in
+// lastSyncCompletedAt before the comparison that matters runs.
+function healthyMocks() {
+  vi.mocked(getHealthConnectGrantState).mockResolvedValue({
+    status: "ok",
+    grants: { ...EMPTY_GRANTS, sleep: true },
+  });
+  vi.mocked(AsyncStorage.getItem).mockResolvedValue(null);
+  vi.mocked(readRecords).mockResolvedValue({
+    records: [],
+    pageToken: undefined,
+  } as never);
+  vi.mocked(getChanges).mockResolvedValue(OK_NO_CHANGES);
+}
+
+describe("syncHealthConnect — concurrency and repeat-invocation guard", () => {
+  it("single-flight: two near-simultaneous calls collapse into one real sync and share the exact same result", async () => {
+    healthyMocks();
+
+    const [r1, r2] = await Promise.all([
+      syncHealthConnect(),
+      syncHealthConnect(),
+    ]);
+
+    expect(r1).toBe(r2); // the SAME object — one shared promise, not two separately-run syncs that happen to agree
+    expect(getHealthConnectGrantState).toHaveBeenCalledTimes(1);
+    expect(readRecords).toHaveBeenCalledTimes(1);
+  });
+
+  // A fixed, far-future instant per test — not "now plus a margin" (a
+  // margin measured from vi.useFakeTimers()'s own real-time start point
+  // is only as safe as knowing what real time was when the PREVIOUS
+  // test's fake clock was torn down, which is fragile to reason about
+  // across tests), and not the SAME far-future instant reused across
+  // tests either (confirmed the hard way: two tests both anchored at the
+  // same fixed instant still collide, because the first test's own
+  // internal advance leaves lastSyncCompletedAt slightly AFTER that
+  // instant, which the second test's un-advanced start then reads as
+  // "within the floor" of). Each test gets its own anchor, far enough
+  // apart that neither a real wall clock nor a leaked fake one from
+  // another test can ever land within FORCED_REPEAT_FLOOR_MS of it.
+  function farFutureAnchor(offsetMinutes: number): Date {
+    return new Date(
+      new Date("2030-01-01T00:00:00.000Z").getTime() + offsetMinutes * 60_000,
+    );
+  }
+
+  it("a forced repeat within the floor reuses the just-completed result instead of running again", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(farFutureAnchor(0));
+      healthyMocks();
+
+      const first = await syncHealthConnect({ force: true });
+      vi.advanceTimersByTime(1_000); // well inside FORCED_REPEAT_FLOOR_MS
+      const second = await syncHealthConnect({ force: true });
+
+      expect(second).toBe(first); // reused, not a freshly computed result
+      expect(getHealthConnectGrantState).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a forced repeat AFTER the floor has elapsed runs a genuine new sync", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(farFutureAnchor(10)); // 10 minutes clear of the previous test's anchor
+      healthyMocks();
+
+      await syncHealthConnect({ force: true });
+      vi.advanceTimersByTime(10_000); // past FORCED_REPEAT_FLOOR_MS
+      await syncHealthConnect({ force: true });
+
+      expect(getHealthConnectGrantState).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the automatic (non-forced) path is NEVER floor-throttled — two sequential calls with zero elapsed time both run for real", async () => {
+    // This is the test for the design decision itself: unlike WHOOP's
+    // THROTTLE_MS, the automatic path has no time-based floor at all.
+    // Proven with fake timers advanced by nothing, so this isn't passing
+    // by accident of however long the test itself took to run.
+    vi.useFakeTimers();
+    try {
+      healthyMocks();
+
+      await syncHealthConnect();
+      await syncHealthConnect();
+
+      expect(getHealthConnectGrantState).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

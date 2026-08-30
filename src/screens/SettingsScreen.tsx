@@ -424,7 +424,10 @@ export function SettingsScreen() {
     setHcError(null);
     setHcSyncNote(null);
 
-    const result = await syncHealthConnect();
+    // force: this is a deliberate tap, not an app foreground — see
+    // healthConnectSync.ts's guard section for why forced calls get a
+    // short anti-hammering floor instead of the automatic path's none.
+    const result = await syncHealthConnect({ force: true });
 
     // Four genuinely different outcomes, each needing its own text —
     // conflating any of these is exactly the bug being fixed here (a

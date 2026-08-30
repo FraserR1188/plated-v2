@@ -1,5 +1,15 @@
 import { vi } from "vitest";
 
+// __DEV__ is a React Native / Metro global, never defined under plain
+// Node/Vite. Every existing __DEV__ reference in this codebase (App.tsx,
+// SettingsScreen.tsx, instrument.ts) lives in a file no test actually
+// executes, so the missing global was latent, not caught. Set to true
+// (not merely defined) so any __DEV__-gated logging is actually exercised
+// by tests that reach it — the alternative (false) would skip evaluating
+// the logged expression entirely, which is exactly the kind of "looks
+// covered, isn't" gap this repo has been bitten by with Health Connect.
+(globalThis as { __DEV__?: boolean }).__DEV__ = true;
+
 // The real client (src/lib/supabase.ts) calls createClient() at import time
 // using EXPO_PUBLIC_SUPABASE_URL / _KEY, which aren't set in the test
 // environment. Every logic module under test (entries.ts, useStore.ts,

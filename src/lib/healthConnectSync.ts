@@ -115,6 +115,19 @@ function currentWindowDays(hasHistory: boolean): number {
   return hasHistory ? INITIAL_WINDOW_DAYS : NO_HISTORY_WINDOW_DAYS;
 }
 
+/**
+ * Dev-only diagnostic logging. This module's actual behaviour (which
+ * window got read, whether a backfill fired, what the final result was)
+ * was previously unobservable on-device — reportError/console only ever
+ * fired on error, so a correct run and a silently-wrong one looked
+ * identical from a logcat tail. __DEV__ keeps this out of production
+ * builds entirely; it is not a substitute for reportError, which stays
+ * on every actual failure path in this file unchanged.
+ */
+function devLog(operation: string, detail: unknown): void {
+  if (__DEV__) console.log(operation, detail);
+}
+
 type SyncableDomain = "sleep" | "hrv" | "resting_hr" | "workouts";
 const SYNCABLE_DOMAINS: SyncableDomain[] = [
   "sleep",
@@ -198,15 +211,26 @@ async function getStoredTokenRecord(
     reportError("healthConnectSync:getStoredToken", e);
     return null;
   }
-  if (!raw) return null;
+  if (!raw) {
+    devLog("healthConnectSync:tokenRead", { recordType, raw: null });
+    return null;
+  }
 
-  return (
-    parseStoredTokenRecord(raw) ?? {
+  const parsed = parseStoredTokenRecord(raw);
+  const record =
+    parsed ?? {
       token: raw,
       baselineWindowDays: NO_HISTORY_WINDOW_DAYS,
       baselineAt: "unknown",
-    }
-  );
+    };
+  devLog("healthConnectSync:tokenRead", {
+    recordType,
+    raw,
+    interpretedAs: parsed ? "record" : "legacy-bare-string",
+    baselineWindowDays: record.baselineWindowDays,
+    baselineAt: record.baselineAt,
+  });
+  return record;
 }
 
 async function setStoredTokenRecord(
@@ -279,6 +303,8 @@ async function pullTimeRange(
   startTime: string,
   endTime: string,
 ): Promise<number> {
+  devLog("healthConnectSync:readWindow", { recordType, startTime, endTime });
+
   let pageToken: string | undefined;
   let total = 0;
 
@@ -381,7 +407,19 @@ async function syncRecordType(
   // what makes a later revoke-then-re-grant land correctly, since
   // baselineWindowDays only ever widens and a re-grant after an earlier
   // successful backfill finds nothing left to do.
-  if (hasHistory && baselineWindowDays < INITIAL_WINDOW_DAYS) {
+  const backfillNeeded = hasHistory && baselineWindowDays < INITIAL_WINDOW_DAYS;
+  devLog("healthConnectSync:backfillDecision", {
+    recordType,
+    hasHistory,
+    baselineWindowDays,
+    backfillNeeded,
+    reason: backfillNeeded
+      ? undefined
+      : !hasHistory
+        ? "history not currently granted"
+        : `baseline (${baselineWindowDays}) already at or beyond the full window (${INITIAL_WINDOW_DAYS})`,
+  });
+  if (backfillNeeded) {
     total += await backfillHistoryGap(recordType, baselineWindowDays);
     baselineWindowDays = INITIAL_WINDOW_DAYS;
     baselineAt = new Date().toISOString();
@@ -457,7 +495,13 @@ export async function syncHealthConnect(): Promise<HealthConnectSyncResult> {
   // There is nothing trustworthy to sync against, so stop here rather than
   // treating the error as "every domain denied."
   if (grantResult.status === "error") {
-    return { ok: false, counts: {}, errors: {} };
+    const result: HealthConnectSyncResult = { ok: false, counts: {}, errors: {} };
+    devLog("healthConnectSync:result", {
+      ...result,
+      stoppedBeforeAnyDomain: true,
+      grantStateError: grantResult.message,
+    });
+    return result;
   }
   const grants = grantResult.grants;
 
@@ -476,5 +520,11 @@ export async function syncHealthConnect(): Promise<HealthConnectSyncResult> {
     }
   }
 
-  return { ok: Object.keys(errors).length === 0, counts, errors };
+  const result: HealthConnectSyncResult = {
+    ok: Object.keys(errors).length === 0,
+    counts,
+    errors,
+  };
+  devLog("healthConnectSync:result", result);
+  return result;
 }

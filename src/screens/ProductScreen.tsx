@@ -19,7 +19,7 @@ import {
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import { DateTimeField } from "../components/DateTimeField";
 import { useStore, todayKey, MealEntryPatch } from "../store/useStore";
 import {
   formatTime,
@@ -438,9 +438,8 @@ export function ProductScreen() {
   // instead, the exact float-noise problem roundSalt exists to fix.
   const preview = computeServingTotals(draft, g);
 
-  const onDateChange = (event: any, picked?: Date) => {
+  const onDateChange = (picked: Date) => {
     setPickerMode(null);
-    if (event?.type === "dismissed" || !picked) return;
 
     setDateTouched(true);
     const next = new Date(eatenAt);
@@ -448,11 +447,9 @@ export function ProductScreen() {
     setEatenAt(next);
   };
 
-  const onTimeChange = (event: any, picked?: Date) => {
+  const onTimeChange = (picked: Date) => {
     setPickerMode(null);
-    if (event?.type === "dismissed" || !picked) return;
-
-    setTimeTouched(true); // below the guard, so a cancel doesn't count
+    setTimeTouched(true);
 
     if (dayIsExplicit) {
       // The day is settled. Swap the time and leave it alone.
@@ -1105,12 +1102,13 @@ export function ProductScreen() {
           </Text>
 
           {pickerMode && (
-            <DateTimePicker
+            <DateTimeField
+              visible={pickerMode != null}
               value={eatenAt}
               mode={pickerMode}
               is24Hour
-              display="default"
-              onChange={pickerMode === "date" ? onDateChange : onTimeChange}
+              onConfirm={pickerMode === "date" ? onDateChange : onTimeChange}
+              onCancel={() => setPickerMode(null)}
             />
           )}
         </View>

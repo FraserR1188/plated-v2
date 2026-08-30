@@ -22,7 +22,7 @@
 
 import React, { useState } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import { DateTimeField } from "./DateTimeField";
 
 import {
   Colors,
@@ -125,29 +125,29 @@ export function CopyTargetPicker({
       )}
 
       {picking === "date" && (
-        <DateTimePicker
+        <DateTimeField
+          visible={picking === "date"}
           value={parseDateKey(dayKey)}
           mode="date"
-          display="default"
-          onChange={(event: any, picked?: Date) => {
+          onConfirm={(picked) => {
             setPicking(null);
-            if (event?.type === "dismissed" || !picked) return;
             onDayKeyChange(dateKey(picked));
           }}
+          onCancel={() => setPicking(null)}
         />
       )}
 
       {picking === "time" && showTimePicker && (
-        <DateTimePicker
+        <DateTimeField
+          visible={picking === "time" && showTimePicker}
           value={timeSeed}
           mode="time"
           is24Hour
-          display="default"
-          onChange={(event: any, picked?: Date) => {
+          onConfirm={(picked) => {
             setPicking(null);
-            if (event?.type === "dismissed" || !picked) return;
             onTimeChange({ hours: picked.getHours(), minutes: picked.getMinutes() });
           }}
+          onCancel={() => setPicking(null)}
         />
       )}
     </>

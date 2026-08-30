@@ -24,7 +24,7 @@ import {
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import { DateTimeField } from "../components/DateTimeField";
 import { useStore } from "../store/useStore";
 import { batchPortionCalories } from "../lib/compositions";
 import {
@@ -265,17 +265,15 @@ function ScheduleBatchSheet({
   const isPlanned = willBePlanned(eatenAt.toISOString());
   const dayLabel = formatDayLabel(dateKey(eatenAt));
 
-  const onDateChange = (event: any, picked?: Date) => {
+  const onDateChange = (picked: Date) => {
     setPickerMode(null);
-    if (event?.type === "dismissed" || !picked) return;
     const next = new Date(eatenAt);
     next.setFullYear(picked.getFullYear(), picked.getMonth(), picked.getDate());
     setEatenAt(next);
   };
 
-  const onTimeChange = (event: any, picked?: Date) => {
+  const onTimeChange = (picked: Date) => {
     setPickerMode(null);
-    if (event?.type === "dismissed" || !picked) return;
     const next = new Date(eatenAt);
     next.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
     setEatenAt(next);
@@ -361,12 +359,13 @@ function ScheduleBatchSheet({
         </Text>
 
         {pickerMode && (
-          <DateTimePicker
+          <DateTimeField
+            visible={pickerMode != null}
             value={eatenAt}
             mode={pickerMode}
             is24Hour
-            display="default"
-            onChange={pickerMode === "date" ? onDateChange : onTimeChange}
+            onConfirm={pickerMode === "date" ? onDateChange : onTimeChange}
+            onCancel={() => setPickerMode(null)}
           />
         )}
 

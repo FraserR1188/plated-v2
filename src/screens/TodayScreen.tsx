@@ -22,7 +22,7 @@ import {
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
-import DateTimePicker from "@react-native-community/datetimepicker";
+import { DateTimeField } from "../components/DateTimeField";
 import { CalorieRing } from "../components/CalorieRing";
 import { MacroBar } from "../components/MacroBar";
 import { CopyTargetPicker } from "../components/CopyTargetPicker";
@@ -376,9 +376,8 @@ export function TodayScreen() {
     );
   };
 
-  const onJump = (event: any, picked?: Date) => {
+  const onJump = (picked: Date) => {
     setShowJump(false);
-    if (event?.type === "dismissed" || !picked) return;
     setViewedDate(dateKey(picked));
   };
 
@@ -430,9 +429,8 @@ export function TodayScreen() {
   // Bulk retime: one time, applied to every selected row (each keeps its own
   // calendar day). Writes only the clock — never a macro. Selection is kept so a
   // partial failure stays on screen.
-  const onSetTimePicked = async (event: any, picked?: Date) => {
+  const onSetTimePicked = async (picked: Date) => {
     setSheet(null);
-    if (event?.type === "dismissed" || !picked) return;
     const ids = selectedEntries.map((e) => e.id);
     if (ids.length === 0) return;
 
@@ -449,21 +447,23 @@ export function TodayScreen() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       {showJump && (
-        <DateTimePicker
+        <DateTimeField
+          visible={showJump}
           value={parseDateKey(viewedDate)}
           mode="date"
-          display="default"
-          onChange={onJump}
+          onConfirm={onJump}
+          onCancel={() => setShowJump(false)}
         />
       )}
 
       {sheet === "time" && (
-        <DateTimePicker
+        <DateTimeField
+          visible={sheet === "time"}
           value={new Date(selectedEntries[0]?.eaten_at ?? Date.now())}
           mode="time"
           is24Hour
-          display="default"
-          onChange={onSetTimePicked}
+          onConfirm={onSetTimePicked}
+          onCancel={() => setSheet(null)}
         />
       )}
 
@@ -693,9 +693,8 @@ function DayPage({
     setShowAddPicker(true);
   };
 
-  const onAddTimePicked = (event: any, picked?: Date) => {
+  const onAddTimePicked = (picked: Date) => {
     setShowAddPicker(false);
-    if (event?.type === "dismissed" || !picked) return;
     // The page's OWN date, not today — this is what makes "plan for 19:00
     // tomorrow" land on tomorrow. sameTimeOnDay also switches OFF the
     // midnight roll-back heuristic, which would otherwise fight this.
@@ -1088,12 +1087,13 @@ function DayPage({
       )}
 
       {showAddPicker && (
-        <DateTimePicker
+        <DateTimeField
+          visible={showAddPicker}
           value={addPickerSeed}
           mode="time"
           is24Hour
-          display="default"
-          onChange={onAddTimePicked}
+          onConfirm={onAddTimePicked}
+          onCancel={() => setShowAddPicker(false)}
         />
       )}
 
@@ -1591,20 +1591,21 @@ function ApplyBundleSheet({
       </View>
 
       {pickingTimeFor && (
-        <DateTimePicker
+        <DateTimeField
+          visible={pickingTimeFor != null}
           value={pickerSeed}
           mode="time"
           is24Hour
-          display="default"
-          onChange={(event: any, picked?: Date) => {
+          onConfirm={(picked) => {
             const bundle = pickingTimeFor;
             setPickingTimeFor(null);
-            if (event?.type === "dismissed" || !picked || !bundle) return;
+            if (!bundle) return;
             onApply(bundle, {
               hours: picked.getHours(),
               minutes: picked.getMinutes(),
             });
           }}
+          onCancel={() => setPickingTimeFor(null)}
         />
       )}
     </Modal>

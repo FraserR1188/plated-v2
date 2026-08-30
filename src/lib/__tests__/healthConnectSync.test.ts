@@ -1,7 +1,7 @@
 // ============================================================
 // src/lib/__tests__/healthConnectSync.test.ts
 //
-// Covers three rounds of fixes to healthConnectSync.ts:
+// Covers four rounds of fixes to healthConnectSync.ts:
 //
 //   1. (CLIENT_NOT_INITIALIZED fix) syncHealthConnect() must stop on a
 //      genuine grant-state 'error' result rather than treating it as
@@ -11,15 +11,41 @@
 //   2. (the "Nothing new." masking bug) a sync where every attempted
 //      domain failed must produce a DIFFERENT counts/errors shape than
 //      one that genuinely found nothing new.
-//   3. (the late-history-grant backfill) a pre-migration bare-string
-//      token must be read without throwing and without being treated as
-//      "no stored token"; a stored baseline narrower than the current
-//      history grant triggers exactly one bounded backfill covering the
-//      gap, widens the stored baseline so it does not repeat, and does
-//      so purely by comparing live grant state against the stored
-//      baseline rather than a separate one-shot flag; and the
-//      token-expiry re-pull depth now follows hasHistory instead of
-//      being hardcoded to 30.
+//   3/4. (the late-history-grant backfill, then the hasHistory-always-
+//      false fix) a pre-migration bare-string token must be read without
+//      throwing and without being treated as "no stored token"; a stored
+//      baseline narrower than the full window triggers exactly one
+//      bounded backfill attempt covering the gap and widens the stored
+//      baseline on success; and the token-expiry re-pull reaches the
+//      same depth a first sync would.
+//
+// IMPORTANT — why these are NOT mock-matches-implementation tests:
+// getHealthConnectGrantState().grants.history is confirmed to always be
+// false on a real device (react-native-health-connect@4.1.3's own
+// mapPermissionResult() never reports it — see healthConnect.ts and
+// healthConnectSync.ts's module headers). So this module no longer asks
+// a permission API at all for the backfill decision — it attempts the
+// real 180-day read and reacts to whether Health Connect allows it,
+// distinguishing a permission-shaped rejection (error.code
+// "PERMISSION_ERROR", assumed from a SecurityException — see
+// isHistoryPermissionDenied()'s doc comment) from any other failure.
+// The tests below exercise BOTH sides of that discrminator with a
+// REALISTIC native error shape ({code, message}, matching
+// errors.ts's rejectWithException contract) — not just the happy path a
+// hand-built mock could trivially satisfy either way. Critically, one
+// test asserts that an UNRELATED error code does NOT fall back silently
+// but propagates as a genuine failure — that's the side of the boundary
+// a mock "shaped to match the implementation" would never bother
+// checking, and it's exactly the kind of bug (treating any read failure
+// as "no history") this design has to not have.
+//
+// What these tests CANNOT prove: that "PERMISSION_ERROR" is actually the
+// code react-native-health-connect/AndroidX returns for this specific
+// 30-day-floor rejection in reality. That is a fact about the real
+// native module, not about this file's logic, and only a device run can
+// confirm it — see healthConnectSync:widestAvailable's devLog output
+// (failed:true, code:<whatever it really is>) the first time a sync
+// actually hits this path without history granted.
 // ============================================================
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -63,6 +89,14 @@ const EMPTY_GRANTS = {
   workouts: false,
   history: false,
 };
+
+// The real native rejection shape (RN's Promise.reject(code, message, ...)
+// surfaces as an Error with a `.code` string property — see errors.ts's
+// rejectWithException). Building rejections this way, rather than a bare
+// Error, is what makes the discrimination tests meaningful.
+function nativeError(code: string, message = "native error"): Error {
+  return Object.assign(new Error(message), { code });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -154,7 +188,7 @@ describe("syncHealthConnect — distinguishing outcomes (the 'Nothing new.' mask
       grants: { ...EMPTY_GRANTS, sleep: true, hrv: true },
     });
     vi.mocked(AsyncStorage.getItem).mockResolvedValue(null);
-    vi.mocked(readRecords).mockRejectedValue(new Error("Health Connect read failed"));
+    vi.mocked(readRecords).mockRejectedValue(nativeError("IO_EXCEPTION", "Health Connect read failed"));
 
     const result = await syncHealthConnect();
 
@@ -173,7 +207,7 @@ describe("syncHealthConnect — distinguishing outcomes (the 'Nothing new.' mask
       if (recordType === "SleepSession") {
         return { records: [], pageToken: undefined } as never;
       }
-      throw new Error("hrv read failed");
+      throw nativeError("IO_EXCEPTION", "hrv read failed");
     });
 
     const result = await syncHealthConnect();
@@ -215,7 +249,7 @@ describe("syncHealthConnect — client initialisation", () => {
   });
 });
 
-// ── Late-history-grant backfill ──────────────────────────────────────────
+// ── Late-history-grant backfill: determined empirically, not by asking ──
 //
 // A day-count constant, kept independent of healthConnectSync.ts's own
 // DAY_MS — an assertion built from the same constant it's checking would
@@ -243,9 +277,15 @@ describe("syncHealthConnect — legacy token migration", () => {
   it("a pre-migration bare-string token is read without throwing and is NOT treated as 'no stored token' — the incremental branch runs using it as the token", async () => {
     vi.mocked(getHealthConnectGrantState).mockResolvedValue({
       status: "ok",
-      grants: { ...EMPTY_GRANTS, sleep: true }, // history stays off
+      grants: { ...EMPTY_GRANTS, sleep: true },
     });
     vi.mocked(AsyncStorage.getItem).mockResolvedValue("legacy-bare-token");
+    // Isolate this test to the migration property alone: the assumed
+    // 30-day baseline (< 180) means a backfill attempt fires regardless —
+    // deny it here so this test's only claim is "the legacy token itself
+    // survives and is reused", not anything about backfill window math
+    // (covered separately below).
+    vi.mocked(readRecords).mockRejectedValue(nativeError("PERMISSION_ERROR"));
     vi.mocked(getChanges).mockResolvedValue(OK_NO_CHANGES);
 
     const result = await syncHealthConnect();
@@ -254,14 +294,12 @@ describe("syncHealthConnect — legacy token migration", () => {
     expect(getChanges).toHaveBeenCalledWith(
       expect.objectContaining({ changesToken: "legacy-bare-token" }),
     );
-    // Did NOT restart from scratch — that would show up as a readRecords() call.
-    expect(readRecords).not.toHaveBeenCalled();
   });
 
-  it("a legacy token, when history is granted NOW, triggers exactly one backfill — its unrecorded baseline is assumed to have been 30 days, not 180", async () => {
+  it("a legacy token's assumed 30-day baseline, when the wide read is actually allowed, triggers exactly one backfill covering 31-180 days back", async () => {
     vi.mocked(getHealthConnectGrantState).mockResolvedValue({
       status: "ok",
-      grants: { ...EMPTY_GRANTS, sleep: true, history: true },
+      grants: { ...EMPTY_GRANTS, sleep: true },
     });
     vi.mocked(AsyncStorage.getItem).mockResolvedValue("legacy-bare-token");
     vi.mocked(readRecords).mockResolvedValue({
@@ -289,10 +327,10 @@ describe("syncHealthConnect — legacy token migration", () => {
 });
 
 describe("syncHealthConnect — late-history-grant backfill (recorded baseline)", () => {
-  it("baseline 30 + history now granted: exactly one backfill covering 31-180 days back", async () => {
+  it("baseline 30 + the wide read is actually allowed: exactly one backfill covering 31-180 days back", async () => {
     vi.mocked(getHealthConnectGrantState).mockResolvedValue({
       status: "ok",
-      grants: { ...EMPTY_GRANTS, sleep: true, history: true },
+      grants: { ...EMPTY_GRANTS, sleep: true },
     });
     vi.mocked(AsyncStorage.getItem).mockResolvedValue(
       JSON.stringify({
@@ -323,10 +361,10 @@ describe("syncHealthConnect — late-history-grant backfill (recorded baseline)"
     expect(written.baselineWindowDays).toBe(180);
   });
 
-  it("baseline 180: no backfill, even with history granted — already at full depth", async () => {
+  it("baseline 180: no backfill is even attempted — already at full depth, regardless of what a read would do", async () => {
     vi.mocked(getHealthConnectGrantState).mockResolvedValue({
       status: "ok",
-      grants: { ...EMPTY_GRANTS, sleep: true, history: true },
+      grants: { ...EMPTY_GRANTS, sleep: true },
     });
     vi.mocked(AsyncStorage.getItem).mockResolvedValue(
       JSON.stringify({
@@ -342,7 +380,7 @@ describe("syncHealthConnect — late-history-grant backfill (recorded baseline)"
     expect(readRecords).not.toHaveBeenCalled();
   });
 
-  it("baseline 30, history NOT granted: no backfill — nothing available to backfill with", async () => {
+  it("baseline 30, the wide read is denied (PERMISSION_ERROR): baseline stays unwidened so the next sync retries", async () => {
     vi.mocked(getHealthConnectGrantState).mockResolvedValue({
       status: "ok",
       grants: { ...EMPTY_GRANTS, sleep: true },
@@ -354,14 +392,56 @@ describe("syncHealthConnect — late-history-grant backfill (recorded baseline)"
         baselineAt: "2024-01-01T00:00:00.000Z",
       }),
     );
+    vi.mocked(readRecords).mockRejectedValue(nativeError("PERMISSION_ERROR"));
     vi.mocked(getChanges).mockResolvedValue(OK_NO_CHANGES);
 
-    await syncHealthConnect();
+    const result = await syncHealthConnect();
 
-    expect(readRecords).not.toHaveBeenCalled();
+    // Denied, but NOT a failure — this is the expected "not available yet"
+    // outcome, not an error to report.
+    expect(result.ok).toBe(true);
+    // The incremental loop still ran on the preserved token.
+    expect(getChanges).toHaveBeenCalledWith(
+      expect.objectContaining({ changesToken: "tok-1" }),
+    );
+    // No widened baseline was ever persisted.
+    const writtenBaselines = vi
+      .mocked(AsyncStorage.setItem)
+      .mock.calls.map((call) => JSON.parse(call[1] as string).baselineWindowDays);
+    expect(writtenBaselines).not.toContain(180);
   });
 
-  it("revoke then re-grant: a baseline already widened to 180 stays put across a revoke, and re-granting triggers no second backfill", async () => {
+  it("the wide read fails with an UNRELATED code (not a permission denial): propagates as a genuine domain failure, is NOT silently treated as 'no history'", async () => {
+    // This is the test a mock built to match the implementation would
+    // never bother writing: it proves the discrimination has two sides,
+    // not just "catch and assume the friendly case".
+    vi.mocked(getHealthConnectGrantState).mockResolvedValue({
+      status: "ok",
+      grants: { ...EMPTY_GRANTS, sleep: true },
+    });
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue(
+      JSON.stringify({
+        token: "tok-1",
+        baselineWindowDays: 30,
+        baselineAt: "2024-01-01T00:00:00.000Z",
+      }),
+    );
+    vi.mocked(readRecords).mockRejectedValue(nativeError("IO_EXCEPTION", "network blip"));
+
+    const result = await syncHealthConnect();
+
+    expect(result.ok).toBe(false);
+    expect(result.errors.sleep).toBe("network blip");
+    // The incremental loop never even ran — the failure propagated out of
+    // syncRecordType before reaching it.
+    expect(getChanges).not.toHaveBeenCalled();
+  });
+
+  it("loses then regains access: a baseline already widened to 180 stays put once access is lost, and regaining it triggers no second backfill", async () => {
+    // "Loses access" and "regains access" are modeled the only way this
+    // module can observe them at all: by whether the wide read itself
+    // succeeds. There is deliberately no separate permission flag to get
+    // out of sync with reality.
     vi.mocked(AsyncStorage.getItem).mockResolvedValue(
       JSON.stringify({
         token: "tok-1",
@@ -369,34 +449,35 @@ describe("syncHealthConnect — late-history-grant backfill (recorded baseline)"
         baselineAt: "2024-01-01T00:00:00.000Z",
       }),
     );
-    vi.mocked(getChanges).mockResolvedValue(OK_NO_CHANGES);
-
-    // Revoked: history now false.
     vi.mocked(getHealthConnectGrantState).mockResolvedValue({
       status: "ok",
       grants: { ...EMPTY_GRANTS, sleep: true },
     });
+    vi.mocked(getChanges).mockResolvedValue(OK_NO_CHANGES);
+    // If a backfill attempt happened at all here, it would find the wide
+    // read denied — but baseline 180 means it must never even be tried.
+    vi.mocked(readRecords).mockRejectedValue(nativeError("PERMISSION_ERROR"));
+
     await syncHealthConnect();
     expect(readRecords).not.toHaveBeenCalled();
 
-    // Re-granted. AsyncStorage.getItem is still mocked to return the SAME
-    // 180-baseline record — simulating that a revoke never resets it —
-    // so a real backfill trigger would be a genuine regression here, not
-    // an artifact of the mock.
-    vi.mocked(getHealthConnectGrantState).mockResolvedValue({
-      status: "ok",
-      grants: { ...EMPTY_GRANTS, sleep: true, history: true },
-    });
+    // "Regains access": the wide read would now succeed too. Still never
+    // attempted, for the same reason — baseline is still 180 in storage,
+    // and losing/regaining access never touched it.
+    vi.mocked(readRecords).mockResolvedValue({
+      records: [],
+      pageToken: undefined,
+    } as never);
     await syncHealthConnect();
     expect(readRecords).not.toHaveBeenCalled();
   });
 });
 
-describe("syncHealthConnect — token-expiry re-pull depth follows hasHistory", () => {
-  it("re-pulls a 180-day window when history is currently granted", async () => {
+describe("syncHealthConnect — token-expiry re-pull depth is determined empirically", () => {
+  it("re-pulls a 180-day window when the wide read is actually allowed", async () => {
     vi.mocked(getHealthConnectGrantState).mockResolvedValue({
       status: "ok",
-      grants: { ...EMPTY_GRANTS, sleep: true, history: true },
+      grants: { ...EMPTY_GRANTS, sleep: true },
     });
     vi.mocked(AsyncStorage.getItem).mockResolvedValue(
       JSON.stringify({
@@ -421,7 +502,7 @@ describe("syncHealthConnect — token-expiry re-pull depth follows hasHistory", 
     expect(daysAgoMs(startTime)).toBeLessThan(181 * DAY_MS);
   });
 
-  it("re-pulls only a 30-day window when history is NOT granted — previously hardcoded to 30 regardless, this now merely coincides with it", async () => {
+  it("falls back to a 30-day window when the wide read is denied — previously hardcoded to 30 regardless, this now merely coincides with it", async () => {
     vi.mocked(getHealthConnectGrantState).mockResolvedValue({
       status: "ok",
       grants: { ...EMPTY_GRANTS, sleep: true },
@@ -429,22 +510,22 @@ describe("syncHealthConnect — token-expiry re-pull depth follows hasHistory", 
     vi.mocked(AsyncStorage.getItem).mockResolvedValue(
       JSON.stringify({
         token: "tok-1",
-        baselineWindowDays: 30,
+        baselineWindowDays: 180,
         baselineAt: "2024-01-01T00:00:00.000Z",
       }),
     );
     vi.mocked(getChanges)
       .mockResolvedValueOnce({ changesTokenExpired: true } as never)
       .mockResolvedValueOnce({ nextChangesToken: "tok-3" } as never);
-    vi.mocked(readRecords).mockResolvedValue({
-      records: [],
-      pageToken: undefined,
-    } as never);
+    vi.mocked(readRecords)
+      .mockRejectedValueOnce(nativeError("PERMISSION_ERROR"))
+      .mockResolvedValueOnce({ records: [], pageToken: undefined } as never);
 
     await syncHealthConnect();
 
-    expect(readRecords).toHaveBeenCalledTimes(1);
-    const { startTime } = readRecordsCall().timeRangeFilter;
+    // Two calls: the denied wide attempt, then the narrow fallback.
+    expect(readRecords).toHaveBeenCalledTimes(2);
+    const { startTime } = readRecordsCall(1).timeRangeFilter;
     expect(daysAgoMs(startTime)).toBeGreaterThan(29 * DAY_MS);
     expect(daysAgoMs(startTime)).toBeLessThan(31 * DAY_MS);
   });

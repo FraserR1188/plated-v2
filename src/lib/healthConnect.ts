@@ -211,7 +211,23 @@ export type HealthConnectGrantState = {
   hrv: boolean;
   resting_hr: boolean;
   workouts: boolean;
-  /** PERMISSION_READ_HEALTH_DATA_HISTORY. See module header. */
+  /**
+   * PERMISSION_READ_HEALTH_DATA_HISTORY. See module header for the
+   * concept — but as of react-native-health-connect@4.1.3, THIS FIELD IS
+   * ALWAYS FALSE, regardless of the real OS-level grant. Confirmed from
+   * source: PermissionUtils.kt#mapPermissionResult()'s "handle special
+   * permissions" section checks PERMISSION_WRITE_EXERCISE_ROUTE and
+   * PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND, never
+   * PERMISSION_READ_HEALTH_DATA_HISTORY — a result-reporting omission
+   * present in both getGrantedPermissions() and requestPermission()'s own
+   * return value, not fixed in any published version or the unreleased
+   * main branch. The request side still works correctly (the OS genuinely
+   * grants the permission when asked); only reading it back is broken.
+   * healthConnectSync.ts does not consume this field for that reason — it
+   * determines the equivalent fact empirically instead (see that module's
+   * header, "WHICH WINDOW TO REQUEST"). Do not add a new consumer of this
+   * field without re-reading that section first.
+   */
   history: boolean;
 };
 

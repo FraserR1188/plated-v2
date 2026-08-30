@@ -30,13 +30,10 @@
 //
 // ── INITIAL SYNC VS INCREMENTAL SYNC ─────────────────────────────────────
 //
-// No stored token yet: readRecords() over a bounded time-range window
-// (180 days, or 30 without PERMISSION_READ_HEALTH_DATA_HISTORY — Health
-// Connect refuses anything older than 30 days without it regardless of
-// what range is requested, so asking for more than that is pointless
-// without the permission). A date-range query does not surface deletions
-// at all, which is fine for a first pull — there is nothing yet to have
-// been deleted FROM.
+// No stored token yet: readRecords() over a bounded time-range window —
+// see "WHICH WINDOW TO REQUEST" below for how wide. A date-range query
+// does not surface deletions at all, which is fine for a first pull —
+// there is nothing yet to have been deleted FROM.
 //
 // Once a token exists: getChanges({changesToken, recordTypes}) instead.
 // This is what propagates deletions (a plain readRecords() call never
@@ -46,11 +43,63 @@
 // getChanges() invalidates a token after ~30 days of inactivity
 // (changesTokenExpired: true). There is no way to resume from where an
 // expired token left off — the only correct move is a bounded re-pull, at
-// whatever depth hasHistory currently supports (currentWindowDays() below
-// — this used to be hardcoded to 30 regardless of hasHistory, which meant
-// the expiry recovery path could never reach as deep as a first sync
-// would; see the backfill section below for why that mattered), plus
-// minting a fresh token to pick up from now.
+// whatever depth is actually available right now (pullWidestAvailable()
+// below — this used to be hardcoded to 30 regardless of what was
+// actually readable, which meant the expiry recovery path could never
+// reach as deep as a first sync would), plus minting a fresh token to
+// pick up from now.
+//
+// ── WHICH WINDOW TO REQUEST: DETERMINED BY TRYING, NOT BY ASKING ─────────
+//
+// getHealthConnectGrantState()'s grants.history is ALWAYS false, on every
+// device, regardless of whether "Access past data" is actually on in
+// Health Connect settings — confirmed from source, not inferred.
+// react-native-health-connect@4.1.3's PermissionUtils.kt#mapPermissionResult()
+// has a "handle special permissions" section that checks
+// PERMISSION_WRITE_EXERCISE_ROUTE and PERMISSION_READ_HEALTH_DATA_IN_BACKGROUND
+// — never PERMISSION_READ_HEALTH_DATA_HISTORY. The REQUEST side
+// (parsePermissions(), in the same file) correctly maps our
+// 'ReadHealthDataHistory' entry to the real AndroidX permission and the OS
+// genuinely grants it — this is purely a result-REPORTING omission,
+// present in both getGrantedPermissions() and requestPermission()'s own
+// return value (both funnel through the same mapPermissionResult()). No
+// published version fixes it — 4.1.3 is npm's current latest, and the
+// unreleased main branch on GitHub has the identical omission — so there
+// is no version to bump to.
+//
+// A narrow probe just past the 30-day mark (read a thin slice at ~31 days
+// back and see if it's allowed) was considered and rejected: Health
+// Connect's 30-day floor is not a rolling window, it's FIXED at (the date
+// permissions were first granted − 30 days), and the readable range from
+// that fixed floor to "now" widens on its own as real time passes, with
+// or without the history permission (developer.android.com/health-and-
+// fitness/health-connect/read-data). A narrow probe would eventually
+// start succeeding for an app that's simply been connected a long time,
+// independent of whether history was ever granted — exactly the kind of
+// silent false positive this whole feature exists to eliminate.
+//
+// So this module doesn't infer permission state at all. It attempts the
+// ACTUAL 180-day read it wants and reacts to what genuinely happens. If
+// Health Connect allows it, that IS the fact that matters — whether
+// because history is granted or because enough time has passed since the
+// original grant, the data is genuinely there to read either way, which
+// is the only thing the backfill decision cares about. If Health Connect
+// rejects it, this falls back to a plain 30-day pull for this sync and
+// leaves the stored baseline unwidened, so the wide attempt is retried on
+// every future sync until it succeeds (e.g. once the user grants
+// history) — see isHistoryPermissionDenied()/pullWidestAvailable().
+//
+// The rejection is expected to carry error.code "PERMISSION_ERROR" (a
+// SecurityException on the native side — see errors.ts's
+// rejectWithException mapping). That's the best-supported reading of
+// Android's own documented behaviour ("an attempt to read records older
+// than 30 days results in an error"), NOT something confirmed against a
+// real device yet. Every caught error at these call sites is logged
+// (dev-only) with its real code before this module decides what to do
+// with it, specifically so a wrong assumption about that code is visible
+// on the very first real run rather than silently mishandled. An error
+// whose code doesn't match is NEVER treated as a permission denial — it
+// propagates as a genuine failure, exactly like any other domain error.
 //
 // ── STORED VALUE SHAPE, AND THE LATE-HISTORY-GRANT BACKFILL ─────────────
 //
@@ -61,31 +110,29 @@
 // incremental advance rewrites the token but does not change what the
 // baseline covered).
 //
-// Why this exists: hasHistory (PERMISSION_READ_HEALTH_DATA_HISTORY) used
-// to be consulted in exactly one place — choosing 180 vs 30 days when
-// there was no stored token yet, i.e. only on the very first sync ever
-// for that record type. Once a token existed, every later sync took the
-// incremental getChanges() branch, which never looked at hasHistory again
-// and had no record of what window its baseline had covered. A user who
-// granted history AFTER that first sync was then permanently capped at
-// 30 days, with no code path that ever revisited the 31-180 day gap —
-// confirmed on-device (oldest sleep session exactly 30 days back despite
-// "Access past data" being on).
+// Why this exists: a wide read used to be attempted only on a record
+// type's very first-ever sync (when there was no stored token yet). Once
+// a token existed, every later sync took the incremental getChanges()
+// branch, which never attempted a wider read again and had no record of
+// what window its baseline had covered. A user who gained access to
+// deeper history AFTER that first sync was then permanently capped at
+// whatever the first sync happened to reach, with no code path that ever
+// revisited the gap — confirmed on-device (oldest sleep session exactly
+// 30 days back despite "Access past data" being on).
 //
-// The fix: every sync compares the CURRENT hasHistory against the stored
-// baselineWindowDays. If history is granted now and the baseline was ever
-// narrower than the full window, one bounded pull covers exactly the gap
-// (31-180 days back), then the stored baseline widens so it doesn't
-// repeat. This is a comparison against live permission state, not a
-// separate "have I backfilled" flag — a flag can drift from what's
-// actually granted; recomputing "is the stored baseline still narrower
-// than what's available now" from scratch every time cannot. A user who
-// revokes history after backfilling and later re-grants it lands
-// correctly for the same reason: baselineWindowDays stays at 180 across
-// the revoke (nothing about revoking un-syncs already-ingested data), so
-// the comparison correctly finds nothing left to backfill on re-grant.
+// The fix: every sync where the stored baseline is narrower than the full
+// window attempts to close the gap (see pullWidestAvailable/
+// tryBackfillHistoryGap above). A successful attempt widens the stored
+// baseline so it doesn't repeat; a permission-shaped failure leaves it
+// untouched so the NEXT sync tries again. This is a live retry against
+// reality every time, not a one-shot flag — a flag can drift from what's
+// actually available; re-attempting from scratch every time cannot. A
+// user who loses and later regains access lands correctly for the same
+// reason: baselineWindowDays stays at 180 across the gap (nothing about
+// losing access un-syncs already-ingested data), so there's genuinely
+// nothing left to backfill once it's already succeeded once.
 //
-// Re-reading records the backfill may have already synced (e.g. a partial
+// Re-reading records a backfill may have already synced (e.g. a partial
 // prior attempt, or a shorter re-run) is safe: health-connect-ingest
 // upserts on (user_id, origin_package, provider_record_id), so replaying
 // an already-ingested record is an idempotent overwrite, not a duplicate.
@@ -109,11 +156,6 @@ const INITIAL_WINDOW_DAYS = 180;
 const NO_HISTORY_WINDOW_DAYS = 30; // Health Connect's own hard floor without the history permission
 const PAGE_SIZE = 200;
 const DAY_MS = 86_400_000;
-
-/** The window a fresh bounded pull should use right now, given the current history grant. Used for the very first sync AND for the token-expiry re-pull — both are "start over at whatever depth is available today". */
-function currentWindowDays(hasHistory: boolean): number {
-  return hasHistory ? INITIAL_WINDOW_DAYS : NO_HISTORY_WINDOW_DAYS;
-}
 
 /**
  * Dev-only diagnostic logging. This module's actual behaviour (which
@@ -363,6 +405,102 @@ async function backfillHistoryGap(
   );
 }
 
+// See the module header ("WHICH WINDOW TO REQUEST") for why this is a
+// hypothesis, not a confirmed fact: the best-supported reading of
+// Android's documented 30-day-floor error is that it's a SecurityException
+// on the native side, which errors.ts's rejectWithException maps to this
+// code. Centralized in one place and one string so a wrong guess is a
+// one-line fix once a device confirms the real code.
+const HISTORY_PERMISSION_DENIED_CODE = "PERMISSION_ERROR";
+
+function isHistoryPermissionDenied(e: unknown): boolean {
+  return (e as { code?: unknown })?.code === HISTORY_PERMISSION_DENIED_CODE;
+}
+
+/**
+ * Attempts the full INITIAL_WINDOW_DAYS window; falls back to the
+ * guaranteed-safe NO_HISTORY_WINDOW_DAYS floor if, and only if, the
+ * rejection looks like the history-floor denial specifically (see module
+ * header). Any other error propagates — a native failure unrelated to the
+ * date range must surface as a genuine sync failure, not get silently
+ * reinterpreted as "no history".
+ *
+ * Used for a record type's very first-ever sync AND for the token-expiry
+ * re-pull — both are "start over at whatever depth is actually available
+ * right now", determined by trying rather than by asking a permission API
+ * that cannot answer this truthfully.
+ */
+async function pullWidestAvailable(
+  recordType: RecordType,
+): Promise<{ total: number; windowDays: number }> {
+  const now = Date.now();
+  try {
+    const total = await pullTimeRange(
+      recordType,
+      new Date(now - INITIAL_WINDOW_DAYS * DAY_MS).toISOString(),
+      new Date(now).toISOString(),
+    );
+    devLog("healthConnectSync:widestAvailable", {
+      recordType,
+      windowDays: INITIAL_WINDOW_DAYS,
+      recordsRead: total,
+    });
+    return { total, windowDays: INITIAL_WINDOW_DAYS };
+  } catch (e) {
+    const denied = isHistoryPermissionDenied(e);
+    devLog("healthConnectSync:widestAvailable", {
+      recordType,
+      attemptedWindowDays: INITIAL_WINDOW_DAYS,
+      failed: true,
+      code: (e as { code?: unknown })?.code,
+      message: e instanceof Error ? e.message : String(e),
+      treatedAs: denied
+        ? "history floor — falling back to the 30-day window"
+        : "unrelated failure — rethrowing, NOT treated as a permission denial",
+    });
+    if (!denied) throw e;
+    const total = await boundedPull(recordType, NO_HISTORY_WINDOW_DAYS);
+    return { total, windowDays: NO_HISTORY_WINDOW_DAYS };
+  }
+}
+
+/**
+ * Attempts the backfill read; reports whether it actually widened
+ * coverage. A permission-shaped rejection leaves the baseline untouched
+ * (widened: false) so this is retried on every future sync until it
+ * succeeds. Any other error propagates, same reasoning as
+ * pullWidestAvailable above.
+ */
+async function tryBackfillHistoryGap(
+  recordType: RecordType,
+  previousBaselineWindowDays: number,
+): Promise<{ total: number; widened: boolean }> {
+  try {
+    const total = await backfillHistoryGap(recordType, previousBaselineWindowDays);
+    devLog("healthConnectSync:backfillAttempt", {
+      recordType,
+      previousBaselineWindowDays,
+      succeeded: true,
+      recordsRead: total,
+    });
+    return { total, widened: true };
+  } catch (e) {
+    const denied = isHistoryPermissionDenied(e);
+    devLog("healthConnectSync:backfillAttempt", {
+      recordType,
+      previousBaselineWindowDays,
+      succeeded: false,
+      code: (e as { code?: unknown })?.code,
+      message: e instanceof Error ? e.message : String(e),
+      treatedAs: denied
+        ? "history still not available — baseline left unwidened, will retry next sync"
+        : "unrelated failure — rethrowing, NOT treated as a permission denial",
+    });
+    if (!denied) throw e;
+    return { total: 0, widened: false };
+  }
+}
+
 /** Mints a fresh changes-token anchor and records what window the pull preceding it covered. Discards the changes payload itself — there is no meaningful prior state to diff on a first call. */
 async function bootstrapToken(
   recordType: RecordType,
@@ -376,10 +514,7 @@ async function bootstrapToken(
   });
 }
 
-async function syncRecordType(
-  recordType: RecordType,
-  hasHistory: boolean,
-): Promise<number> {
+async function syncRecordType(recordType: RecordType): Promise<number> {
   // Belt-and-braces: syncHealthConnect() below already calls this
   // transitively (via getHealthConnectGrantState()) before ever reaching
   // this function, but readRecords()/getChanges() have the exact same
@@ -392,8 +527,7 @@ async function syncRecordType(
   const stored = await getStoredTokenRecord(recordType);
 
   if (!stored) {
-    const windowDays = currentWindowDays(hasHistory);
-    const total = await boundedPull(recordType, windowDays);
+    const { total, windowDays } = await pullWidestAvailable(recordType);
     await bootstrapToken(recordType, windowDays);
     return total;
   }
@@ -402,37 +536,30 @@ async function syncRecordType(
   let baselineWindowDays = stored.baselineWindowDays;
   let baselineAt = stored.baselineAt;
 
-  // The late-history-grant backfill: see the module header. Comparing
-  // against the CURRENT hasHistory every sync — not a one-shot flag — is
-  // what makes a later revoke-then-re-grant land correctly, since
-  // baselineWindowDays only ever widens and a re-grant after an earlier
-  // successful backfill finds nothing left to do.
-  const backfillNeeded = hasHistory && baselineWindowDays < INITIAL_WINDOW_DAYS;
-  devLog("healthConnectSync:backfillDecision", {
-    recordType,
-    hasHistory,
-    baselineWindowDays,
-    backfillNeeded,
-    reason: backfillNeeded
-      ? undefined
-      : !hasHistory
-        ? "history not currently granted"
-        : `baseline (${baselineWindowDays}) already at or beyond the full window (${INITIAL_WINDOW_DAYS})`,
-  });
-  if (backfillNeeded) {
-    total += await backfillHistoryGap(recordType, baselineWindowDays);
-    baselineWindowDays = INITIAL_WINDOW_DAYS;
-    baselineAt = new Date().toISOString();
-    // Persisted immediately, before the incremental loop below: if that
-    // loop fails partway through, the backfill itself already landed
-    // (postBatch succeeded for every page it read) and must not be
-    // redone on the next attempt just because this sync pass overall
-    // errored.
-    await setStoredTokenRecord(recordType, {
-      token: stored.token,
-      baselineWindowDays,
-      baselineAt,
-    });
+  // The late-history-grant backfill: see the module header. Attempting
+  // this fresh every sync where the baseline is still narrow — rather
+  // than gating it on a permission flag this library cannot report
+  // truthfully — is what makes a later loss-then-regain of access land
+  // correctly: baselineWindowDays only ever widens on an actual
+  // successful read, and a regain after an earlier successful backfill
+  // finds nothing left to do (baseline is already 180).
+  if (baselineWindowDays < INITIAL_WINDOW_DAYS) {
+    const backfill = await tryBackfillHistoryGap(recordType, baselineWindowDays);
+    total += backfill.total;
+    if (backfill.widened) {
+      baselineWindowDays = INITIAL_WINDOW_DAYS;
+      baselineAt = new Date().toISOString();
+      // Persisted immediately, before the incremental loop below: if that
+      // loop fails partway through, the backfill itself already landed
+      // (postBatch succeeded for every page it read) and must not be
+      // redone on the next attempt just because this sync pass overall
+      // errored.
+      await setStoredTokenRecord(recordType, {
+        token: stored.token,
+        baselineWindowDays,
+        baselineAt,
+      });
+    }
   }
 
   let currentToken = stored.token;
@@ -445,8 +572,8 @@ async function syncRecordType(
 
     if (result.changesTokenExpired) {
       await clearStoredToken(recordType);
-      const windowDays = currentWindowDays(hasHistory);
-      total += await boundedPull(recordType, windowDays);
+      const { total: repullTotal, windowDays } = await pullWidestAvailable(recordType);
+      total += repullTotal;
       await bootstrapToken(recordType, windowDays);
       return total;
     }
@@ -513,7 +640,7 @@ export async function syncHealthConnect(): Promise<HealthConnectSyncResult> {
 
     const recordType = DOMAIN_RECORD_TYPE[domain] as RecordType;
     try {
-      counts[domain] = await syncRecordType(recordType, grants.history);
+      counts[domain] = await syncRecordType(recordType);
     } catch (e) {
       reportError(`healthConnectSync:${domain}`, e);
       errors[domain] = e instanceof Error ? e.message : "Sync failed.";

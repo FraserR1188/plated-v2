@@ -38,13 +38,15 @@
         "expo-image-picker",
         {
           "photosPermission": "plated needs access to your photos so you can add a picture to a food you've created.",
-          "cameraPermission": "plated uses your camera to scan barcodes and photograph foods you create."
+          "cameraPermission": "plated uses your camera to scan barcodes and photograph foods you create.",
+          "microphonePermission": false
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "plated uses your camera to scan barcodes and photograph foods you create."
+          "cameraPermission": "plated uses your camera to scan barcodes and photograph foods you create.",
+          "microphonePermission": false
         }
       ],
       "@react-native-community/datetimepicker",

@@ -28,6 +28,9 @@
         "backgroundColor": "#1B1F24"
       }
     },
+    "ios": {
+      "bundleIdentifier": "com.fraseranalytics.plated"
+    },
     "plugins": [
       "expo-dev-client",
       "expo-updates",
@@ -35,13 +38,13 @@
         "expo-image-picker",
         {
           "photosPermission": "plated needs access to your photos so you can add a picture to a food you've created.",
-          "cameraPermission": "plated needs camera access so you can photograph a food you've created."
+          "cameraPermission": "plated uses your camera to scan barcodes and photograph foods you create."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "plated needs camera access to scan food barcodes."
+          "cameraPermission": "plated uses your camera to scan barcodes and photograph foods you create."
         }
       ],
       "@react-native-community/datetimepicker",

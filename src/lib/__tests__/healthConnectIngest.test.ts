@@ -18,11 +18,12 @@
 // with.
 // ============================================================
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   num,
   validateOriginPackage,
   providerRecordId,
+  normalizeZoneOffsetId,
   mapSleepSession,
   mapHrv,
   mapRestingHr,
@@ -105,6 +106,59 @@ describe("providerRecordId", () => {
   });
 });
 
+describe("normalizeZoneOffsetId", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("maps 'Z' to '+00:00' — the value that broke biometric_workouts (22007, invalid_datetime_format) when cast straight to interval", () => {
+    expect(normalizeZoneOffsetId("Z", "test")).toBe("+00:00");
+  });
+
+  it("does not log for 'Z' — it is a recognised, correctly-handled value, not an anomaly", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    normalizeZoneOffsetId("Z", "test");
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("passes an already-correct ±HH:MM offset through unchanged", () => {
+    expect(normalizeZoneOffsetId("+01:00", "test")).toBe("+01:00");
+    expect(normalizeZoneOffsetId("-05:00", "test")).toBe("-05:00");
+  });
+
+  it("passes a ±HH:MM:SS offset through unchanged — Postgres's interval parser accepts this form directly, same as ±HH:MM", () => {
+    expect(normalizeZoneOffsetId("+01:00:30", "test")).toBe("+01:00:30");
+  });
+
+  it("is null, and does not log, when the field is absent — Health Connect legitimately omits it sometimes", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(normalizeZoneOffsetId(undefined, "test")).toBeNull();
+    expect(normalizeZoneOffsetId(null, "test")).toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("rejects a bare '+HH' with no minutes — java.time.ZoneOffset#getId() never emits this shape, and admitting it silently would defeat the whole point of pattern-matching the documented contract instead of guessing", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(normalizeZoneOffsetId("+01", "test")).toBeNull();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("is null, and logs via console.error, for an unrecognised value — never guessed, never passed through", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = normalizeZoneOffsetId("Europe/London", "test-context");
+    expect(result).toBeNull();
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0][0]).toMatch(/Europe\/London/);
+    expect(spy.mock.calls[0][0]).toMatch(/test-context/);
+  });
+
+  it("is null, and logs, for a non-string value — the type contract from java.time.ZoneOffset#getId() is always a string, so anything else is a real anomaly", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(normalizeZoneOffsetId(12345, "test")).toBeNull();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+});
+
 const BASE_SLEEP = {
   startTime: "2026-08-28T22:00:00.000Z",
   endTime: "2026-08-29T06:00:00.000Z",
@@ -173,6 +227,14 @@ describe("mapSleepSession", () => {
 
     expect(row.ingest_transport).toBe("health_connect");
   });
+
+  it("normalises startZoneOffset.id through normalizeZoneOffsetId — 'Z' becomes '+00:00', not passed through raw", () => {
+    const row = mapSleepSession("user-1", "com.fitbit.FitbitMobile", {
+      ...BASE_SLEEP,
+      startZoneOffset: { id: "Z", totalSeconds: 0 },
+    });
+    expect(row.timezone_offset).toBe("+00:00");
+  });
 });
 
 const BASE_HRV = {
@@ -201,6 +263,14 @@ describe("mapHrv", () => {
     expect(row.hrv_method).toBe("rmssd");
     expect(row.hrv_unit).toBe("ms");
   });
+
+  it("normalises zoneOffset.id through normalizeZoneOffsetId — 'Z' becomes '+00:00'", () => {
+    const row = mapHrv("user-1", "com.oura.ring", {
+      ...BASE_HRV,
+      zoneOffset: { id: "Z", totalSeconds: 0 },
+    });
+    expect(row.timezone_offset).toBe("+00:00");
+  });
 });
 
 const BASE_RHR = {
@@ -227,6 +297,17 @@ describe("mapRestingHr", () => {
     );
     expect(row.resting_heart_rate).toBeNull();
     expect(row.measurement_scope).toBe("period");
+  });
+
+  it("normalises zoneOffset.id through normalizeZoneOffsetId — an unrecognised value becomes NULL, not passed through raw", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const row = mapRestingHr("user-1", "com.garmin.android.apps.connectmobile", {
+      ...BASE_RHR,
+      zoneOffset: { id: "bogus", totalSeconds: 0 },
+    });
+    expect(row.timezone_offset).toBeNull();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
   });
 });
 
@@ -277,5 +358,13 @@ describe("mapExerciseSession", () => {
     expect(row.energy_kilojoule).toBeNull();
     expect(row.distance_meter).toBeNull();
     expect(row.altitude_gain_meter).toBeNull();
+  });
+
+  it("normalises startZoneOffset.id through normalizeZoneOffsetId — an already-correct ±HH:MM passes through unchanged", () => {
+    const row = mapExerciseSession("user-1", "com.strava", {
+      ...BASE_EXERCISE,
+      startZoneOffset: { id: "+01:00", totalSeconds: 3600 },
+    });
+    expect(row.timezone_offset).toBe("+01:00");
   });
 });

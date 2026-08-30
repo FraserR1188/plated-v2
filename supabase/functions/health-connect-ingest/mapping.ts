@@ -56,6 +56,75 @@ export function validateOriginPackage(raw: unknown): OriginResult {
   return { ok: true, value: raw };
 }
 
+// ─── timezone_offset normalisation ───────────────────────────────────────
+//
+// Health Connect's zone-offset fields (r.startZoneOffset / r.zoneOffset,
+// per record type below) serialise java.time.ZoneOffset#getId() verbatim
+// (confirmed by reading react-native-health-connect's Kotlin source,
+// HealthConnectUtils.kt's zoneOffsetToJsMap and every one of the four
+// record types' own native mapper — all four route through it). That
+// method's contract (java.time.ZoneOffset, a FIXED-offset class, never an
+// IANA region like ZoneId can be) allows exactly three shapes: 'Z' for
+// UTC, '+HH:MM' / '-HH:MM', or — rarely, only for historical sub-minute
+// offsets — '+HH:MM:SS' / '-HH:MM:SS'. Nothing else is possible from this
+// field; there is no bare '+01' form and no IANA zone name to plan for.
+//
+// 'Z' is valid ISO-8601 but NOT valid Postgres interval-literal syntax —
+// `'Z'::interval` raises 22007 (invalid_datetime_format). Confirmed
+// on-device: 60 of 563 rows on one test account held 'Z', and because
+// biometric_workouts casts timezone_offset straight to interval with no
+// guard, that one value aborted the ENTIRE workouts query for that user,
+// WHOOP rows included (see the biometric_workouts migration for the
+// matching view-side defensive fix — this ingest-side fix and that one
+// address different things; a value already sitting in the database from
+// before this fix shipped needs the separate backfill, not just this).
+// Mapped to '+00:00' here — itself a valid ±HH:MM string — so it is never
+// written to a provider-neutral table at all going forward.
+//
+// The HH:MM:SS form needs no special-casing: Postgres's interval parser
+// already accepts '+01:00:30' directly, the same as it accepts '+01:00'.
+//
+// Anything else is unrecognised. Rather than guess — e.g. blindly writing
+// an unfamiliar string through to a text column with no CHECK constraint
+// on its content — it is written as NULL. timezone_offset is documented
+// as LABELLING ONLY on every provider-neutral table ("Never join on
+// this"), so losing it for one anomalous record loses a display nicety,
+// not a correctness-critical value. Logged via console.error so an
+// unexpected shape (a future Health Connect version, an unusual
+// contributing app) is visible in the function's dashboard logs —
+// Supabase Edge Function logs are dashboard-only, `supabase functions
+// logs` does not exist for CLI 2.x (see CLAUDE.md) — rather than silently
+// swallowed. This module intentionally has no other side effects
+// (validateOriginPackage above returns a result and lets its caller
+// decide what to log); console.error is used directly here rather than
+// threading a warnings array through every one of the four mappers and
+// back into index.ts, because unlike an invalid origin_package — which
+// means the whole record is untrustworthy and must be skipped — an
+// unrecognised offset is a single labelling-only field on an otherwise
+// good record that should still be saved.
+const FIXED_OFFSET_SHAPE = /^[+-]\d{2}:\d{2}(:\d{2})?$/;
+
+export function normalizeZoneOffsetId(
+  raw: unknown,
+  context: string,
+): string | null {
+  if (raw === null || raw === undefined) {
+    // Health Connect legitimately reports no offset at all sometimes —
+    // absent is not an error and is not logged.
+    return null;
+  }
+  if (raw === "Z") {
+    return "+00:00";
+  }
+  if (typeof raw === "string" && FIXED_OFFSET_SHAPE.test(raw)) {
+    return raw;
+  }
+  console.error(
+    `health-connect-ingest: unrecognised zone offset id ${JSON.stringify(raw)} (${context}) — written as NULL`,
+  );
+  return null;
+}
+
 /**
  * Prefers metadata.clientRecordId (stable across a phone switch — set by
  * the WRITING app, not by this device) and falls back to metadata.id
@@ -122,7 +191,10 @@ export function mapSleepSession(
     ingest_transport: "health_connect",
     origin_package: originPackage,
     provider_record_id: providerRecordId(r.metadata)!,
-    timezone_offset: r.startZoneOffset?.id ?? null,
+    timezone_offset: normalizeZoneOffsetId(
+      r.startZoneOffset?.id,
+      "SleepSession.startZoneOffset",
+    ),
     raw: r,
     source_updated_at: r.metadata?.lastModifiedTime ?? null,
     synced_at: new Date().toISOString(),
@@ -174,7 +246,10 @@ export function mapHrv(userId: string, originPackage: string, r: RawRecord) {
     ingest_transport: "health_connect",
     origin_package: originPackage,
     provider_record_id: providerRecordId(r.metadata)!,
-    timezone_offset: r.zoneOffset?.id ?? null,
+    timezone_offset: normalizeZoneOffsetId(
+      r.zoneOffset?.id,
+      "HeartRateVariabilityRmssd.zoneOffset",
+    ),
     raw: r,
     source_updated_at: r.metadata?.lastModifiedTime ?? null,
     synced_at: new Date().toISOString(),
@@ -205,7 +280,10 @@ export function mapRestingHr(
     ingest_transport: "health_connect",
     origin_package: originPackage,
     provider_record_id: providerRecordId(r.metadata)!,
-    timezone_offset: r.zoneOffset?.id ?? null,
+    timezone_offset: normalizeZoneOffsetId(
+      r.zoneOffset?.id,
+      "RestingHeartRate.zoneOffset",
+    ),
     raw: r,
     source_updated_at: r.metadata?.lastModifiedTime ?? null,
     synced_at: new Date().toISOString(),
@@ -320,7 +398,10 @@ export function mapExerciseSession(
     ingest_transport: "health_connect",
     origin_package: originPackage,
     provider_record_id: providerRecordId(r.metadata)!,
-    timezone_offset: r.startZoneOffset?.id ?? null,
+    timezone_offset: normalizeZoneOffsetId(
+      r.startZoneOffset?.id,
+      "ExerciseSession.startZoneOffset",
+    ),
     raw: r,
     source_updated_at: r.metadata?.lastModifiedTime ?? null,
     synced_at: new Date().toISOString(),

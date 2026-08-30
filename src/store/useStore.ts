@@ -626,6 +626,8 @@ export const useStore = create<AppState>((set, get) => ({
       energyKilojoule: w.energy_kilojoule,
       distanceMeter: w.distance_meter,
       strainScoreState: w.strain_score_state,
+      originPackage: w.origin_package,
+      ingestTransport: w.ingest_transport,
     }));
     set({ workouts });
   },

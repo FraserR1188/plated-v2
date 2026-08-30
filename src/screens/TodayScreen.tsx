@@ -34,6 +34,7 @@ import { roundSalt } from "../lib/macros";
 import { dayHeaderInfo } from "../lib/dayHeader";
 import { buildDayStream, BAND_LABELS } from "../lib/dayStream";
 import { kjToKcal } from "../lib/energy";
+import { getProviderLabel, getActivityLabel } from "../lib/workoutLabels";
 import {
   formatTime,
   formatDayLabel,
@@ -2636,12 +2637,18 @@ function WorkoutCard({
   const mins = durationMin % 60;
   const durationLabel = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
+  // A literal 0 is a real, confirmed value some providers write for
+  // distance/energy (not NULL) — but "0.00 km" next to a real duration
+  // reads as a data glitch, not as "no distance recorded." Suppressed
+  // for display only; the stored value is untouched, and NULL-not-zero
+  // still governs the write path, not this.
   const distanceKm =
-    workout.distanceMeter != null
+    workout.distanceMeter != null && workout.distanceMeter > 0
       ? (workout.distanceMeter / 1000).toFixed(2)
       : null;
 
-  const kcal = kjToKcal(workout.energyKilojoule);
+  const kcalRaw = kjToKcal(workout.energyKilojoule);
+  const kcal = kcalRaw != null && kcalRaw > 0 ? kcalRaw : null;
 
   return (
     <View style={[workoutStyles.row, bordered && streamStyles.rowBorder]}>
@@ -2650,13 +2657,17 @@ function WorkoutCard({
       <View style={workoutStyles.body}>
         <View style={workoutStyles.top}>
           <Text style={workoutStyles.sport} numberOfLines={1}>
-            {workout.sportName ?? "Workout"}
+            {getActivityLabel(workout.sportName, workout.ingestTransport)}
           </Text>
-          {/* Source mark — where a future Garmin/Apple badge lives, keyed
-              off the same ingestSource column. */}
+          {/* Source mark — origin_package, not ingest_transport: keeps a
+              direct WHOOP row and the same vendor's Health-Connect-routed
+              row distinguishable. See lib/workoutLabels. */}
           <View style={workoutStyles.sourceTag}>
             <Text style={workoutStyles.sourceTagText}>
-              {workout.ingestSource.toUpperCase()}
+              {getProviderLabel(
+                workout.originPackage,
+                workout.ingestTransport,
+              ).toUpperCase()}
             </Text>
           </View>
         </View>

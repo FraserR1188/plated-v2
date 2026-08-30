@@ -36,6 +36,8 @@ function makeWorkout(overrides: Partial<Workout> = {}): Workout {
   return {
     id: "w1",
     ingestSource: "whoop",
+    originPackage: "whoop.direct",
+    ingestTransport: "whoop",
     workoutStart: "2026-07-20T07:00:00.000Z",
     workoutEnd: "2026-07-20T07:45:00.000Z",
     timezoneOffset: null,

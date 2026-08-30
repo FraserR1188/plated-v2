@@ -578,7 +578,7 @@ export interface CopyPayload {
  */
 export interface Workout {
   id: string; // source_workout_id
-  ingestSource: string; // 'whoop'
+  ingestSource: string; // 'whoop' for a direct row, the origin package for a Health Connect row — kept for back-compat, superseded by originPackage/ingestTransport below for anything provider-label-related
   workoutStart: string; // ISO instant — both needed: duration + time position
   workoutEnd: string;
   timezoneOffset: string | null;
@@ -590,6 +590,15 @@ export interface Workout {
   energyKilojoule: number | null; // kJ. Converted to kcal only at render, via lib/energy.kjToKcal — see WorkoutCard
   distanceMeter: number | null;
   strainScoreState: string | null;
+  // Added for lib/workoutLabels: origin_package is the uniform, always-real
+  // provider identity across both arms ('whoop.direct' for direct, a real
+  // Android package for Health Connect) — unlike ingestSource, which holds
+  // the literal 'whoop' for a direct row. ingestTransport disambiguates
+  // which sportName VOCABULARY a row uses (WHOOP's own sport codes vs
+  // Health Connect's ExerciseType names) — never used to derive the label
+  // itself, only to pick which lookup applies.
+  originPackage: string;
+  ingestTransport: string;
 }
 
 // ─── Navigation ──────────────────────────────────────────────

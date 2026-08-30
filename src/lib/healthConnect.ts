@@ -165,6 +165,11 @@ function healthConnectErrorMessage(e: unknown): string {
     : "Health Connect ran into a problem.";
 }
 
+/** Same __DEV__-gated pattern as healthConnectSync.ts's devLog (ef64bd5) — kept local rather than shared, matching how this file already duplicates small single-purpose helpers instead of introducing a cross-file utility for a three-line function. */
+function devLog(operation: string, detail: unknown): void {
+  if (__DEV__) console.log(operation, detail);
+}
+
 // ============================================================
 // Permission request and grant state.
 //
@@ -255,6 +260,10 @@ export async function getHealthConnectGrantState(): Promise<HealthConnectGrantRe
   try {
     await ensureHealthConnectInitialized();
     const granted = (await getGrantedPermissions()) as AnyGrantedPermission[];
+    // Raw and unfiltered, deliberately — this is what settles whether the
+    // library's own result mapping ever reports history at all, as opposed
+    // to what our .filter()/.map() below chooses to keep from it.
+    devLog("healthConnect:rawGrantedPermissions", granted);
     const grantedTypes = new Set(
       granted
         .filter((p) => p.accessType === "read")

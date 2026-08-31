@@ -782,29 +782,62 @@ export const MEAL_ICONS: Record<MealType, string> = {
 export type WhoopScoreState = "SCORED" | "PENDING_SCORE" | "UNSCORABLE";
 
 /** One row of public.whoop_correlation. Column names are snake_case — this is
- *  read straight from a view, not through the camelCase mapping layer. */
+ *  read straight from a view, not through the camelCase mapping layer.
+ *
+ *  Rewritten in full for 20260901100000_whoop_correlation_repoint.sql — this
+ *  type is dead code today (zero runtime consumers, re-verified against
+ *  src/ and supabase/functions/ before this rewrite), so this pass also
+ *  fixes several fields that were already wrong or already missing BEFORE
+ *  that migration, not only the ones it introduces: kilojoule,
+ *  average_heart_rate, and timezone_offset were absent from this type
+ *  entirely despite always being real view columns; sleep_consistency_
+ *  percentage, total_awake_time_milli, and sleep_was_nap likewise; and
+ *  cycle_scored was typed as non-nullable `boolean` even though
+ *  `(score_state = 'SCORED')` evaluates to SQL NULL, not `false`, whenever
+ *  score_state itself is null. Nothing depended on any of that being wrong,
+ *  so there was no reason to carry it forward. */
 export type WhoopCorrelationRow = {
   user_id: string;
-  cycle_id: number;
+  cycle_id: string;
   cycle_start: string;
   cycle_end: string | null;
   is_in_progress: boolean;
+  timezone_offset: string | null;
   cycle_local_date: string;
+  /** effective_end is null: a stale, permanently-abandoned cycle OR a
+   *  genuinely-new one still inside the 36h grace window — is_in_progress
+   *  alone cannot tell those apart, this can. NOT the same signal. */
+  is_stale: boolean;
 
   // Same cycle: nutrition(N) fuelled strain(N).
   strain: number | null;
+  kilojoule: number | null;
+  average_heart_rate: number | null;
+  meal_count_same_cycle: number;
   kcal_same_cycle: number;
   protein_same_cycle: number;
   carbs_same_cycle: number;
   fat_same_cycle: number;
-  sat_fat_same_cycle: number;
-  salt_same_cycle: number;
-  fibre_same_cycle: number;
-  sugar_same_cycle: number;
-  meal_count_same_cycle: number;
+  // NULL-not-zero (commit 2.5): NULL when no contributing meal reported a
+  // value for this macro, never coalesced to 0. Read alongside the
+  // matching *_known_meals_same_cycle column before treating this as a
+  // complete total — see that column's own comment.
+  sat_fat_same_cycle: number | null;
+  salt_same_cycle: number | null;
+  fibre_same_cycle: number | null;
+  sugar_same_cycle: number | null;
+  /** How many of meal_count_same_cycle actually reported this macro. A
+   *  non-null macro value where known < meal_count is a PARTIAL sum, not a
+   *  cycle total — this type deliberately exposes the count and imposes no
+   *  completeness threshold; that's a consumer decision. */
+  sat_fat_known_meals_same_cycle: number;
+  salt_known_meals_same_cycle: number;
+  fibre_known_meals_same_cycle: number;
+  sugar_known_meals_same_cycle: number;
 
   // Lagged: nutrition(N-1) preceded recovery(N) and sleep(N). THE USP.
-  prev_cycle_id: number | null;
+  prev_cycle_id: string | null;
+  meal_count_prev_cycle: number | null;
   kcal_prev_cycle: number | null;
   protein_prev_cycle: number | null;
   carbs_prev_cycle: number | null;
@@ -813,32 +846,65 @@ export type WhoopCorrelationRow = {
   salt_prev_cycle: number | null;
   fibre_prev_cycle: number | null;
   sugar_prev_cycle: number | null;
-  meal_count_prev_cycle: number | null;
+  sat_fat_known_meals_prev_cycle: number | null;
+  salt_known_meals_prev_cycle: number | null;
+  fibre_known_meals_prev_cycle: number | null;
+  sugar_known_meals_prev_cycle: number | null;
   last_meal_before_sleep_at: string | null;
 
+  // Resolved cross-provider (biometric_periods_resolved), not a direct
+  // whoop_recoveries join as of 20260901100000.
   recovery_score: number | null;
-  hrv_rmssd_milli: number | null;
   resting_heart_rate: number | null;
   spo2_percentage: number | null;
   skin_temp_celsius: number | null;
   user_calibrating: boolean | null;
 
+  /** Renamed from hrv_rmssd_milli — the resolved column is NOT guaranteed
+   *  RMSSD (biometric_hrv_samples.hrv_method permits 'sdnn' too). Always
+   *  read hrv_method alongside hrv; never plot hrv as a continuous series
+   *  across a hrv_method change. Production is 100% 'rmssd'/'ms' today on
+   *  both arms (verified in supabase/functions/health-connect-ingest/
+   *  mapping.ts), but that is a fact about today's data, not a guarantee
+   *  this type should encode. */
+  hrv: number | null;
+  hrv_method: string | null;
+  hrv_unit: string | null;
+
+  // Sleep performance is resolved cross-provider; everything else in this
+  // block remains WHOOP-only, reached through whoop_recoveries.sleep_id —
+  // a cycle with no whoop_recoveries row reads this whole block NULL even
+  // if a whoop_sleeps row exists for that user (known, unfixed defect, see
+  // 20260901100000's migration header — part two's problem).
   sleep_id: string | null;
   sleep_performance_percentage: number | null;
   sleep_efficiency_percentage: number | null;
+  sleep_consistency_percentage: number | null;
   respiratory_rate: number | null;
   total_in_bed_time_milli: number | null;
   total_slow_wave_sleep_time_milli: number | null;
   total_rem_sleep_time_milli: number | null;
+  total_awake_time_milli: number | null;
   disturbance_count: number | null;
+  sleep_was_nap: boolean | null;
 
   // Filter on these before you draw a single conclusion.
-  cycle_scored: boolean;
+  cycle_scored: boolean | null;
   recovery_scored: boolean | null;
   sleep_scored: boolean | null;
   nutrition_present: boolean;
   prev_nutrition_present: boolean;
+  /** Advisory only, fixed 2h threshold — nothing gates lag() pairing on
+   *  this. Read prev_cycle_gap for the actual duration when this is false. */
   prev_cycle_contiguous: boolean;
+  /** Postgres `interval`, cycle_start - prev_cycle_end. PostgREST/Supabase
+   *  serialize `interval` as a verbose text string (e.g. "35 days
+   *  03:00:00"), not a number of any unit — there is no existing precedent
+   *  elsewhere in this codebase for parsing one, so this is typed as the
+   *  raw string PostgREST actually returns; a consumer wanting milliseconds
+   *  must parse it. NULL when there is no predecessor (partition start) or
+   *  the predecessor cycle is still open (prev_cycle_end null). */
+  prev_cycle_gap: string | null;
   timing_estimated_same_cycle: boolean;
   timing_estimated_prev_cycle: boolean;
 };

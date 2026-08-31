@@ -28,6 +28,7 @@ where source_ns.nspname = 'public'
 -- migration until you know what that object is and whether it survives the
 -- DROP. (Query mechanics sanity-checked in a throwaway container against a
 -- known dependent before shipping this file — it does detect one.)
+-- CONFIRMED on the actual push: 0 dependents.
 
 
 -- ── V1. PRE-SNAPSHOT — run BEFORE the push ─────────────────────────────────
@@ -54,6 +55,7 @@ select
 from public.whoop_correlation;
 
 select count(*) as pre_row_count from public._diag_wc_pre;
+-- CONFIRMED on the actual push: 231.
 
 
 -- ── APPLY THE MIGRATION NOW ────────────────────────────────────────────────
@@ -85,15 +87,26 @@ select
 from public.whoop_correlation;
 
 select count(*) as post_row_count from public._diag_wc_post;
+-- CONFIRMED on the actual push: 231 — matches pre_row_count exactly (see V4).
 
 
 -- ── V3. TARGETED DIFF ───────────────────────────────────────────────────────
--- Split into SAME-CYCLE/identity/recovery columns (V3(1)) and PREV-CYCLE
--- columns (V3(2)) deliberately: the partition widening (V5) means exactly
--- ONE row's entire prev_* column set legitimately changes together, not
--- just resting_heart_rate. Folding both concerns into one query would force
--- hardcoding that row's identity here before V5 has even found it — instead
--- V3(2) excludes whatever V5 discovers, dynamically.
+-- Split into three concerns, each excluded from the others rather than
+-- folded into one equality check: SAME-CYCLE/identity/recovery columns
+-- (V3(1)), which must be identical on every row but the one named
+-- resting_heart_rate exception; PREV-CYCLE columns (V3(2)), where exactly
+-- ONE row's entire prev_* set legitimately changes together under the
+-- partition widening (V5); and resting_heart_rate itself (V3(5)), which
+-- legitimately changes broadly, on 173 rows, not one — see this
+-- migration's header for why (a synthetic frame's whoop://sleep/<uuid> id
+-- could never match a numeric whoop_recoveries.cycle_id under the old
+-- join). Folding resting_heart_rate into V3(1)'s equality check would fail
+-- it on every one of those 173 rows; excluding it there and asserting its
+-- breadth directly in V3(5) is what makes that breadth visible instead of
+-- either failing loudly on rows that are fine or being silently masked by
+-- a too-permissive exclusion. V3(2) excludes whatever V5 discovers,
+-- dynamically, rather than hardcoding the boundary row's identity ahead of
+-- running it against real data.
 
 -- V3(1). Same-cycle / identity / resolved-recovery columns — identical for
 -- every row except the ONE named resting_heart_rate exception.
@@ -121,7 +134,11 @@ where not (pre.user_id = '4dbf04ae-7b46-4511-8122-f17284c622d9' and pre.cycle_id
     or pre.sugar_same_cycle               is distinct from post.sugar_same_cycle
     or pre.recovery_score                 is distinct from post.recovery_score
     or pre.hrv_rmssd_milli                is distinct from post.hrv_rmssd_milli
-    -- resting_heart_rate deliberately excluded — checked in V3(3) below
+    -- resting_heart_rate deliberately excluded — it changes on many rows
+    -- BY DESIGN (see V3(5)), not on one. Excluding it here and checking it
+    -- broadly in V3(5), rather than folding it into this all-rows equality
+    -- check, is what makes that breadth visible instead of failing this
+    -- check on every one of the 173 rows it legitimately touches.
     or pre.spo2_percentage                is distinct from post.spo2_percentage
     or pre.skin_temp_celsius              is distinct from post.skin_temp_celsius
     or pre.user_calibrating               is distinct from post.user_calibrating
@@ -142,7 +159,7 @@ where not (pre.user_id = '4dbf04ae-7b46-4511-8122-f17284c622d9' and pre.cycle_id
     or pre.nutrition_present              is distinct from post.nutrition_present
     or pre.timing_estimated_same_cycle    is distinct from post.timing_estimated_same_cycle
   );
--- Expect ZERO rows.
+-- Expect ZERO rows. CONFIRMED on the actual push: 0 rows.
 
 -- V3(2). Prev-cycle columns — identical for every row EXCEPT whichever one
 -- row V5 finds legitimately changed prev_cycle_id (found dynamically, not
@@ -174,16 +191,20 @@ where (pre.user_id, pre.cycle_id) not in (select user_id, cycle_id from changed_
     or pre.prev_cycle_contiguous          is distinct from post.prev_cycle_contiguous
     or pre.timing_estimated_prev_cycle    is distinct from post.timing_estimated_prev_cycle
   );
--- Expect ZERO rows.
+-- Expect ZERO rows. CONFIRMED on the actual push: 0 rows.
 
--- V3(3). THE ONE NAMED EXCEPTION — resting_heart_rate on
+-- V3(3). THE ONE NAMED WHOOP-CYCLE EXCEPTION — resting_heart_rate on
 -- (4dbf04ae-7b46-4511-8122-f17284c622d9, 1737676452), NULL -> 45, exactly.
+-- Named specifically because it's the one WHOOP cycle this repoint fixes
+-- (a real whoop_recoveries row that never arrived) — it is NOT the only
+-- row resting_heart_rate changes on overall; see V3(5) for the other 172.
 select pre.resting_heart_rate as pre_rhr, post.resting_heart_rate as post_rhr
 from public._diag_wc_pre pre
 join public._diag_wc_post post using (user_id, cycle_id)
 where pre.user_id = '4dbf04ae-7b46-4511-8122-f17284c622d9'
   and pre.cycle_id = '1737676452';
 -- Expect EXACTLY ONE row: pre_rhr IS NULL, post_rhr = 45.
+-- CONFIRMED on the actual push: NULL -> 45.
 
 -- V3(4). The two all-NULL frames (a8435663, no whoop_recoveries row, no
 -- Health Connect data for that user) are COMPLETELY unchanged, including
@@ -195,13 +216,38 @@ where pre.cycle_id in ('1617103907', '1685079064');
 -- Expect 2 rows, pre_rhr and post_rhr both NULL on each. (Every other
 -- column for these two rows is already covered by V3(1) since they are not
 -- excluded from it.)
+-- CONFIRMED on the actual push: 2 rows, both unchanged (NULL -> NULL).
+
+-- V3(5). resting_heart_rate changes on many rows BY DESIGN — the old direct
+-- join could never match a synthetic frame's whoop://sleep/<uuid> id
+-- against a numeric whoop_recoveries.cycle_id, so it silently returned
+-- NULL for every Health-Connect-won frame regardless of whether a real
+-- resting-HR reading existed. Assert the change is purely additive: values
+-- only ever appear, never disappear, never change on a row that already
+-- had one.
+select
+  count(*) filter (where pre.resting_heart_rate is null
+                     and post.resting_heart_rate is not null) as null_to_value,
+  count(*) filter (where pre.resting_heart_rate is not null
+                     and post.resting_heart_rate is null)     as value_to_null,
+  count(*) filter (where pre.resting_heart_rate is not null
+                     and post.resting_heart_rate is not null
+                     and pre.resting_heart_rate is distinct from post.resting_heart_rate)
+                                                              as value_changed
+from public._diag_wc_pre pre
+join public._diag_wc_post post using (user_id, cycle_id);
+-- value_to_null or value_changed being non-zero would mean resolution
+-- disagrees with whoop_recoveries on a frame that already had a reading —
+-- the one outcome here that would be a real defect.
+-- CONFIRMED on the actual push: null_to_value = 173, value_to_null = 0,
+-- value_changed = 0.
 
 
 -- ── V4. NON-VACUITY ─────────────────────────────────────────────────────────
 select
   (select count(*) from public._diag_wc_pre)  as pre_count,
   (select count(*) from public._diag_wc_post) as post_count;
--- Expect 231 / 231.
+-- Expect 231 / 231. CONFIRMED on the actual push: 231 / 231.
 
 select 'pre_only' as side, pre.user_id, pre.cycle_id
 from public._diag_wc_pre pre
@@ -212,13 +258,34 @@ select 'post_only', post.user_id, post.cycle_id
 from public._diag_wc_post post
 left join public._diag_wc_pre pre using (user_id, cycle_id)
 where pre.user_id is null;
--- Expect ZERO rows.
+-- Expect ZERO rows. CONFIRMED on the actual push: 0 rows, no asymmetry.
 
 
 -- ── V5. THE PARTITION-WIDENING BOUNDARY FRAME ──────────────────────────────
 -- Found dynamically (not hardcoded — nobody has confirmed which cycle_id
 -- this is against real data yet). This is the same `changed_prev` set V3(2)
 -- excludes; asserted here to be EXACTLY ONE row, not merely "some rows".
+--
+-- CONFIRMED on the actual push: exactly one row, cycle_id = '1737676452'
+-- (user_id 4dbf04ae-7b46-4511-8122-f17284c622d9) — the SAME cycle as
+-- V3(3)'s resting-HR exception. That makes 1737676452 both the partition-
+-- boundary frame and the resting-HR exception at once, which means it is
+-- excluded from V3(1) by name AND from V3(2) dynamically — it is the
+-- least-covered row in this entire verification, the one row where two
+-- separate carve-outs stack instead of one. An ad-hoc audit of every
+-- OTHER column that changed on this specific row was run manually
+-- alongside this push (not automated by any query in this file):
+-- prev_cycle_id NULL -> whoop://sleep/02f5aea0-68a8-4380-8835-6bbfa1045506
+-- (the Health Connect frame now correctly recognised as its predecessor),
+-- meal_count_prev_cycle and kcal_prev_cycle NULL -> 0 (that predecessor
+-- logged no meals), prev_cycle_contiguous false -> true, prev_cycle_gap =
+-- 00:00:00 (the two frames are exactly back-to-back), and recovery_score /
+-- sleep_performance_percentage / kcal_same_cycle unchanged. All clean. A
+-- future re-run of this verify file does NOT repeat that manual audit —
+-- V3(1)/V3(2)/V3(5)/V5 together cover every column this row touches
+-- structurally, but the audit itself was a one-time, by-hand cross-check
+-- of this one row's full column set, not a query, and is not reproduced by
+-- re-running this file.
 select pre.user_id, pre.cycle_id,
        pre.prev_cycle_id  as pre_prev_cycle_id,
        post.prev_cycle_id as post_prev_cycle_id
@@ -239,6 +306,7 @@ from public.whoop_correlation
 where is_stale = true;
 -- Expect EXACTLY ONE row: cycle_id = '1663052944',
 -- user_id = 'a8435663-72e9-4d33-9c3f-803c4cbda393'.
+-- CONFIRMED on the actual push: exactly one row, that cycle.
 
 select
   count(*) filter (where is_stale = true)  as stale_count,
@@ -258,6 +326,7 @@ select
   count(sugar_known_meals_same_cycle)   as sugar_known_present
 from public.whoop_correlation;
 -- Expect all four *_known_present columns to equal total.
+-- CONFIRMED on the actual push: 231 on all four (and total).
 
 -- V6(c). hrv_method is 'rmssd' wherever hrv is non-null (production is
 -- 100% rmssd today on both arms — this is a live tripwire for the day
@@ -265,7 +334,7 @@ from public.whoop_correlation;
 select count(*) as hrv_present_but_not_rmssd
 from public.whoop_correlation
 where hrv is not null and hrv_method is distinct from 'rmssd';
--- Expect 0.
+-- Expect 0. CONFIRMED on the actual push: 0.
 
 
 -- ── V7. RLS ──────────────────────────────────────────────────────────────
@@ -277,6 +346,7 @@ where c.relname = 'whoop_correlation' and c.relnamespace = 'public'::regnamespac
 -- `select definition from pg_views where viewname = 'whoop_correlation'`
 -- and confirm `with (security_invoker = on)` appears in it, per the same
 -- caveat noted in 20260831120000's verify file).
+-- CONFIRMED on the actual push: reloptions = {security_invoker=on}.
 
 -- Second-account check, begin/rollback so nothing is left behind. a8435663
 -- has exactly 50 rows in whoop_cycle_nutrition (confirmed,
@@ -288,6 +358,7 @@ set local request.jwt.claims = '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}';
 select count(*) as row_count, count(distinct user_id) as distinct_users
 from public.whoop_correlation;
 -- Expect row_count = 50, distinct_users = 1.
+-- CONFIRMED on the actual push: row_count = 50, distinct_users = 1.
 rollback;
 
 

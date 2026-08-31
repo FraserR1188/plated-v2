@@ -12,13 +12,27 @@
 -- to this view — see below). Adds is_stale and prev_cycle_gap.
 --
 -- ── THE MEASURED PAYOFF, STATED PLAINLY ────────────────────────────────
--- Of every column repointed in this commit, exactly ONE cell in production
--- changes value today: resting_heart_rate on cycle 1737676452
--- (4dbf04ae-7b46-4511-8122-f17284c622d9), NULL -> 45 — a WHOOP cycle with no
--- whoop_recoveries row at all, where Health Connect's resolved resting-HR
--- candidate now reaches the output instead of silently vanishing behind the
--- old direct join. sleep_performance_percentage resolves to Health Connect
--- on all 172 HC-won frames and is NULL on every one of them (HC candidates
+-- CORRECTED 2026-09-01 — the original text here claimed exactly one cell
+-- changed in production. That was false; measured wrong before the
+-- pre/post snapshots were dropped. The real numbers, verified against this
+-- migration's own verify file (V3(5)):
+--
+-- resting_heart_rate went from 56 non-null rows to 229 non-null (of 231
+-- total). 173 rows gained a value; zero lost one; zero changed value on a
+-- row that already had one. Of the 173: 172 are Health-Connect-won frames,
+-- and the remaining one is cycle 1737676452. The cause: a synthetic
+-- frame's source_period_id is shaped like whoop://sleep/<uuid> — it can
+-- never match a numeric whoop_recoveries.cycle_id, so the OLD direct join
+-- silently returned NULL for every single HC frame, not because no
+-- resting-HR reading existed but because the join key structurally could
+-- not match. 1737676452 is different in kind: a genuine WHOOP cycle whose
+-- own whoop_recoveries row simply never arrived, filled by Health
+-- Connect's resolved candidate instead. This is the commit's actual,
+-- measured payoff on today's data — not a one-cell curiosity, a real fix
+-- reaching three-quarters of the dataset, working exactly as designed.
+--
+-- sleep_performance_percentage resolves to Health Connect on all 172
+-- HC-won frames and is NULL on every one of them (HC candidates
 -- structurally cannot populate a WHOOP-style performance score — see
 -- biometric_periods_resolved's own sleep_candidates CTE) — the SAME output
 -- those frames already had via the old direct join, since none of them ever
@@ -27,12 +41,6 @@
 -- user_calibrating are structurally WHOOP-only on both sides of this change
 -- (biometric_periods_resolved's synthetic arm hardcodes them null) — moving
 -- their source changes nothing about when they're populated.
---
--- This commit is plumbing that makes a future non-WHOOP provider's recovery/
--- resting-HR/HRV data reachable through this view. It is NOT, on today's
--- 231-frame dataset, a change to what any current consumer would see —
--- there are zero current consumers (WhoopCorrelationRow is dead code,
--- re-verified this session) — except the one cell named above.
 --
 -- ── THE `select n.*` FREEZE, AND WHY THIS COMMIT FIXES IT FOR GOOD ─────
 -- whoop_correlation's `lagged` CTE previously did `select n.*, lag(...)

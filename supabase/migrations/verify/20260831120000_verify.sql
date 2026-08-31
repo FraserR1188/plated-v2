@@ -28,14 +28,15 @@ select
   has_estimated_times, first_meal_at, last_meal_at
 from public.whoop_cycle_nutrition;
 
-select count(*) as pre_row_count from public._diag_wcn_pre;  -- note this number
+select count(*) as pre_row_count from public._diag_wcn_pre;
+-- CONFIRMED on the actual push: 231.
 
 
 -- ── APPLY THE MIGRATION NOW ────────────────────────────────────────────────
 
 
 -- ── V2. POST-SNAPSHOT — same old column list ───────────────────────────────
--- Deliberately the SAME 21-column list as V1 (not the new known_meals
+-- Deliberately the SAME 22-column list as V1 (not the new known_meals
 -- columns) so V3's structural diff is comparing like with like. The new
 -- columns are read directly off the LIVE view in V3(3) and V5 instead —
 -- by the time this runs, the live view already reflects the migration, so
@@ -49,7 +50,8 @@ select
   has_estimated_times, first_meal_at, last_meal_at
 from public.whoop_cycle_nutrition;
 
-select count(*) as post_row_count from public._diag_wcn_post;  -- note this number
+select count(*) as post_row_count from public._diag_wcn_post;
+-- CONFIRMED on the actual push: 231 — matches pre_row_count exactly (see V4).
 
 
 -- ── V3. TARGETED DIFF — not a bare EXCEPT ──────────────────────────────────
@@ -82,7 +84,7 @@ where pre.cycle_start          is distinct from post.cycle_start
    or pre.has_estimated_times   is distinct from post.has_estimated_times
    or pre.first_meal_at          is distinct from post.first_meal_at
    or pre.last_meal_at           is distinct from post.last_meal_at;
--- Expect ZERO rows.
+-- Expect ZERO rows. CONFIRMED on the actual push: 0 rows (T5(1)).
 
 -- V3(2). The four macros differ ONLY in the 0 -> NULL direction.
 -- (a) post is non-NULL and differs from pre at all — must never happen;
@@ -103,7 +105,7 @@ union all
 select pre.user_id, pre.cycle_id, 'sugar', pre.sugar, post.sugar
 from public._diag_wcn_pre pre join public._diag_wcn_post post using (user_id, cycle_id)
 where post.sugar is not null and post.sugar is distinct from pre.sugar;
--- Expect ZERO rows.
+-- Expect ZERO rows. CONFIRMED on the actual push: 0 rows (T5(2a)).
 
 -- (b) pre was NULL and post is 0 — the reverse flip. Should be structurally
 --     impossible (the OLD view always coalesced to 0, so pre.<macro> is
@@ -123,7 +125,7 @@ union all
 select pre.user_id, pre.cycle_id, 'sugar'
 from public._diag_wcn_pre pre join public._diag_wcn_post post using (user_id, cycle_id)
 where pre.sugar is null and post.sugar = 0;
--- Expect ZERO rows.
+-- Expect ZERO rows. CONFIRMED on the actual push: 0 rows (T5(2b)).
 
 -- V3(3). THE REAL ASSERTION — the set of rows that flipped on each macro is
 -- EXACTLY the set where that macro's new known-count is 0. Both directions:
@@ -177,7 +179,8 @@ from public._diag_wcn_pre pre
 join public._diag_wcn_post post using (user_id, cycle_id)
 join public.whoop_cycle_nutrition live using (user_id, cycle_id)
 where live.sugar_known_meals = 0 and not (pre.sugar = 0 and post.sugar is null);
--- Expect ZERO rows.
+-- Expect ZERO rows. CONFIRMED on the actual push: 0 rows (T5(3)) — every
+-- flip corresponded to that macro's known-count going to 0, and vice versa.
 
 
 -- ── V4. NON-VACUITY ─────────────────────────────────────────────────────────
@@ -186,6 +189,7 @@ select
   (select count(*) from public._diag_wcn_post) as post_count;
 -- Expect equal. If unequal, the methodology is broken (a cycle
 -- appeared/disappeared between snapshots) and V3 cannot be trusted.
+-- CONFIRMED on the actual push: 231/231 (T4).
 
 select 'pre_only' as side, pre.user_id, pre.cycle_id
 from public._diag_wcn_pre pre
@@ -196,20 +200,54 @@ select 'post_only', post.user_id, post.cycle_id
 from public._diag_wcn_post post
 left join public._diag_wcn_pre pre using (user_id, cycle_id)
 where pre.user_id is null;
--- Expect ZERO rows (no asymmetry).
+-- Expect ZERO rows (no asymmetry). CONFIRMED on the actual push: 0 rows,
+-- with no asymmetry (T4).
 
 
 -- ── V5. THE NAMED PRODUCTION CASE ───────────────────────────────────────────
--- Fill in the cycle_id before running.
+-- cycle_id 1757740302, user_id 4dbf04ae-7b46-4511-8122-f17284c622d9 — the
+-- only cycle in the 231-row dataset (see V4) with at least one logged meal
+-- where sat_fat/salt/fibre are ALL unknown but sugar is known. user_id is
+-- pinned deliberately, not just cycle_id: this cycle_id exists under a
+-- SECOND account too (the same physical WHOOP device syncs into both), and
+-- the dashboard connects as superuser, so RLS will not filter the other
+-- account's row out on its own — an unqualified cycle_id filter here could
+-- silently match the wrong account's row instead of (or in addition to)
+-- this one.
+--
+-- ONE-SHOT ASSERTION, NOT A STABLE REGRESSION CHECK. This cycle was
+-- IN PROGRESS at verification time: cycle_end was NULL and effective_end
+-- was falling back to now() under the view's 36-hour window, which itself
+-- closed at 2026-09-01 09:42:20 UTC. Once this cycle closes (or simply ages
+-- past that 36h window without closing), effective_end goes NULL, the
+-- join's `b.effective_end is not null` guard matches nothing, and this row
+-- will read meal_count = 0 with all four known-counts at 0 — output-
+-- identical to the stale-window case this migration's header already
+-- documents for cycle 1663052944. A future reader re-running this query and
+-- seeing that shape is NOT evidence the migration regressed; it is this
+-- same cycle aging into the stale-window state, which is expected. The
+-- census behind V4/V6's row counts (T6: 191/191/191/190 of 231 known-count-
+-- zero per macro — 189 genuinely empty cycles + 1 stale-window cycle
+-- (1663052944) + this one, and sugar reads 190 rather than 191 precisely
+-- because THIS cycle's sugar is known) found no other wholly-unknown-for-
+-- three-macros cycle in the dataset to replace this assertion with if it
+-- ages out. If that happens, find a new candidate via the same T6-style
+-- census rather than leaving this query pinned to a cycle that has silently
+-- become the stale-window case instead of the partial-know case it was
+-- written to prove.
 select
   cycle_id, meal_count,
   sat_fat, salt, fibre, sugar,
   sat_fat_known_meals, salt_known_meals, fibre_known_meals, sugar_known_meals
 from public.whoop_cycle_nutrition
-where cycle_id = '<PASTE CYCLE_ID HERE>';
+where cycle_id = '1757740302'
+  and user_id = '4dbf04ae-7b46-4511-8122-f17284c622d9';
 -- Expect: meal_count > 0; sat_fat, salt, fibre all NULL with
 -- sat_fat_known_meals = salt_known_meals = fibre_known_meals = 0; sugar
 -- NON-NULL with sugar_known_meals > 0.
+-- CONFIRMED on the actual push (T7): meal_count = 1; sat_fat/salt/fibre
+-- NULL, all three known-counts 0; sugar = 0 (a real recorded zero, not an
+-- absent measurement) with sugar_known_meals = 1.
 
 
 -- ── V6. RLS ──────────────────────────────────────────────────────────────
@@ -222,6 +260,7 @@ where c.relname = 'whoop_cycle_nutrition' and c.relnamespace = 'public'::regname
 -- reloptions; if this comes back empty, cross-check with:
 -- select definition from pg_views where viewname = 'whoop_cycle_nutrition';
 -- and confirm `with (security_invoker = on)` appears in it).
+-- CONFIRMED on the actual push (T8): reloptions = ["security_invoker=on"].
 
 -- Second-account check, in the begin/rollback form so nothing is left
 -- behind and no superuser bypass masks a real RLS gap:
@@ -231,6 +270,9 @@ set local request.jwt.claims = '{"sub":"<SOME OTHER USER''S UUID, NOT YOUR OWN>"
 select count(*) from public.whoop_cycle_nutrition;
 -- Expect: only that user's own rows (0 if they have none), never another
 -- user's cycles.
+-- CONFIRMED on the actual push (T8): impersonating a8435663 returned
+-- exactly one distinct user_id (a8435663's own), 50 rows — never
+-- 4dbf04ae's, despite the shared-device cycle_id collision noted in V5.
 rollback;
 
 

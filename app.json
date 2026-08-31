@@ -21,7 +21,8 @@
         "android.permission.health.READ_HEART_RATE_VARIABILITY",
         "android.permission.health.READ_RESTING_HEART_RATE",
         "android.permission.health.READ_EXERCISE",
-        "android.permission.health.READ_HEALTH_DATA_HISTORY"
+        "android.permission.health.READ_HEALTH_DATA_HISTORY",
+        "android.permission.RECORD_AUDIO"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -29,7 +30,10 @@
       }
     },
     "ios": {
-      "bundleIdentifier": "com.fraseranalytics.plated"
+      "bundleIdentifier": "com.fraseranalytics.plated",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "plugins": [
       "expo-dev-client",
@@ -57,7 +61,9 @@
           "url": "https://de.sentry.io/",
           "organization": "fraser-analytics",
           "project": "plated",
-          "experimental_android": { "enableAndroidGradlePlugin": true }
+          "experimental_android": {
+            "enableAndroidGradlePlugin": true
+          }
         }
       ],
       "react-native-health-connect",

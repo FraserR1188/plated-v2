@@ -205,9 +205,10 @@ from public.whoop_correlation;
 -- header's reasoning -- but that reasoning is not a substitute for this
 -- number). If deep_hc_populated is 0 while hc_frames is non-zero, the
 -- pointer join is not matching and this commit does nothing -- the primary
--- failure mode to watch for. Record the actual counts here; this migration
--- predicted 172 hc_frames from given production facts but did not measure
--- it directly.
+-- failure mode to watch for.
+-- MEASURED on the actual push: hc_frames = 173 of 232 total frames.
+-- Per-column populated counts (deep/rem/sleep/in_bed) not yet
+-- recorded -- fill from a V5 run.
 
 
 -- ── V6. NEVER-POOLED TRIPWIRE ────────────────────────────────────────────

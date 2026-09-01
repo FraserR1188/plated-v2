@@ -22,17 +22,14 @@
 -- on 172 of today's 231 frames. Zero frames contain more than one qualifying
 -- HC session under midpoint containment.
 --
--- Reasoned from those facts, not re-measured here: the pointer-bridge join
--- should populate the six `_hc` columns on exactly those 172 frames and
--- leave them NULL on the other 59 (the winning candidate a frame's
--- sleep_winner already selected is, by construction, a real
--- biometric_sleep_sessions row, so the pointer join is expected to match
--- every time a winner exists). This is a PREDICTION from given facts, not a
--- number this migration measured directly — this migration's own verify
--- file, V5, is the check that confirms the actual count against real data
--- after the push. Record the actual result there. Do not treat 172 as
--- confirmed until V5 says so — this project has gotten a number wrong from
--- reasoning-without-running three times already in this series.
+-- CORRECTED 2026-09-01 — PREDICTED 172 frames when written; MEASURED 173
+-- of 232 total after push. The prediction was correct at time of writing
+-- — an additional cycle arrived overnight, between when the production
+-- facts above were measured and when this migration was pushed. The six
+-- `_hc` stage columns populate on exactly those 173 frames, confirmed
+-- against this migration's own verify file, V5. Note: this header was
+-- corrected after measurement — the paragraph above originally read as a
+-- prediction only.
 --
 -- ── WHY THE POINTER BRIDGE, NOT A DIRECT CONTAINMENT JOIN ──────────────────
 -- See part two-B (1 of 2)'s header in full. Summary: a fresh containment

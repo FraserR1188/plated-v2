@@ -871,32 +871,61 @@ export type WhoopCorrelationRow = {
   hrv_method: string | null;
   hrv_unit: string | null;
 
-  // Sleep performance is resolved cross-provider; everything else in this
-  // block remains WHOOP-only, reached by an exact match on
-  // whoop_sleeps.start = this cycle's cycle_start (20260901110000) — no
-  // longer chained through whoop_recoveries.sleep_id, so a cycle with no
-  // whoop_recoveries row no longer loses its sleep block. The five columns
-  // below with a Health Connect counterpart in biometric_sleep_sessions
-  // carry a _whoop suffix so a future widening commit's _hc columns cannot
-  // collide with them under one name; sleep_id/sleep_was_nap/
-  // respiratory_rate/disturbance_count/sleep_consistency_percentage have no
-  // Health Connect counterpart and stay unsuffixed.
+  // sleep_data_source/sleep_origin_package (20260901130000): which provider
+  // won the sleep domain for this frame — read alongside sleep_scored_whoop
+  // and every _hc column below, since none of them explain themselves in
+  // isolation.
+  sleep_data_source: string | null;
+  sleep_origin_package: string | null;
+
+  // Sleep performance is resolved cross-provider; sleep_id and every
+  // _whoop-suffixed column below are WHOOP-only, reached by an exact match
+  // on whoop_sleeps.start = this cycle's cycle_start (20260901110000) —
+  // independent of which arm won the sleep domain, so they can be non-null
+  // even on a Health-Connect-won frame if a WHOOP sleep row also exists
+  // (verified: these never cross-contaminate with the _hc columns below).
+  // Every _hc-suffixed column (20260901130000) is reached via a pointer-
+  // bridge join onto biometric_sleep_sessions' own primary key
+  // (user_id, origin_package, provider_record_id) — cannot fan out.
+  // total_deep_ms_hc and total_slow_wave_sleep_time_milli_whoop are
+  // related, NOT identical constructs (documented three times in the
+  // schema) — never pool, average, or coalesce them. total_sleep_ms_hc has
+  // no WHOOP counterpart and is not derived from WHOOP's stage columns —
+  // WHOOP never reports that sum itself. sleep_efficiency_percentage_hc and
+  // any Health Connect nap signal are deliberately not surfaced: the
+  // ingest mapper hardcodes efficiency null, and is_nap on the Health
+  // Connect side is a NULL-not-zero defect (the mapper omits the field and
+  // the column default supplies "false," which means "unknown," not
+  // "confirmed not a nap") — fix that at the source table before ever
+  // surfacing it here.
   sleep_id: string | null;
   sleep_performance_percentage: number | null;
   sleep_efficiency_percentage_whoop: number | null;
   sleep_consistency_percentage: number | null;
   respiratory_rate: number | null;
   total_in_bed_time_milli_whoop: number | null;
+  total_in_bed_ms_hc: number | null;
   total_slow_wave_sleep_time_milli_whoop: number | null;
+  total_deep_ms_hc: number | null;
+  total_light_ms_hc: number | null;
   total_rem_sleep_time_milli_whoop: number | null;
+  total_rem_ms_hc: number | null;
   total_awake_time_milli_whoop: number | null;
+  total_awake_ms_hc: number | null;
+  total_sleep_ms_hc: number | null;
   disturbance_count: number | null;
   sleep_was_nap: boolean | null;
 
   // Filter on these before you draw a single conclusion.
   cycle_scored: boolean | null;
   recovery_scored: boolean | null;
-  sleep_scored: boolean | null;
+  /** Renamed from sleep_scored (20260901130000) — structurally WHOOP-only
+   *  (reads resolved.sleep_score_state, hardcoded null on the Health
+   *  Connect arm), so it reads NULL on every Health-Connect-won frame. Read
+   *  sleep_data_source alongside it: NULL here next to
+   *  sleep_data_source === 'health_connect' means "WHOOP has no opinion on
+   *  this night," not "unscored." */
+  sleep_scored_whoop: boolean | null;
   nutrition_present: boolean;
   prev_nutrition_present: boolean;
   /** Advisory only, fixed 2h threshold — nothing gates lag() pairing on

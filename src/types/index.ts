@@ -872,19 +872,24 @@ export type WhoopCorrelationRow = {
   hrv_unit: string | null;
 
   // Sleep performance is resolved cross-provider; everything else in this
-  // block remains WHOOP-only, reached through whoop_recoveries.sleep_id —
-  // a cycle with no whoop_recoveries row reads this whole block NULL even
-  // if a whoop_sleeps row exists for that user (known, unfixed defect, see
-  // 20260901100000's migration header — part two's problem).
+  // block remains WHOOP-only, reached by an exact match on
+  // whoop_sleeps.start = this cycle's cycle_start (20260901110000) — no
+  // longer chained through whoop_recoveries.sleep_id, so a cycle with no
+  // whoop_recoveries row no longer loses its sleep block. The five columns
+  // below with a Health Connect counterpart in biometric_sleep_sessions
+  // carry a _whoop suffix so a future widening commit's _hc columns cannot
+  // collide with them under one name; sleep_id/sleep_was_nap/
+  // respiratory_rate/disturbance_count/sleep_consistency_percentage have no
+  // Health Connect counterpart and stay unsuffixed.
   sleep_id: string | null;
   sleep_performance_percentage: number | null;
-  sleep_efficiency_percentage: number | null;
+  sleep_efficiency_percentage_whoop: number | null;
   sleep_consistency_percentage: number | null;
   respiratory_rate: number | null;
-  total_in_bed_time_milli: number | null;
-  total_slow_wave_sleep_time_milli: number | null;
-  total_rem_sleep_time_milli: number | null;
-  total_awake_time_milli: number | null;
+  total_in_bed_time_milli_whoop: number | null;
+  total_slow_wave_sleep_time_milli_whoop: number | null;
+  total_rem_sleep_time_milli_whoop: number | null;
+  total_awake_time_milli_whoop: number | null;
   disturbance_count: number | null;
   sleep_was_nap: boolean | null;
 

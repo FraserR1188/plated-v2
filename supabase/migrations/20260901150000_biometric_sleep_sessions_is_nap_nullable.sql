@@ -1,0 +1,100 @@
+-- ============================================================================
+-- 20260901150000_biometric_sleep_sessions_is_nap_nullable.sql
+-- is_nap NULL-not-zero fix — commit two of three, SCHEMA ONLY
+--
+-- Follows commit one (20260901140000_biometric_synthetic_cycles_is_nap_
+-- null_tolerant.sql, already pushed and verified), which made
+-- biometric_synthetic_cycles's own is_nap filter NULL-tolerant
+-- (`is_nap is not true`) so that this commit and the one after it cannot
+-- silently empty that view.
+--
+-- Makes public.biometric_sleep_sessions.is_nap nullable and drops its
+-- default. Changes NO row's stored value — every one of the 182 existing
+-- rows keeps its current `false` until the backfill (commit three,
+-- supabase/migrations/verify/20260901150000_backfill_is_nap.sql, a
+-- hand-run script that lives in verify/ specifically so `db push` does not
+-- sweep it) is run separately and manually, after this migration is
+-- pushed.
+--
+--     alter table public.biometric_sleep_sessions
+--       alter column is_nap drop not null,
+--       alter column is_nap drop default;
+--
+-- No CHECK constraint is added. Nothing else on this table changes.
+--
+-- ── WHY NULL IS THE CORRECT VALUE, NOT MERELY AN ALLOWED ONE ─────────────
+-- Health Connect's SleepSessionRecord carries no nap field at all —
+-- confirmed by reading react-native-health-connect's own type declarations
+-- (IntervalRecord gives startTime/endTime, SleepStage gives a 7-value stage
+-- enum — UNKNOWN/AWAKE/SLEEPING/OUT_OF_BED/LIGHT/DEEP/REM — with no nap
+-- member, Metadata gives no nap-adjacent field either). Every one of the
+-- 182 rows in this table today is WHOOP data ingested through Health
+-- Connect: the nap signal WHOOP itself tracks (whoop_sleeps.nap) was
+-- destroyed in transit through Health Connect's data model before this app
+-- ever saw it — Health Connect has nowhere to put it, not merely a place
+-- it left blank.
+--
+-- `is_nap boolean not null default false` therefore asserted "confirmed
+-- not a nap" on every single row, when the true statement is "this
+-- transport cannot carry the answer." Those are different claims and only
+-- one of them is true. NULL is not a workaround for a missing value here —
+-- it is the semantically correct one: "unknown" is what Health Connect
+-- actually reported, and false is not.
+--
+-- ── WHY NO MAPPER CHANGE IS NEEDED ─────────────────────────────────────────
+-- supabase/functions/health-connect-ingest/mapping.ts's mapSleepSession
+-- already omits the is_nap key from its returned object entirely — it does
+-- not write a guessed value, it writes nothing (confirmed by
+-- src/lib/__tests__/healthConnectIngest.test.ts:193,
+-- `expect(row).not.toHaveProperty("is_nap")`). The column's own default was
+-- doing 100% of the work of turning that omission into a stored `false`.
+-- Once this migration drops the default, the exact same mapper, unchanged,
+-- starts producing NULL for every new row — Postgres supplies NULL for an
+-- omitted column with no default, the same way it previously supplied
+-- false with one. Nothing in mapping.ts or index.ts needs to change, and
+-- nothing here does.
+--
+-- This also holds on the update side of the mapper's upsert
+-- (admin.from(collection.table).upsert(rows, { onConflict: ... }),
+-- supabase/functions/health-connect-ingest/index.ts:124-126): PostgREST's
+-- generated ON CONFLICT DO UPDATE only sets columns present in the insert
+-- payload. is_nap is never in that payload, so it is never touched by an
+-- update either — an existing row's is_nap, whatever it holds, is left
+-- alone by every upsert regardless of whether this migration has run.
+--
+-- ── THE RESULTING STATE IS A KNOWN CONSEQUENCE, NOT A DEFECT ──────────────
+-- After the backfill (commit three) runs, this column will carry NO
+-- information for any row currently in the table, and will continue to
+-- carry none for any future Health Connect row, because Health Connect
+-- structurally cannot report it. That is correct, not a gap to close
+-- reflexively: an honest NULL beats a false false. Two paths could
+-- eventually give this column real content again — neither undertaken
+-- here, neither planned work, both flagged only for whoever picks this up
+-- next:
+--   - a future WHOOP direct-integration arm (ingest_transport = 'whoop',
+--     origin_package like '%.direct' — see this table's own
+--     biometric_sleep_sessions_transport_origin_check) could write a real
+--     value, the way whoop-sync/index.ts already does for
+--     whoop_sleeps.nap.
+--   - the signal could be recovered by joining back to whoop_sleeps.nap at
+--     READ time, in a resolved/cross-provider layer (the same shape as
+--     biometric_periods_resolved), for the subset of rows where the same
+--     physical sleep also has a native WHOOP row. Not attempted here, and
+--     not free: whoop_sleeps.nap has its own undocumented
+--     `nap: s.nap ?? false` coalesce (whoop-sync/index.ts:176, flagged
+--     during the investigation that led to this commit) that would need
+--     resolving first, or the recovery would just relocate this same
+--     NULL-not-zero defect instead of fixing it.
+--
+-- ── PREDICTED, NOT MEASURED ────────────────────────────────────────────────
+-- This migration is a schema-only change and is expected to alter ZERO row
+-- values: DROP NOT NULL and DROP DEFAULT affect future writes and the
+-- column's own constraints, not any value already stored. All 182 existing
+-- rows keep their currently-stored `false` until the separate backfill
+-- script is run afterward. This is a prediction about DDL semantics, not a
+-- measurement — nothing has been pushed yet.
+-- ============================================================================
+
+alter table public.biometric_sleep_sessions
+  alter column is_nap drop not null,
+  alter column is_nap drop default;

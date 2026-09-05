@@ -60,11 +60,22 @@
 -- count is reconciled against it. Do not treat 182 as a required count
 -- anywhere in this file.
 --
--- RUN ORDER: Step 1 (pre-count) -> Step 2 (the UPDATE, inside its own
--- explicit transaction — inspect the reported row count BEFORE committing)
--- -> Step 3 (post-count, same shape as Step 1) -> Step 4
--- (biometric_synthetic_cycles row count unchanged) -> Step 5 (two-account
--- RLS split unchanged).
+-- MEASURED 2026-09-06 (the actual run, after the DDL migration was
+-- pushed): the count HAD moved — 186, not 182. Four additional Health
+-- Connect sleep sessions were ingested between the 2026-09-01 measurement
+-- above and the run. This is precisely the drift this section was written
+-- to anticipate: the 182 figure was correct when it was written, and this
+-- file's own instruction to compare rather than assume is what absorbed
+-- the difference, with no change to any SQL in it. Every PREDICTED figure
+-- below reads 182 and every MEASURED one reads 186; neither is wrong, and
+-- both are left in place deliberately so the drift itself stays legible.
+--
+-- RUN ORDER: Step 1 (pre-count) -> Step 2 (the UPDATE — begin, UPDATE and
+-- commit as a SINGLE execution, then reconcile the returned rows against
+-- Step 1; see that step's own header for why it cannot be run as separate
+-- executions in the dashboard) -> Step 3 (post-count, same shape as Step
+-- 1) -> Step 4 (biometric_synthetic_cycles row count unchanged) -> Step 5
+-- (two-account RLS split unchanged).
 -- ============================================================
 
 
@@ -76,28 +87,67 @@ order by ingest_transport, is_nap;
 -- PREDICTED: a single row — ingest_transport = 'health_connect',
 -- is_nap = false, count = 182. Read what it actually returns and carry
 -- that number into Step 2; do not assume 182.
+-- MEASURED (2026-09-06): a single row — ingest_transport =
+-- 'health_connect', is_nap = false, count = 186. The predicted SHAPE held
+-- exactly (one group, all health_connect, all false, zero true, zero
+-- NULL); only the count drifted, by the four sessions ingested since
+-- 2026-09-01. 186 is the number carried into Step 2.
 
 
--- ── STEP 2. THE UPDATE — inside its own explicit transaction ──────────────
--- Do NOT run this with autocommit on. Run through the UPDATE, read the row
--- count Postgres reports for it, and only then run COMMIT.
+-- ── STEP 2. THE UPDATE — run begin / UPDATE / commit as ONE execution ────
+-- Run `begin;`, the UPDATE and `commit;` as a SINGLE execution. The
+-- Supabase dashboard SQL editor does not hold a transaction open across
+-- separate executions — running `begin;` plus the UPDATE in one execution
+-- and `commit;` in another silently discards the whole transaction, and
+-- the bare `commit;` returns "Success. No rows returned" either way, so it
+-- looks like it worked when nothing was written. Observed during the
+-- 2026-09-06 run: the post-count still read `false` after an apparently
+-- successful commit.
+--
+-- WHAT THAT COSTS, AND WHY IT IS ACCEPTABLE HERE: running it as one
+-- execution means there is no point at which you can inspect the count and
+-- roll back. The `returning` clause is what compensates — it prints one
+-- row per updated record, so the count is a result set you can reconcile
+-- against Step 1 AFTER the fact. This UPDATE is idempotent
+-- (`is_nap is not null` matches nothing on a second run), so a mismatch is
+-- recoverable by investigating rather than by rolling back. If you need a
+-- genuine inspect-before-commit gate for a backfill that is NOT
+-- idempotent, the dashboard cannot give you one — use psql.
 begin;
 
 update public.biometric_sleep_sessions
   set is_nap = null
   where ingest_transport = 'health_connect'
-    and is_nap is not null;
-
--- INSPECT THE REPORTED ROW COUNT HERE, BEFORE COMMITTING.
--- PREDICTED: 182 rows affected — every current row is
--- ingest_transport = 'health_connect' with is_nap = false (i.e. not null),
--- so every current row matches this predicate. Compare that reported count
--- against what Step 1 actually showed for the same slice. If the two do
--- not reconcile, run ROLLBACK instead of COMMIT and find out why before
--- retrying — an unexplained count here is exactly the kind of thing this
--- transaction wrapper exists to let you back out of.
+    and is_nap is not null
+  returning user_id, provider_record_id;
 
 commit;
+
+-- RECONCILE THE RETURNED ROWS AGAINST STEP 1 — AFTER THE FACT.
+-- PREDICTED: 182 rows returned — every current row is
+-- ingest_transport = 'health_connect' with is_nap = false (i.e. not null),
+-- so every current row matches this predicate. Compare that count against
+-- what Step 1 actually showed for the same slice. If the two do not
+-- reconcile, investigate against Step 3's post-count before running
+-- anything else — note that the ROLLBACK escape this file originally
+-- offered here does not exist under the single-execution instruction
+-- above, which is why it is idempotence, not rollback, that makes this
+-- step safe to re-run.
+-- MEASURED (2026-09-06): 186 rows returned, reconciling exactly against
+-- Step 1's measured 186 — nothing unexplained. (At run time the
+-- `returning` clause was added ad hoc; it is now part of the statement
+-- above, so a future operator gets that count without improvising.)
+--
+-- ── OPERATIONAL NOTE — how the above was discovered, 2026-09-06 ─────────
+-- The single-execution instruction is not theoretical. This file
+-- originally told the operator to run `begin;` + UPDATE, inspect the
+-- count, and only then run `commit;` as a separate execution — and that is
+-- what was tried first. The transaction was silently discarded and Step
+-- 3's post-count still read `false`, which is how the dashboard's
+-- behaviour was found at all. The inspect-before-commit gate was, in the
+-- end, satisfied by that discarded execution: it had already returned and
+-- reconciled its 186 rows before anything was committed, and the retry was
+-- safe only because this UPDATE is idempotent.
 
 
 -- ── STEP 3. POST-COUNT — same shape as Step 1 ─────────────────────────────
@@ -111,6 +161,12 @@ order by ingest_transport, is_nap;
 -- the NULL group; nothing is created or destroyed. If a `false` group
 -- still shows a non-zero count, the UPDATE did not reach every row it
 -- should have — investigate before treating this backfill as complete.
+-- MEASURED (2026-09-06): a single row — ingest_transport =
+-- 'health_connect', is_nap = NULL, count = 186. NO `false` group remains.
+-- The whole population moved and the total matches Step 1's 186 exactly:
+-- nothing created, nothing destroyed. (On the first, discarded attempt
+-- this same query still read `false` — that reading is what exposed the
+-- dashboard transaction behaviour recorded in Step 2's operational note.)
 
 
 -- ── STEP 4. biometric_synthetic_cycles ROW COUNT — must be UNCHANGED ──────
@@ -132,6 +188,14 @@ select count(*) from public.biometric_synthetic_cycles;
 -- not actually deployed — stop, and check
 -- 20260901140000_verify.sql's V3b (the catalog predicate check) before
 -- doing anything else.
+-- MEASURED (2026-09-06): 186 — UNCHANGED by the backfill, matching Step
+-- 3's post-count exactly (the four-row drift from 182 is ingest, not this
+-- UPDATE). This is the payoff of the entire three-commit sequence and the
+-- first time both halves were exercised together against real rows: with
+-- every is_nap now NULL, the ORIGINAL `is_nap = false` predicate would
+-- return ZERO here, because NULL = false is NULL and WHERE treats that as
+-- false. Commit one (20260901140000) is the only reason this reads 186
+-- instead of 0.
 
 
 -- ── STEP 5. RLS — same two-account check as 20260901140000_verify.sql V4 ──
@@ -147,6 +211,10 @@ from public.biometric_synthetic_cycles;
 -- 20260901140000_verify.sql V4's own recorded result. This backfill writes
 -- is_nap only; it touches no user_id, no policy, and no row's membership
 -- in the view.
+-- MEASURED (2026-09-06): row_count = 181, distinct_users = 1 — exactly as
+-- predicted, and still 181 even though the table itself grew by four rows
+-- since 2026-09-01. NONE of the four new sessions landed under this
+-- account; see the next block for where they did.
 rollback;
 
 begin;
@@ -158,7 +226,17 @@ from public.biometric_synthetic_cycles;
 -- 20260901140000_verify.sql V4's own recorded result. This account is a
 -- live Health Connect ingest path, not an empty control — a zero here
 -- would be a regression, not a pass.
+-- MEASURED (2026-09-06): row_count = 5, distinct_users = 1 — NOT 1. ALL
+-- FOUR sessions ingested between 2026-09-01 and this run landed under THIS
+-- account (1 -> 5) while 4dbf04ae stayed flat at 181: a8435663 is the
+-- account actively syncing Health Connect now. That does not contradict
+-- the "live ingest path, not an empty control" warning carried in
+-- 20260901140000_verify.sql's V4 — it is that warning coming true within
+-- five days. Any later check that predicts a fixed, or zero, count for
+-- this account on this table will go stale the same way this one did.
 rollback;
 -- 181 + 1 should still sum to Step 4's total. If it does not, rows are
 -- being leaked or lost across accounts and that is a bigger problem than
 -- this backfill.
+-- MEASURED (2026-09-06): 181 + 5 = 186 = Step 4's measured total. The
+-- accounts partition the view exactly; nothing leaked, nothing lost.

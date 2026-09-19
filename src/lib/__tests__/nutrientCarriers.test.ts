@@ -26,7 +26,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 
-import { draftsFromFeedEntry } from "../social";
+import { draftsFromFeedEntry, draftsForCopy } from "../social";
 import { draftsFromDay, draftsForTarget } from "../entries";
 import {
   draftsFromComposition,
@@ -211,6 +211,21 @@ const CARRIERS: Carrier[] = [
         draftsFromFeedEntry(
           { scope: "meal_section", entries: [makeEntry(n)], sourceName: "Parity" },
           { dayKey: TARGET_DAY, time: { hours: 12, minutes: 0 }, meal_type: "lunch" },
+        )[0],
+      ),
+  },
+  {
+    // The single-ingredient friend copy, at a new portion: the friend's
+    // absolutes ratio-scaled from their own serving_g.
+    name: "draftsForCopy",
+    returnsEntryDraft: true,
+    ratio: 2,
+    run: (n) =>
+      pick(
+        draftsForCopy(
+          { scope: "ingredient", entries: [makeEntry(n)], sourceName: "Parity" },
+          { dayKey: TARGET_DAY, time: { hours: 12, minutes: 0 }, meal_type: "lunch" },
+          SERVING_G * 2,
         )[0],
       ),
   },

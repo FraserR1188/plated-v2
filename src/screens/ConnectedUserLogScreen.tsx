@@ -6,10 +6,11 @@
 // Viewer can copy individual ingredients, full meal sections,
 // or the entire day into their own log.
 //
-// ⚠ todayKey() below is the VIEWER's own local "today" — the target day for
-// a copy — and must not be confused with `selected`/`today` (this file's
-// OWN `today` state), which track the FRIEND's log day being viewed (see the
-// `route.params` destructure further down). Two different days, same screen.
+// ⚠ This screen never decides where a copy lands. Every copy — one
+// ingredient, a meal section, a full day — goes to CopyConfirmScreen, which
+// seeds its Day/Time/Meal picker from the viewer's own `now`. `selected` and
+// `today` below are about BROWSING the friend's log (the page on screen and
+// the pager window's anchor), never a copy's target day.
 //
 // ─── WHY A CHUNKED FETCH, NOT ONE (HISTORY_WINDOW_DAYS + 1)-DAY QUERY ───
 //
@@ -60,7 +61,7 @@ import {
   withDefaultFont,
 } from "../theme/tokens";
 import { getEntriesForUserRange } from "../lib/social";
-import { sectionForTime, addDays, formatDayLabel } from "../lib/time";
+import { addDays, formatDayLabel } from "../lib/time";
 import { getDaySummary } from "../lib/entries";
 import { reportError } from "../lib/reportError";
 import { todayKey, isPending } from "../store/useStore";
@@ -70,7 +71,6 @@ import {
   MealType,
   CopyPayload,
   Profile,
-  FoodProduct,
 } from "../types";
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -132,36 +132,6 @@ function sumEntries(entries: MealEntry[]) {
     }),
     { calories: 0, protein: 0, carbs: 0, fat: 0 },
   );
-}
-
-function entryToProduct(entry: MealEntry): FoodProduct {
-  // Reconstruct per-100g values from the stored totals + serving_g
-  const factor =
-    entry.serving_g != null && entry.serving_g > 0 ? 100 / entry.serving_g : 1;
-  return {
-    name: entry.name,
-    brand: entry.brand ?? "",
-    cal_per100: Math.round(entry.calories * factor),
-    protein_per100: parseFloat((entry.protein * factor).toFixed(1)),
-    carbs_per100: parseFloat((entry.carbs * factor).toFixed(1)),
-    fat_per100: parseFloat((entry.fat * factor).toFixed(1)),
-    // NULL stays NULL — a friend's unknown salt/fibre/sugar must not become
-    // an asserted zero the moment you copy their entry into your own log.
-    // See foodLookup.mealEntryToProduct for the same fix on the edit path.
-    salt_per100:
-      entry.salt != null
-        ? parseFloat((entry.salt * factor).toFixed(2))
-        : undefined,
-    fibre_per100:
-      entry.fibre != null
-        ? parseFloat((entry.fibre * factor).toFixed(1))
-        : undefined,
-    sugar_per100:
-      entry.sugar != null
-        ? parseFloat((entry.sugar * factor).toFixed(1))
-        : undefined,
-    serving_g: entry.serving_g ?? undefined,
-  };
 }
 
 function formatMacros(
@@ -655,27 +625,28 @@ export function ConnectedUserLogScreen() {
   };
 
   // ── Copy: single ingredient ───────────────────────────────
-  // Opens ProductScreen pre-filled so the viewer can adjust serving size
+  // Same review screen and insert path as a section or full-day copy —
+  // CopyConfirmScreen → draftsFromFeedEntry → applyEntries — with a grams
+  // field so the viewer can adjust the portion. The friend's stored
+  // absolutes are copied and ratio-scaled (draftsForCopy); nothing is
+  // rebuilt through a per-100g FoodProduct. That rebuild used to live here
+  // as entryToProduct, and it drifted out of sync with draftsFromFeedEntry:
+  // it rounded every rate, never mapped sat_fat (a friend's known sat fat
+  // became NULL), and substituted 100g when the friend's entry had no weight.
+  //
+  // The target section is NOT entry.meal_type: CopyConfirmScreen seeds it
+  // from sectionForTime(now) for this scope (see initialCopyMealType).
 
   const handleCopyIngredient = useCallback(
     (entry: MealEntry) => {
-      const product = entryToProduct(entry);
-      // ⚠ NOT entry.meal_type. That was inheriting the FRIEND's section as
-      // this copy's target — exactly the bug class CLAUDE.md's architecture
-      // invariants call out ("never inherit date or section from a source
-      // entry"). This screen lands the copy at eaten_at = now (ProductScreen
-      // seeds "now" for date: todayKey()), so sectionForTime(now) is the
-      // correct STARTING default: a fresh section derived from THIS copy's
-      // own time, not borrowed from the source. ProductScreen's meal-type
-      // tag is editable on creation, so a wrong guess here is one tap to
-      // fix, not a re-navigation.
-      navigation.navigate("Product", {
-        product,
-        date: todayKey(),
-        mealType: sectionForTime(new Date().toISOString()),
-      });
+      const payload: CopyPayload = {
+        scope: "ingredient",
+        entries: [entry],
+        sourceName: `${displayName}'s ${entry.name}`,
+      };
+      navigation.navigate("CopyConfirm", { payload });
     },
-    [navigation],
+    [navigation, displayName],
   );
 
   // ── Copy: meal section ────────────────────────────────────

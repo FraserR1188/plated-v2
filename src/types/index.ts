@@ -565,7 +565,13 @@ export type CopyScope = "ingredient" | "meal_section" | "full_day";
  * `full_day` (each entry keeps its own). A field that only ever repeats data
  * already on `entries`/`scope` is exactly the kind of thing that reads as
  * load-bearing later and isn't — CopyConfirmScreen derives its Meal-picker
- * seed and shared/each mode from `scope` and `entries` directly.
+ * seed (social.ts initialCopyMealType) and shared/each mode from `scope` and
+ * `entries` directly.
+ *
+ * `ingredient` is exactly one entry — the per-row Copy in a friend's log. It
+ * goes through the same screen and insert path as the other two scopes, plus
+ * a grams field (social.ts draftsForCopy); its Meal seed is sectionForTime(now),
+ * not the friend's section.
  */
 export interface CopyPayload {
   scope: CopyScope;

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   draftsFromFeedEntry,
+  draftsForCopy,
+  initialCopyMealType,
   copyEntriesToMyLog,
   getEntriesForUserRange,
 } from "../social";
@@ -65,6 +67,13 @@ function mockInsert(returning: unknown[]) {
   (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ insert });
   return insertedRowsCapture;
 }
+
+/** A "shared"-mode target (ingredient / meal_section): one chosen slot. */
+const SHARED_TARGET = {
+  dayKey: "2026-09-05",
+  time: { hours: 12, minutes: 30 },
+  meal_type: "lunch" as const,
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -269,6 +278,143 @@ describe("copyEntriesToMyLog", () => {
     expect(row.salt).toBeNull();
     expect(row.fibre).toBeNull();
     expect(row.sugar).toBeNull();
+  });
+
+  it("a single-ingredient copy at a new weight reaches the insert ratio-scaled, with the friend's sat fat and 'copied' provenance", async () => {
+    const capture = mockInsert([]);
+    const payload = makePayload({ scope: "ingredient" }); // 250g, 437 kcal, sat_fat 2
+
+    await copyEntriesToMyLog(payload, SHARED_TARGET, 375);
+
+    const row = (capture.rows as Record<string, unknown>[])[0];
+    expect(row.serving_g).toBe(375);
+    expect(row.calories as number).toBeCloseTo(437 * 1.5, 9);
+    expect(row.sat_fat as number).toBeCloseTo(3, 9);
+    expect(row.source).toBe("copied");
+  });
+
+  it("a weightless single-ingredient copy reaches the insert with serving_g NULL — never a substituted 100g", async () => {
+    const capture = mockInsert([]);
+    const payload = makePayload({
+      scope: "ingredient",
+      entries: [makeEntry({ serving_g: null })],
+    });
+
+    await copyEntriesToMyLog(payload, SHARED_TARGET, null);
+
+    const row = (capture.rows as Record<string, unknown>[])[0];
+    expect(row.serving_g).toBeNull();
+    expect(row.calories).toBe(437);
+  });
+});
+
+describe("draftsForCopy — the single-ingredient friend copy", () => {
+  it("with no target weight, returns exactly what draftsFromFeedEntry returns", () => {
+    const payload = makePayload({ scope: "ingredient" });
+    expect(draftsForCopy(payload, SHARED_TARGET, null)).toEqual(
+      draftsFromFeedEntry(payload, SHARED_TARGET),
+    );
+  });
+
+  it("rescales every nutrient and serving_g by ratio off the friend's own serving_g — no per-100g rebuild, no rounding", () => {
+    // 250g → 375g is ×1.5. The old entryToProduct route rounded 437/250 to
+    // 175 kcal/100g first, giving 656.25 here instead of 655.5.
+    const [d] = draftsForCopy(makePayload({ scope: "ingredient" }), SHARED_TARGET, 375);
+
+    expect(d.serving_g).toBe(375);
+    expect(d.calories).toBeCloseTo(655.5, 9);
+    expect(d.protein).toBeCloseTo(12.5 * 1.5, 9);
+    expect(d.carbs).toBeCloseTo(60 * 1.5, 9);
+    expect(d.fat).toBeCloseTo(8 * 1.5, 9);
+    expect(d.sat_fat as number).toBeCloseTo(2 * 1.5, 9);
+    expect(d.salt as number).toBeCloseTo(1.25 * 1.5, 9);
+    expect(d.fibre as number).toBeCloseTo(6 * 1.5, 9);
+    expect(d.sugar as number).toBeCloseTo(4 * 1.5, 9);
+  });
+
+  it("carries the friend's KNOWN sat fat — the field the old entryToProduct route dropped to NULL", () => {
+    const [same] = draftsForCopy(makePayload({ scope: "ingredient" }), SHARED_TARGET, null);
+    expect(same.sat_fat).toBe(2);
+  });
+
+  it("keeps NULL small macros NULL through a rescale", () => {
+    const payload = makePayload({
+      scope: "ingredient",
+      entries: [makeEntry({ sat_fat: null, salt: null, fibre: null, sugar: null })],
+    });
+    const [d] = draftsForCopy(payload, SHARED_TARGET, 100);
+    expect(d.sat_fat).toBeNull();
+    expect(d.salt).toBeNull();
+    expect(d.fibre).toBeNull();
+    expect(d.sugar).toBeNull();
+  });
+
+  it("a friend's entry with no weight copies unchanged with serving_g NULL — no weight is ever invented", () => {
+    const payload = makePayload({
+      scope: "ingredient",
+      entries: [makeEntry({ serving_g: null })],
+    });
+    for (const grams of [null, 150]) {
+      const [d] = draftsForCopy(payload, SHARED_TARGET, grams);
+      expect(d.serving_g).toBeNull();
+      expect(d.calories).toBe(437);
+      expect(d.sat_fat).toBe(2);
+    }
+  });
+
+  it("stamps the copy 'copied', keeps the OFF identity, and drops the friend's private image path", () => {
+    const payload = makePayload({
+      scope: "ingredient",
+      entries: [
+        makeEntry({
+          barcode: "5000112",
+          off_id: "off-1",
+          image_url: "https://images.openfoodfacts.org/x.jpg",
+          image_path: "friend-1/cf-1/front.jpg",
+          custom_food_id: "cf-1",
+        }),
+      ],
+    });
+    const [d] = draftsForCopy(payload, SHARED_TARGET, 300);
+    expect(d.source).toBe("copied");
+    expect(d.barcode).toBe("5000112");
+    expect(d.off_id).toBe("off-1");
+    expect(d.image_url).toBe("https://images.openfoodfacts.org/x.jpg");
+    expect(d.image_path).toBeNull();
+    expect(d.custom_food_id).toBeNull();
+  });
+
+  it("refuses a target weight on a multi-entry scope", () => {
+    const payload = makePayload({ scope: "meal_section", entries: [makeEntry(), makeEntry({ id: "e2" })] });
+    expect(() => draftsForCopy(payload, SHARED_TARGET, 200)).toThrow(/single-ingredient/);
+  });
+
+  it("refuses a non-positive or non-finite target weight — it would fabricate zeros", () => {
+    const payload = makePayload({ scope: "ingredient" });
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => draftsForCopy(payload, SHARED_TARGET, bad)).toThrow(/must be > 0/);
+    }
+  });
+});
+
+describe("initialCopyMealType", () => {
+  // Local wall-clock 19:30 → dinner by sectionForTime.
+  const evening = new Date(2026, 8, 5, 19, 30);
+
+  it("ingredient scope seeds from THIS copy's time, never the friend's section", () => {
+    const payload = makePayload({
+      scope: "ingredient",
+      entries: [makeEntry({ meal_type: "breakfast" })],
+    });
+    expect(initialCopyMealType(payload, evening)).toBe("dinner");
+  });
+
+  it("meal_section keeps seeding from the section its entries share (unchanged here — a separate decision)", () => {
+    const payload = makePayload({
+      scope: "meal_section",
+      entries: [makeEntry({ meal_type: "breakfast" }), makeEntry({ id: "e2", meal_type: "breakfast" })],
+    });
+    expect(initialCopyMealType(payload, evening)).toBe("breakfast");
   });
 });
 

@@ -1,15 +1,28 @@
 // ============================================================
 // src/screens/CopyConfirmScreen.tsx
 // ============================================================
-// Shown before bulk-copying a meal section or a full day.
-// Gives the viewer a summary of what will be copied and a
-// single confirm button to execute the bulk insert.
+// The one review step for copying a friend's food into your own log — a
+// single ingredient, a meal section, or a full day. Gives the viewer a
+// summary of what will be copied, where it lands, and a single confirm
+// button; the insert goes through draftsFromFeedEntry → applyEntries.
+//
+// A single-ingredient copy also gets a grams field (the ReviewRow pattern
+// from BundleApplyReviewScreen): the portion rescales the friend's stored
+// absolutes by ratio (draftsForCopy → scaleEntryDraftGrams), never through a
+// per-100g rebuild. An entry with no saved weight can't be rescaled — the
+// field is disabled with an inline note and the entry copies unchanged, with
+// serving_g NULL, exactly as a section copy of the same row would.
+//
+// Every total on this screen is computed from draftsForCopy — the same
+// function the confirm button inserts through — so what's shown is what's
+// written.
 // ============================================================
 
 import React, { useState, useLayoutEffect } from "react";
 import {
   View,
   Text,
+  TextInput,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
@@ -28,25 +41,35 @@ import {
   Fonts,
   withDefaultFont,
 } from "../theme/tokens";
-import { copyEntriesToMyLog } from "../lib/social";
-import { sharedMealType } from "../lib/entries";
-import { dateKey, sectionForTime, TimeOfDay } from "../lib/time";
+import {
+  copyEntriesToMyLog,
+  draftsForCopy,
+  initialCopyMealType,
+} from "../lib/social";
+import { dateKey, TimeOfDay } from "../lib/time";
 import { CopyTargetPicker } from "../components/CopyTargetPicker";
-import { MealEntry, MealType, RootStackParamList } from "../types";
+import { EntryDraft, MealType, RootStackParamList } from "../types";
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Route = RouteProp<RootStackParamList, "CopyConfirm">;
 
-function sumEntries(entries: MealEntry[]) {
-  return entries.reduce(
-    (acc, e) => ({
-      calories: acc.calories + e.calories,
-      protein: acc.protein + e.protein,
-      carbs: acc.carbs + e.carbs,
-      fat: acc.fat + e.fat,
+function sumDrafts(drafts: EntryDraft[]) {
+  return drafts.reduce(
+    (acc, d) => ({
+      calories: acc.calories + d.calories,
+      protein: acc.protein + d.protein,
+      carbs: acc.carbs + d.carbs,
+      fat: acc.fat + d.fat,
     }),
     { calories: 0, protein: 0, carbs: 0, fat: 0 },
   );
+}
+
+/** Same accept rule as BundleApplyReviewScreen's ReviewRow: a finite number
+ *  above zero, comma decimals allowed. Anything else is "not a weight". */
+function parseGrams(text: string): number | null {
+  const g = parseFloat(text.replace(",", "."));
+  return Number.isFinite(g) && g > 0 ? g : null;
 }
 
 export function CopyConfirmScreen() {
@@ -75,13 +98,57 @@ export function CopyConfirmScreen() {
     hours: now.getHours(),
     minutes: now.getMinutes(),
   }));
-  const [mealType, setMealType] = useState<MealType>(
-    () => sharedMealType(payload.entries) ?? sectionForTime(now.toISOString()),
+  // A DEFAULT, not an inheritance: see initialCopyMealType for why a
+  // single-ingredient copy seeds from now rather than the friend's section.
+  const [mealType, setMealType] = useState<MealType>(() =>
+    initialCopyMealType(payload, now),
   );
   const mode: "shared" | "each" =
     payload.scope === "full_day" ? "each" : "shared";
 
-  const totals = sumEntries(payload.entries);
+  // ── Portion (single-ingredient copy only) ──────────────────
+  //
+  // Starts at the friend's own serving_g, i.e. an exact copy. `lastGrams` is
+  // the last text that parsed to a real weight; the preview AND the insert
+  // both use the live text when it parses, else lastGrams — so there is no
+  // window where the box, the preview and the write disagree (a tap on
+  // Confirm before the field blurs still writes what's shown). An unparseable
+  // entry reverts on blur, same as ReviewRow.
+  const isIngredient = payload.scope === "ingredient";
+  const source = payload.entries[0];
+  const rescalable =
+    isIngredient && source?.serving_g != null && source.serving_g > 0;
+  const [gramsText, setGramsText] = useState(() =>
+    rescalable ? String(source.serving_g) : "",
+  );
+  const [lastGrams, setLastGrams] = useState<number | null>(() =>
+    rescalable ? source.serving_g : null,
+  );
+  const targetGrams = rescalable ? (parseGrams(gramsText) ?? lastGrams) : null;
+
+  const onGramsChange = (text: string) => {
+    setGramsText(text);
+    const g = parseGrams(text);
+    if (g != null) setLastGrams(g);
+  };
+  const onGramsBlur = () => {
+    if (parseGrams(gramsText) == null && lastGrams != null) {
+      setGramsText(String(lastGrams));
+    }
+  };
+
+  const target = {
+    dayKey,
+    // "each" mode (full_day) preserves each entry's OWN wall clock — null
+    // tells draftsFromFeedEntry to resolve it per entry, exactly like
+    // meal_type below. "shared" mode (ingredient, meal_section) applies one
+    // chosen time to every entry.
+    time: mode === "shared" ? time : null,
+    meal_type: mode === "shared" ? mealType : null,
+  };
+  const drafts = draftsForCopy(payload, target, targetGrams);
+
+  const totals = sumDrafts(drafts);
   const itemCount = payload.entries.length;
 
   useLayoutEffect(() => {
@@ -94,15 +161,8 @@ export function CopyConfirmScreen() {
   const handleConfirm = async () => {
     setConfirming(true);
     try {
-      await copyEntriesToMyLog(payload, {
-        dayKey,
-        // "each" mode (full_day) preserves each entry's OWN wall clock —
-        // null tells draftsFromFeedEntry to resolve it per entry, exactly
-        // like meal_type below. Only "shared" mode (meal_section) applies
-        // one chosen time to every entry.
-        time: mode === "shared" ? time : null,
-        meal_type: mode === "shared" ? mealType : null,
-      });
+      // Same payload, target and targetGrams the preview was built from.
+      await copyEntriesToMyLog(payload, target, targetGrams);
       // Go back two screens to Today tab — or just pop to Today
       navigation.popToTop();
       // Small toast-style feedback (native Alert as fallback — replace
@@ -163,8 +223,9 @@ export function CopyConfirmScreen() {
         </View>
 
         {/* Copy target: Day always editable; Meal + Time editable only in
-            "shared" mode (a single meal_section) — full_day preserves each
-            entry's own section, so there is nothing for Meal to override. */}
+            "shared" mode (a single ingredient or a meal_section) — full_day
+            preserves each entry's own section, so there is nothing for Meal
+            to override. */}
         <View style={styles.targetCard}>
           <CopyTargetPicker
             dayKey={dayKey}
@@ -182,27 +243,65 @@ export function CopyConfirmScreen() {
           {itemCount} item{itemCount !== 1 ? "s" : ""}
         </Text>
         <View style={styles.card}>
-          {payload.entries.map((entry, i) => (
-            <View
-              key={entry.id}
-              style={[
-                styles.entryRow,
-                i < payload.entries.length - 1 && styles.entryRowBorder,
-              ]}
-            >
+          {isIngredient ? (
+            // Single ingredient: the portion is editable. Same shape and
+            // accept/revert rule as BundleApplyReviewScreen's ReviewRow;
+            // the kcal shown is drafts[0] — the row that will be inserted.
+            <View style={styles.entryRow}>
               <View style={styles.entryMeta}>
                 <Text style={styles.entryName} numberOfLines={1}>
-                  {entry.name}
+                  {source.name}
                 </Text>
-                <Text style={styles.entrySub}>
-                  {entry.serving_g}g · {entry.meal_type}
-                </Text>
+                {!rescalable && (
+                  <Text style={styles.entryNote}>
+                    No saved weight for this item — copies unchanged.
+                  </Text>
+                )}
+              </View>
+              <View style={styles.gramsQty}>
+                <TextInput
+                  style={[
+                    styles.gramsInput,
+                    !rescalable && styles.gramsInputDisabled,
+                  ]}
+                  value={rescalable ? gramsText : "—"}
+                  onChangeText={onGramsChange}
+                  onBlur={onGramsBlur}
+                  onSubmitEditing={onGramsBlur}
+                  editable={rescalable}
+                  keyboardType="decimal-pad"
+                  returnKeyType="done"
+                  selectTextOnFocus
+                />
+                <Text style={styles.gramsUnit}>g</Text>
               </View>
               <Text style={styles.entryCalories}>
-                {Math.round(entry.calories)} kcal
+                {Math.round(drafts[0].calories)} kcal
               </Text>
             </View>
-          ))}
+          ) : (
+            payload.entries.map((entry, i) => (
+              <View
+                key={entry.id}
+                style={[
+                  styles.entryRow,
+                  i < payload.entries.length - 1 && styles.entryRowBorder,
+                ]}
+              >
+                <View style={styles.entryMeta}>
+                  <Text style={styles.entryName} numberOfLines={1}>
+                    {entry.name}
+                  </Text>
+                  <Text style={styles.entrySub}>
+                    {entry.serving_g}g · {entry.meal_type}
+                  </Text>
+                </View>
+                <Text style={styles.entryCalories}>
+                  {Math.round(entry.calories)} kcal
+                </Text>
+              </View>
+            ))
+          )}
         </View>
       </ScrollView>
 
@@ -357,6 +456,38 @@ const styles = StyleSheet.create(
     fontFamily: Fonts.mono.semibold,
     color: Colors.textSub,
     marginLeft: Spacing.sm,
+  },
+  // Grams field — same values as BundleApplyReviewScreen's ReviewRow.
+  entryNote: {
+    fontSize: Typography.xs,
+    color: Colors.warning,
+    marginTop: 2,
+  },
+  gramsQty: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    marginLeft: Spacing.sm,
+  },
+  gramsInput: {
+    width: 56,
+    textAlign: "right",
+    fontSize: Typography.base,
+    fontFamily: Fonts.mono.regular,
+    color: Colors.text,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: Radius.control,
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+  },
+  gramsInputDisabled: {
+    color: Colors.textMuted,
+    borderColor: Colors.borderSub,
+  },
+  gramsUnit: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
   },
 
   // Footer

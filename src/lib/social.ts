@@ -19,8 +19,15 @@ import {
   CopyPayload,
 } from "../types";
 
-import { dateKey, localHM, sameTimeOnDay, TimeOfDay } from "./time";
-import { applyEntries } from "./entries";
+import {
+  dateKey,
+  localHM,
+  sameTimeOnDay,
+  sectionForTime,
+  TimeOfDay,
+} from "./time";
+import { applyEntries, sharedMealType } from "./entries";
+import { scaleEntryDraftGrams } from "./compositions";
 import { reportError } from "./reportError";
 import type { WriteResult } from "../store/useStore";
 
@@ -676,17 +683,78 @@ export function draftsFromFeedEntry(
 }
 
 /**
- * Copy a set of a friend's entries into the current user's log, at a target
- * day/time/meal CopyConfirmScreen's CopyTargetPicker resolved.
+ * The drafts a friend-copy will actually insert — and, because
+ * CopyConfirmScreen renders its totals from this same function, exactly what
+ * the screen shows. Preview and write cannot disagree.
  *
- * Kept as a named export so CopyConfirmScreen's call site stays a one-liner.
- * The insert itself lives in applyEntries().
+ * `targetGrams` is the single-ingredient copy's portion. It rescales the ONE
+ * draft by RATIO off the friend's own serving_g — the true denominator of the
+ * absolutes draftsFromFeedEntry just copied — via scaleEntryDraftGrams. No
+ * per-100g rebuild, no rounding, NULL stays NULL. This replaced
+ * ConnectedUserLogScreen's entryToProduct → ProductScreen route, which went
+ * through a rounded per-100g FoodProduct and dropped sat_fat entirely.
+ *
+ * A friend's entry with no weight (serving_g NULL or <= 0) has no denominator:
+ * scaleEntryDraftGrams hands it back unchanged, so it is copied as-is with
+ * serving_g NULL — exactly like a section copy of the same row. No weight is
+ * ever invented (the old route substituted 100g here).
+ *
+ * `targetGrams: null` means "copy at the friend's own weight", for every
+ * scope. A target weight on a multi-entry scope, or a non-positive / non-finite
+ * one, THROWS — the first is meaningless, the second would multiply every
+ * nutrient into a fabricated zero.
+ */
+export function draftsForCopy(
+  payload: CopyPayload,
+  target: { dayKey: string; time: TimeOfDay | null; meal_type: MealType | null },
+  targetGrams: number | null,
+): EntryDraft[] {
+  const drafts = draftsFromFeedEntry(payload, target);
+  if (targetGrams == null) return drafts;
+
+  if (payload.scope !== "ingredient" || drafts.length !== 1) {
+    throw new Error(
+      `draftsForCopy: a target weight only applies to a single-ingredient ` +
+        `copy (scope=${payload.scope}, entries=${drafts.length}).`,
+    );
+  }
+  if (!Number.isFinite(targetGrams) || targetGrams <= 0) {
+    throw new Error(`draftsForCopy: target weight must be > 0 (got ${targetGrams}).`);
+  }
+
+  const [draft] = drafts;
+  return [scaleEntryDraftGrams(draft, draft.serving_g, targetGrams)];
+}
+
+/**
+ * CopyConfirmScreen's starting Meal-picker value — a DEFAULT the viewer can
+ * change, never a value written without them seeing it.
+ *
+ *   ingredient    sectionForTime(now): a section derived from THIS copy's own
+ *                 time. NOT the friend's meal_type — inheriting the source's
+ *                 section is the bug class CLAUDE.md's invariants call out,
+ *                 and the single-ingredient copy has always avoided it.
+ *   meal_section  the section the entries share (unchanged behaviour).
+ *   full_day      irrelevant — "each" mode keeps every entry's own section;
+ *                 same expression as meal_section, kept as it was.
+ */
+export function initialCopyMealType(payload: CopyPayload, now: Date): MealType {
+  if (payload.scope === "ingredient") return sectionForTime(now.toISOString());
+  return sharedMealType(payload.entries) ?? sectionForTime(now.toISOString());
+}
+
+/**
+ * Copy a set of a friend's entries into the current user's log, at a target
+ * day/time/meal CopyConfirmScreen's CopyTargetPicker resolved, and — for a
+ * single-ingredient copy — at the portion the viewer chose (see
+ * draftsForCopy). The insert itself lives in applyEntries().
  */
 export async function copyEntriesToMyLog(
   payload: CopyPayload,
   target: { dayKey: string; time: TimeOfDay | null; meal_type: MealType | null },
+  targetGrams: number | null = null,
 ): Promise<MealEntry[]> {
-  return applyEntries(draftsFromFeedEntry(payload, target));
+  return applyEntries(draftsForCopy(payload, target, targetGrams));
 }
 
 // ─── Utility: today's calorie total for a user ───────────────

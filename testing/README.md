@@ -64,7 +64,7 @@ An issue only reaches `Verified` when a person exercises the flow again — your
 | PL-010 | Minor | buildEditPatch snaps edits to the rounding grid | Deferred | 2026-09-19-internal | Bounded drift, not urgent |
 | PL-014 | Minor | Copy-a-day failures double-report to Sentry | Logged | 2026-09-19-internal | Audit applyEntries callers |
 | PL-012 | Minor | Tesco Gold Coffee library row saved all-zero | Deferred | 2026-09-19-internal | Check the OFF source first |
-| PL-013 | Polish | RecipeConfirm doubles the bottom inset | Logged | 2026-09-19-internal | Fold into the PL-004 PR |
+| PL-013 | Polish | RecipeConfirm doubles the bottom inset | In progress | 2026-09-19-internal | SafeAreaView edge kept, footer inset dropped, on `fix/keyboard-screen-wrapper`. Device pass pending |
 
 ## Closed issues
 

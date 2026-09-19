@@ -281,7 +281,7 @@ export function RecipeConfirmScreen() {
           <View style={{ height: Spacing.xxl }} />
         </ScrollView>
 
-        <View style={[styles.footer, { paddingBottom: insets.bottom + Spacing.sm }]}>
+        <View style={styles.footer}>
           <Pressable
             style={({ pressed }) => [styles.primaryBtn, pressed && { opacity: 0.88 }]}
             onPress={handleAddToBatch}
@@ -652,9 +652,12 @@ const styles = StyleSheet.create(
     addMissingIcon: { fontSize: 16, color: Colors.textSub },
     addMissingText: { fontSize: Typography.sm, fontWeight: Typography.semibold, color: Colors.textSub },
 
+    // No insets.bottom here: the SafeAreaView's bottom edge already clears
+    // the nav bar, and KeyboardScreen sits inside it (PL-013).
     footer: {
       paddingHorizontal: Spacing.md,
       paddingTop: Spacing.sm,
+      paddingBottom: Spacing.sm,
       borderTopWidth: 1,
       borderTopColor: Colors.borderSub,
     },

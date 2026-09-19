@@ -8,11 +8,13 @@
 // Reads/writes useStore's `compositionApplyDraft` slice exclusively — no
 // navigation params (see the RootStackParamList comment on this route) and
 // no local component copy of the drafts. Per-row grams TEXT is local state
-// (same pattern as BatchEditorScreen's IngredientRow): only a successfully
-// parsed, positive number is committed back to the store, on blur/submit.
-// This is deliberate, not an oversight — it's what lets the user type
-// "1" then "10" then "10." without the field fighting them mid-edit, and
-// it's exactly IngredientRow's own commit-or-revert shape.
+// (same pattern as CopyConfirm and BatchEditorScreen's IngredientRow): every
+// change that parses to a weight (parseGrams) is committed to the store at
+// once, and text that doesn't parse leaves the store's last good weight and
+// reverts on blur. The text stays local so typing "1" then "10" then "10."
+// isn't fought mid-edit — the store value never flows back into the box.
+// Committing on change, not on blur, is what makes Confirm apply what's
+// typed: tapping the footer doesn't blur the field (PL-005).
 //
 // An item whose original serving_g is NULL or <=0 has no denominator to
 // scale from — scaleEntryDraftGrams refuses by returning the draft
@@ -43,6 +45,7 @@ import {
 } from "../store/useStore";
 import { scaleEntryDraftGrams } from "../lib/compositions";
 import { formatTime } from "../lib/time";
+import { parseGrams } from "../lib/macros";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 import {
   Colors,
@@ -82,12 +85,17 @@ function ReviewRow({
 
   const scaled = scaledDraftOf(item);
 
-  const commit = () => {
-    const g = parseFloat(gramsText.replace(",", "."));
-    if (Number.isFinite(g) && g > 0) {
-      onCommitGrams(g);
-    } else {
-      // Revert — don't accept garbage, don't silently zero the item.
+  // Live text, as in CopyConfirm: the kcal here, the hero totals and Confirm
+  // all read the store, and the store follows every keystroke that parses.
+  const onGramsChange = (text: string) => {
+    setGramsText(text);
+    const g = parseGrams(text);
+    if (g != null) onCommitGrams(g);
+  };
+  const onGramsBlur = () => {
+    // Revert — don't accept garbage, don't silently zero the item. The
+    // store still holds the last good weight, so nothing to commit here.
+    if (parseGrams(gramsText) == null) {
       setGramsText(item.currentGramsG != null ? String(item.currentGramsG) : "");
     }
   };
@@ -113,9 +121,9 @@ function ReviewRow({
         <TextInput
           style={[styles.gramsInput, !rescalable && styles.gramsInputDisabled]}
           value={rescalable ? gramsText : "—"}
-          onChangeText={setGramsText}
-          onBlur={commit}
-          onSubmitEditing={commit}
+          onChangeText={onGramsChange}
+          onBlur={onGramsBlur}
+          onSubmitEditing={onGramsBlur}
           editable={rescalable}
           keyboardType="decimal-pad"
           returnKeyType="done"

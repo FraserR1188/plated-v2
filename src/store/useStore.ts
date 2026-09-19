@@ -271,13 +271,17 @@ interface AppState {
    * `planned`, `confirmed_at` and `skipped_at` are omitted on purpose: the DB
    * trigger derives them. The client never sends them, so no insert path — copy,
    * social, barcode, AI, anything written later — can get the rule wrong.
+   *
+   * Resolves to the inserted row; REJECTS on failure (no signed-in user, or
+   * the insert itself), same contract as applyEntries. An insert error is
+   * already reported to Sentry in here — callers surface it, never re-report.
    */
   addEntry: (
     entry: Omit<
       MealEntry,
       "id" | "user_id" | "logged_at" | "planned" | "confirmed_at" | "skipped_at"
     >,
-  ) => Promise<void>;
+  ) => Promise<MealEntry>;
   deleteEntry: (id: string) => Promise<void>;
   /** Multi-delete, for selection mode. One round-trip, not N. */
   deleteEntries: (ids: string[]) => Promise<WriteResult>;
@@ -696,7 +700,10 @@ export const useStore = create<AppState>((set, get) => ({
 
   addEntry: async (entry) => {
     const { userId } = get();
-    if (!userId) return;
+    // Throws, never a silent return: ProductScreen used to close as if the
+    // meal had been logged. Unreported, like applyEntries' `!user` — there is
+    // no server error to send.
+    if (!userId) throw new Error("Not authenticated");
 
     // EXPLICIT snake_case mapping — do NOT spread. Listing every column makes a
     // forgotten one a compile error at the call site instead of a silent null.
@@ -747,10 +754,16 @@ export const useStore = create<AppState>((set, get) => ({
       .single();
 
     if (error) {
+      // Reported HERE, exactly once — same as applyEntries. The caller shows
+      // the failure; it must not report it again.
       reportError("addEntry", error, { level: "error" });
-      return;
+      throw error;
     }
-    if (data) set((s) => ({ entries: [data as MealEntry, ...s.entries] }));
+    // .single() turns anything other than exactly one RETURNING row into
+    // `error` above, so `data` is the row.
+    const inserted = data as MealEntry;
+    set((s) => ({ entries: [inserted, ...s.entries] }));
+    return inserted;
   },
 
   deleteEntry: async (id) => {
@@ -1496,9 +1509,12 @@ export const useStore = create<AppState>((set, get) => ({
       .single();
 
     if (!error && data) {
-      // Written straight to the base table, not the scored view — a brand
-      // new save has no meal_entries yet, so it starts exactly where any
-      // zero-match row does: decay_score 0, never logged.
+      // Written straight to the base table, not the scored view, so the score
+      // here is a placeholder: decay_score 0, never logged. ProductScreen now
+      // calls this AFTER its meal_entries insert succeeds, so the server's
+      // real score is already non-zero; the next fetchSavedIngredients()
+      // (App.tsx, on auth events — i.e. usually next launch) replaces this
+      // row with it.
       const inserted: SavedIngredientScored = {
         ...(data as SavedIngredient),
         decay_score: 0,

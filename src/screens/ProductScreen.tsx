@@ -48,6 +48,7 @@ import {
   MEAL_LABELS,
 } from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
+import { reportError } from "../lib/reportError";
 import { SourceNotice } from "../components/SourceNotice";
 import { scanMealPhoto, mealScanToFoodProduct, MacroKey } from "../lib/mealRecognition";
 import {
@@ -405,6 +406,9 @@ export function ProductScreen() {
     isEditing || dateTouched || (routeDate ?? todayKey()) !== todayKey();
 
   const [saving, setSaving] = useState(false);
+  // Synchronous double-submit guard. `saving` disables the button, but only
+  // after a re-render — two taps in the same frame both reach handleSubmit.
+  const submittingRef = useRef(false);
 
   const g = parseFloat(serving) || 0;
   const f = g / 100;
@@ -465,7 +469,8 @@ export function ProductScreen() {
   };
 
   const handleSubmit = async () => {
-    if (!g) return;
+    if (!g || submittingRef.current) return;
+    submittingRef.current = true;
     setSaving(true);
 
     // The pair, derived together, from one value. `date` is never picked.
@@ -544,52 +549,78 @@ export function ProductScreen() {
       // So: check, tell them, and STAY.
       const { error } = await updateEntry(editEntryId!, patch);
       if (error) {
+        submittingRef.current = false;
         setSaving(false);
         Alert.alert("Can't save that", error, [{ text: "OK" }]);
         return; // ← DO NOT POP. The edit did not happen.
       }
     } else {
-      await saveIngredient(draft);
-      await addEntry({
-        date,
-        meal_type: mealType,
-        name: draft.name,
-        brand: draft.brand,
-        ...macros,
-        // AI-recognized drafts have no barcode and aren't source: "custom",
-        // so without this check first they'd silently fall through to
-        // "search" and the estimate's provenance would be lost. A
-        // corrected draft is STILL "ai_photo" — the correction changes the
-        // identity, not the provenance of the estimate.
-        source: draft.aiEstimate
-          ? "ai_photo"
-          : draft.source === "custom"
-            ? "custom"
-            : draft.barcode
-              ? "barcode"
-              : "search",
-        barcode: draft.barcode,
-        off_id: draft.off_id,
+      // Same rule as the edit branch above: on failure, tell them and STAY.
+      // Popping here used to throw away the whole draft — on the AI path that
+      // is the recognition AND the user's corrections, all of which live in
+      // this screen's own state and survive only as long as the screen does.
+      try {
+        await addEntry({
+          date,
+          meal_type: mealType,
+          name: draft.name,
+          brand: draft.brand,
+          ...macros,
+          // AI-recognized drafts have no barcode and aren't source: "custom",
+          // so without this check first they'd silently fall through to
+          // "search" and the estimate's provenance would be lost. A
+          // corrected draft is STILL "ai_photo" — the correction changes the
+          // identity, not the provenance of the estimate.
+          source: draft.aiEstimate
+            ? "ai_photo"
+            : draft.source === "custom"
+              ? "custom"
+              : draft.barcode
+                ? "barcode"
+                : "search",
+          barcode: draft.barcode,
+          off_id: draft.off_id,
 
-        // A PLANNED time is always an estimate, however deliberately you picked
-        // it — you have not eaten this yet, so 19:00 is a forecast, not a fact.
-        // It only becomes real if you adjust the time while confirming.
-        //
-        // For a meal you HAVE eaten, the old rule stands: an untouched picker
-        // says "when I opened the app", not "when I ate".
-        eaten_at_estimated: isPlanned ? true : !timeTouched,
+          // A PLANNED time is always an estimate, however deliberately you picked
+          // it — you have not eaten this yet, so 19:00 is a forecast, not a fact.
+          // It only becomes real if you adjust the time while confirming.
+          //
+          // For a meal you HAVE eaten, the old rule stands: an untouched picker
+          // says "when I opened the app", not "when I ate".
+          eaten_at_estimated: isPlanned ? true : !timeTouched,
 
-        image_url: draft.image_url ?? null,
-        image_path: draft.image_path ?? null,
-        custom_food_id: draft.custom_food_id ?? null,
-      });
-      // NOTE: addEntry still swallows its errors into console.warn and returns
-      // void, so an insert failure here pops as if it worked. Less urgent than
-      // the edit path (nothing is being corrupted — the meal just isn't saved,
-      // and the user will notice the empty section), but it is the same class of
-      // bug and it should go the same way.
+          image_url: draft.image_url ?? null,
+          image_path: draft.image_path ?? null,
+          custom_food_id: draft.custom_food_id ?? null,
+        });
+      } catch {
+        // Not reported here: addEntry already reported an insert error, and a
+        // missing user has nothing to report (same as applyEntries).
+        submittingRef.current = false;
+        setSaving(false);
+        Alert.alert(
+          "Couldn't log that",
+          "Nothing was saved, and everything you entered is still here. Check your connection and try again.",
+          [{ text: "OK" }],
+        );
+        return; // ← DO NOT POP. Nothing was logged.
+      }
+
+      // AFTER the insert, not before: bumping use_count (or creating the
+      // library row) is only true once the meal is actually logged — before,
+      // a failed log still promoted the food in My Library. Best effort: a
+      // failed "remember this" must never block or undo a log that happened.
+      // saveIngredient reports its own errors and returns null; the catch is
+      // for anything it throws instead.
+      try {
+        await saveIngredient(draft);
+      } catch (e) {
+        reportError("saveIngredient", e, { level: "error" });
+      }
     }
 
+    // submittingRef stays set: the screen is leaving, and a tap during the
+    // pop transition must not log the same meal twice.
     setSaving(false);
     navigation.popToTop();
   };

@@ -557,9 +557,9 @@ export async function applyCompositionDrafts(
 // mealEntryToProduct-style (value / servingG) * 100 rounds on the way out
 // AND on the way back in, eroding precision twice for no reason when the
 // ratio can be applied directly. mealEntryToProduct() itself must never
-// appear in this path for a second reason: its `(v ?? 0) / g` coalesces a
-// NULL nutrient to zero before dividing, which would silently assert "zero
-// fibre" for an item where fibre was genuinely unknown.
+// appear in this path. Beyond the double rounding, it used to coalesce a NULL
+// nutrient to zero before dividing (`(v ?? 0) / g`, fixed in 92a5f90 — it now
+// keeps NULL as undefined). Ratio scaling never had either problem.
 
 /**
  * Scale one nutrient value by a ratio, preserving NULL.

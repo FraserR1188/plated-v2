@@ -5,7 +5,8 @@
 // callers and they differ in exactly one thing: where eaten_at (and, for the
 // two copy builders, meal_type) comes from.
 //
-//   social copy      → now().                    "You are eating this NOW."
+//   social copy      → a CHOSEN day and time.    CopyConfirmScreen's picker,
+//                                                 seeded from now().
 //   copy-a-day       → same wall clock, new day. "Monday's lunch, on Tuesday."
 //   copy-to-a-slot   → one CHOSEN time and section, for every entry passed in.
 //                                                 "Put this at Lunch, 13:30, Tuesday."
@@ -57,10 +58,10 @@ import { isEaten, isPending } from "../store/useStore";
  *
  * 3. It `.select()`s. The trigger's decision comes back in the RETURNING row,
  *    and the store appends THAT — not a guess. The old copyEntriesToMyLog
- *    didn't select, which was harmless only because a social copy always lands
- *    on now() and is therefore always planned = false. A bundle applied to
- *    Thursday is not, and a store that assumed false would put a plan straight
- *    into your correlation.
+ *    didn't select, which was harmless only while a social copy always landed
+ *    on now() and was therefore always planned = false. A bundle applied to
+ *    Thursday is not — nor, now, is a social copy to a future day — and a
+ *    store that assumed false would put a plan straight into your correlation.
  *
  * Explicit snake_case, every column listed. Do NOT spread a draft in here:
  * spreads have silently no-opped new columns on this project before, and a

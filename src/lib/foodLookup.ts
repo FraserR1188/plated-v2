@@ -76,8 +76,14 @@ export function customFoodToProduct(cf: CustomFood): FoodProduct {
  * ─── AND EVEN WHEN serving_g IS VALID, THIS IS LOSSY ───
  *
  * Math.round() and toFixed() below mean the round-trip does not commute. A 250g
- * entry at 437 kcal → 175 kcal/100g → 437.5 kcal. Small, but it compounds on
- * every edit, and ProductScreen.handleSubmit rebuilds ALL macros from the
+ * entry at 437 kcal → 175 kcal/100g → 437.5 kcal. It happens ONCE, not on every
+ * edit: the first save snaps the rate onto the rounding grid, and rounding an
+ * on-grid value returns the same value, so later saves rewrite identical
+ * numbers (measured). The error is bounded by half a rounding step × g/100 per
+ * macro, except that a rate below half a step becomes exactly 0. It only
+ * affects entries whose rate wasn't already on the grid when logged — OFF
+ * values are pre-rounded to it (openfoodfacts.ts parseProduct), so OFF logs
+ * don't move. ProductScreen.handleSubmit still rebuilds ALL macros from the
  * product even when only the time changed.
  *
  * Which is why bundles snapshot MealEntry → meal_composition_items DIRECTLY and

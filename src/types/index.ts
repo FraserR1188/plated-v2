@@ -118,7 +118,9 @@ export interface FoodProduct {
  *
  * ─── NULLABILITY: THE SAME `?? 0` MEANS TWO OPPOSITE THINGS ───
  *
- * salt, fibre, sugar and sat_fat are NULLABLE with a DEFAULT of 0. So:
+ * salt, fibre, sugar and sat_fat are NULLABLE, with no column default — the old
+ * DEFAULT 0 was dropped by 20260818140000_meal_entries_null_not_zero.sql, so an
+ * omitted key now lands NULL, not a fabricated 0. So:
  *
  *     NULL  =  we do not know how much fibre this had
  *     0     =  we know, and it had none
@@ -132,9 +134,9 @@ export interface FoodProduct {
  *   "unknown" with the assertion "zero grams" — which then feeds your goals and
  *   your WHOOP correlation and propagates into every copy. Pass `?? null`.
  *
- * Same three characters, opposite consequences. useStore.addEntry gets this
- * right (`?? null`); social.ts's copy path does not (`?? 0`). addEntry is the
- * house style.
+ * Same three characters, opposite consequences. useStore.addEntry and every
+ * EntryDraft builder get this right (`?? null`); social.ts's copy path used
+ * `?? 0` until D4. `?? null` on write is the house style.
  */
 export interface MealEntry {
   id: string;
@@ -156,13 +158,14 @@ export interface MealEntry {
   /**
    * NULLABLE in the DB, and `number` was a lie.
    *
-   * Every write path sets it, which is why nobody noticed — but a row that ever
-   * got a null renders as "0g" in TodayScreen (Math.round(null) === 0) and,
-   * worse, makes foodLookup.mealEntryToProduct fall back to `g = 100`, which
-   * silently rescales every macro by 100/actual on the next edit.
-   *
-   * Typing it honestly turns both of those into compile errors. They are real
-   * bugs, not new ones.
+   * NULL is real, not theoretical: a bundle item or a friend's entry with no
+   * saved quantity is copied with serving_g NULL (draftsFromComposition,
+   * draftsFromFeedEntry), because no weight may ever be invented. When this
+   * was typed `number`, a NULL rendered as "0g" in TodayScreen and made
+   * foodLookup.mealEntryToProduct fall back to `g = 100`, silently rescaling
+   * every macro by 100/actual on the next edit. Typing it honestly turned both
+   * into compile errors: TodayScreen now renders "—", and mealEntryToProduct
+   * returns null so the edit is refused instead.
    */
   serving_g: number | null;
 
@@ -269,7 +272,9 @@ export interface EntryDraft {
 
   /**
    * ISO instant. REQUIRED. The caller resolved it — via sameTimeOnDay() for
-   * bundles and copy-a-day, or new Date() for the social copy.
+   * bundles, copy-a-day and the social copy. The social copy's day and time
+   * come from CopyConfirmScreen's picker (seeded from now, but the viewer's
+   * choice), not from new Date().
    *
    * Never build this with `+ 24h`. Across a DST boundary that lands Monday's
    * 12:30 lunch at 11:30 or 13:30 on Tuesday. sameTimeOnDay() goes through the

@@ -483,10 +483,14 @@ export function ProductScreen() {
     // commute: a 250g entry at 437 kcal comes back as 175 kcal/100g and
     // multiplies out to 437.5.
     //
-    // So editing a logged meal's TIME silently moves its CALORIES, and it
-    // compounds on every edit. The fix is to only recompute when `serving`
-    // actually changed — a ProductScreen redesign, not a patch. Until then, know
-    // that this is here.
+    // So editing a logged meal's TIME can silently move its macros. It happens
+    // once — the first save snaps the rate onto the rounding grid, and later
+    // saves rewrite the same values (measured, not compounding) — bounded by
+    // half a rounding step × g/100, except that a sub-half-step trace becomes
+    // exactly 0. OFF logs are already on the grid (parseProduct rounds), so it
+    // hits custom foods, staples, AI and label scans, batches and library
+    // re-adds. The fix is to only recompute when `serving` actually changed —
+    // a ProductScreen redesign, not a patch. Until then, know that this is here.
     //
     // (This is also why createBundleFromEntries snapshots MealEntry →
     // meal_composition_items directly and never routes through FoodProduct.)

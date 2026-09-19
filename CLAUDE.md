@@ -76,7 +76,7 @@ These are the source of most historical bugs. Each one is an invariant, not a pr
 ## Git hygiene
 
 - `*.jks` is gitignored. Secrets never go in Git or `eas.json`.
-- `schema.LEGACY-DO-NOT-USE.sql` is renamed with a warning header — don't reference it as current.
+- `supabase/schema.legacy-v2.LEGACY-DO-NOT-USE..sql` is renamed with a warning header — don't reference it as current.
 
 ## Local identifiers (do NOT commit real values here if this repo is public)
 

@@ -11,7 +11,7 @@ Every round of testing on plated. gets a record here: what the tester said, and 
 | `testing/session-template.md` | The record format — raw feedback plus the rectification log |
 | `testing/YYYY-MM-DD-<tester>.md` | One per session |
 | `testing/YYYY-MM-DD-internal.md` | Issues found by the developer rather than a tester (Tester = "self (dev pass)") |
-| `testing/archive/` | Files from the retired P-TF system (`register.md`, `incident-form-template.md`), kept unchanged |
+| `testing/archive/` | Files from the retired P-TF system (`register.md`, `incident-form-template.md`, `P-TF01.md`, `P-TF02.md`), kept unchanged |
 
 ## The loop
 
@@ -49,7 +49,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 
 | Date | Tester | Build / version | Device | Issues raised | Still open | Doc |
 |---|---|---|---|---|---|---|
-| 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` | Pixel (Android) | 15 | 14 | `testing/2026-09-19-internal.md` |
+| 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` | Pixel (Android) | 17 | 16 | `testing/2026-09-19-internal.md` |
 | 2026-08-25 | Ian | Not recorded (newest Android store build then: v6, `f48184c`) | Google Pixel 10, Android 17 | 4 | 4 | `testing/2026-08-25-ian.md` |
 
 ## Open issues across all sessions
@@ -71,8 +71,10 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | PL-014 | Minor | Copy-a-day failures double-report to Sentry | Logged | 2026-09-19-internal | Audit applyEntries callers |
 | PL-012 | Minor | Tesco Gold Coffee library row saved all-zero | Deferred | 2026-09-19-internal | Check the OFF source first |
 | PL-015 | Minor | Clearing an AI macro cell on ProductScreen stores 0, not NULL | Logged | 2026-09-19-internal | Hard to reach: the AI fills all eight |
+| PL-016 | Minor | Food search failures never reach Sentry | Logged | 2026-09-19-internal | No searchFood caller reports; P-TF02a can't be confirmed or ruled out if it recurs |
+| PL-017 | Minor | Users without targets report fetchGoals errors to Sentry | Logged | 2026-09-19-internal | Predicted from code: no goals row at sign-up, .single() errors on no row. Search Sentry for operation:fetchGoals |
 | P-TF01a | Minor | No confirmation email after sign-up | Logged | 2026-08-25-ian | None is sent: Confirm email is off (mailer_autoconfirm true, measured 2026-09-19). 87e16cf fixed the false copy; 8eb2e5e's "Check your email" screen may still show. A new-account sign-up check decides. Blocker if Confirm email is turned on and mail doesn't arrive |
-| P-TF02b | Minor | Search "sometimes seems to need a space after the item name" | Logged | 2026-08-25-ian | Queries are trimmed, so the space can't change results; it re-fires the same search (a retry). No fix found |
+| P-TF02b | Minor | Search "sometimes seems to need a space after the item name" | Logged | 2026-08-25-ian | Symptom of P-TF02a: queries are trimmed, so the space only re-fires the same search. Closes when P-TF02a does |
 | PL-013 | Polish | RecipeConfirm doubles the bottom inset | Fixed | 2026-09-19-internal | SafeAreaView edge kept, footer inset dropped. Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK. Needs a tester |
 
 ## Closed issues

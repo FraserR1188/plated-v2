@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import * as Sentry from "@sentry/react-native";
 import { useStore } from "../useStore";
 import { supabase } from "../../lib/supabase";
 import {
@@ -57,6 +58,44 @@ function mockInsertSingle(returning: unknown) {
   return capture;
 }
 
+/** Same chain as mockInsertSingle, but the insert fails. */
+function mockInsertSingleError(error: unknown) {
+  const single = vi.fn(async () => ({ data: null, error }));
+  const select = vi.fn(() => ({ single }));
+  const insert = vi.fn(() => ({ select }));
+  (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ insert });
+}
+
+type AddEntryInput = Parameters<
+  ReturnType<typeof useStore.getState>["addEntry"]
+>[0];
+
+function sandwich(): AddEntryInput {
+  return {
+    date: "2026-07-27",
+    meal_type: "lunch",
+    name: "Sandwich",
+    brand: null,
+    source: "search",
+    serving_g: 100,
+    calories: 300,
+    protein: 10,
+    carbs: 30,
+    fat: 10,
+    sat_fat: null,
+    salt: null,
+    fibre: null,
+    sugar: null,
+    barcode: null,
+    off_id: null,
+    eaten_at: "2026-07-27T12:00:00.000Z",
+    eaten_at_estimated: false,
+    image_url: null,
+    image_path: null,
+    custom_food_id: null,
+  };
+}
+
 beforeEach(() => {
   useStore.getState().reset();
   vi.mocked(supabase.auth.getUser).mockResolvedValue({
@@ -65,32 +104,44 @@ beforeEach(() => {
 });
 
 describe("useStore.addEntry", () => {
-  it("does nothing when there is no signed-in user", async () => {
+  it("rejects without touching the network when there is no signed-in user", async () => {
     useStore.getState().setUserId(null);
-    await useStore.getState().addEntry({
-      date: "2026-07-27",
-      meal_type: "lunch",
-      name: "Sandwich",
-      brand: null,
-      source: "search",
-      serving_g: 100,
-      calories: 300,
-      protein: 10,
-      carbs: 30,
-      fat: 10,
-      sat_fat: null,
-      salt: null,
-      fibre: null,
-      sugar: null,
-      barcode: null,
-      off_id: null,
-      eaten_at: "2026-07-27T12:00:00.000Z",
-      eaten_at_estimated: false,
-      image_url: null,
-      image_path: null,
-      custom_food_id: null,
-    });
+    vi.mocked(supabase.from).mockClear();
+    vi.mocked(Sentry.captureException).mockClear();
+
+    await expect(useStore.getState().addEntry(sandwich())).rejects.toThrow(
+      /not authenticated/i,
+    );
+
     expect(supabase.from).not.toHaveBeenCalled();
+    // Same as applyEntries' `!user` branch: the caller is told, Sentry isn't.
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("rejects with the insert error, reports it exactly once, and adds nothing to local state", async () => {
+    useStore.getState().setUserId("test-user-id");
+    const alreadyLogged = makeEntry({ id: "already-logged" });
+    useStore.setState({ entries: [alreadyLogged] });
+    const pgError = {
+      message: "TypeError: Network request failed",
+      code: "",
+      details: "",
+      hint: "",
+    };
+    mockInsertSingleError(pgError);
+    vi.mocked(Sentry.captureException).mockClear();
+
+    await expect(useStore.getState().addEntry(sandwich())).rejects.toBe(pgError);
+
+    expect(useStore.getState().entries).toEqual([alreadyLogged]);
+    // Reported inside addEntry, like applyEntries — which is why ProductScreen
+    // must not report it again.
+    expect(Sentry.captureException).toHaveBeenCalledTimes(1);
+    const [, ctx] = vi.mocked(Sentry.captureException).mock.calls[0] as [
+      unknown,
+      { tags: { operation: string } },
+    ];
+    expect(ctx.tags.operation).toBe("addEntry");
   });
 
   it("writes the EXPLICIT date/meal_type the caller passed — it does not derive or infer them", async () => {
@@ -160,35 +211,14 @@ describe("useStore.addEntry", () => {
     expect(row).not.toHaveProperty("skipped_at");
   });
 
-  it("appends the RETURNING row (with the trigger's decision) to local state", async () => {
+  it("appends the RETURNING row (with the trigger's decision) to local state and returns it", async () => {
     useStore.getState().setUserId("test-user-id");
     const returned = makeEntry({ id: "server-generated-id", planned: true });
     mockInsertSingle(returned);
 
-    await useStore.getState().addEntry({
-      date: "2026-07-27",
-      meal_type: "lunch",
-      name: "Sandwich",
-      brand: null,
-      source: "search",
-      serving_g: 100,
-      calories: 300,
-      protein: 10,
-      carbs: 30,
-      fat: 10,
-      sat_fat: null,
-      salt: null,
-      fibre: null,
-      sugar: null,
-      barcode: null,
-      off_id: null,
-      eaten_at: "2026-07-27T12:00:00.000Z",
-      eaten_at_estimated: false,
-      image_url: null,
-      image_path: null,
-      custom_food_id: null,
-    });
+    const result = await useStore.getState().addEntry(sandwich());
 
+    expect(result).toEqual(returned);
     expect(useStore.getState().entries).toEqual([returned]);
   });
 });

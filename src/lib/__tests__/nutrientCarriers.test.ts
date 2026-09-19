@@ -35,6 +35,7 @@ import {
   scaleCompositionItem,
 } from "../compositions";
 import { mealEntryToProduct } from "../foodLookup";
+import { savedIngredientToProduct } from "../library";
 import {
   EntryDraft,
   MealEntry,
@@ -286,6 +287,42 @@ const CARRIERS: Carrier[] = [
     run: (n) => pick(scaleCompositionItem(makeItem(n), SERVING_G * 2)),
   },
   {
+    // My Library row → FoodProduct: per-100g in, per-100g out, NULL → undefined.
+    name: "savedIngredientToProduct",
+    returnsEntryDraft: false,
+    ratio: 1,
+    run: (n) => {
+      const p = savedIngredientToProduct({
+        id: "si-1",
+        user_id: "user-1",
+        name: "Parity saved",
+        brand: null,
+        cal_per100: n.calories as number,
+        protein_per100: n.protein as number,
+        carbs_per100: n.carbs as number,
+        fat_per100: n.fat as number,
+        sat_fat_per100: n.sat_fat,
+        salt_per100: n.salt,
+        fibre_per100: n.fibre,
+        sugar_per100: n.sugar,
+        barcode: null,
+        off_id: null,
+        use_count: 1,
+        created_at: "2026-09-19T00:00:00.000Z",
+      });
+      return pick({
+        calories: p.cal_per100,
+        protein: p.protein_per100,
+        carbs: p.carbs_per100,
+        fat: p.fat_per100,
+        sat_fat: p.sat_fat_per100,
+        salt: p.salt_per100,
+        fibre: p.fibre_per100,
+        sugar: p.sugar_per100,
+      });
+    },
+  },
+  {
     // Per-100g rebuild: output per-100g = per-serving × 100 / serving_g.
     name: "mealEntryToProduct",
     returnsEntryDraft: false,
@@ -440,5 +477,110 @@ describe("nutrient carrier registry", () => {
         `${name} now writes nutrient keys itself — move it into CARRIERS`,
       ).toBe(false);
     }
+  });
+});
+
+// ─── Guard B+: no per-100g small macro coerced to zero ───────
+//
+// A per-100g RATE for sat fat / salt / fibre / sugar is `undefined` (or NULL
+// in saved_ingredients, since 20260919120000) when we don't know it. Writing
+// `x ?? 0` or `x || 0` into one of those keys turns "unknown" into the
+// assertion "zero grams" — which is exactly how an unknown fibre became a
+// stored 0 in saved_ingredients and then, via My Library, in meal_entries.
+// Neither tsc nor the carrier parity test above can see it: `?? 0` is
+// type-correct and a known value passes through it unchanged.
+//
+// SCOPE IS THE FOUR `*_per100` KEYS, deliberately. Two display totals end in
+// `?? 0` and are CORRECT — do not "fix" them:
+//   - useStore.ts bucketToTotals: `satFat: b.satFat ?? 0`, `salt: b.salt ?? 0`…
+//   - HistoryScreen.tsx:  `salt: eaten.salt ?? 0`, `fibre: …`, `sugar: …`
+// Both fill DayTotals (every field a plain number) for DISPLAY, where a total
+// with no known contributions is legitimately shown as 0. They read summed
+// meal_entries and write nothing back. Their keys aren't *_per100, so this
+// guard never sees them.
+
+const SMALL_PER100 = new Set([
+  "sat_fat_per100",
+  "salt_per100",
+  "fibre_per100",
+  "sugar_per100",
+]);
+
+/** Is `expr` — once parentheses, `as` casts and `!` are peeled off — a
+ *  `<anything> ?? 0` or `<anything> || 0`? */
+function isZeroCoercion(expr: ts.Expression): boolean {
+  let e: ts.Expression = expr;
+  while (
+    ts.isParenthesizedExpression(e) ||
+    ts.isAsExpression(e) ||
+    ts.isNonNullExpression(e) ||
+    ts.isSatisfiesExpression(e)
+  ) {
+    e = e.expression;
+  }
+  if (!ts.isBinaryExpression(e)) return false;
+  const op = e.operatorToken.kind;
+  if (op !== ts.SyntaxKind.QuestionQuestionToken && op !== ts.SyntaxKind.BarBarToken) {
+    return false;
+  }
+  return ts.isNumericLiteral(e.right) && Number(e.right.text) === 0;
+}
+
+/** Every `*_per100` small-macro property in `text` whose initializer is a
+ *  zero coercion, as "file:line key: initializer". */
+function zeroCoercedPer100(fileLabel: string, text: string): string[] {
+  const sf = ts.createSourceFile(fileLabel, text, ts.ScriptTarget.Latest, true);
+  const hits: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isPropertyAssignment(node) &&
+      SMALL_PER100.has(node.name.getText(sf)) &&
+      isZeroCoercion(node.initializer)
+    ) {
+      const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+      hits.push(
+        `${fileLabel}:${line} ${node.name.getText(sf)}: ${node.initializer.getText(sf)}`,
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return hits;
+}
+
+describe("guard B+: no per-100g small macro coerced to zero", () => {
+  it("the detector itself flags ?? 0 and || 0 (through parens and casts) and nothing else — so the guard can't pass vacuously", () => {
+    const flagged = zeroCoercedPer100(
+      "fixture.ts",
+      [
+        "const a = { sat_fat_per100: x ?? 0 };",
+        "const b = { salt_per100: (x || 0) as number };",
+        "const c = { fibre_per100: x! ?? 0.0 };",
+      ].join("\n"),
+    );
+    expect(flagged).toHaveLength(3);
+
+    const clean = zeroCoercedPer100(
+      "fixture.ts",
+      [
+        "const a = { sat_fat_per100: x ?? undefined };",
+        "const b = { salt_per100: x ?? null };",
+        "const c = { fibre_per100: x };",
+        "const d = { sugar_per100: x != null ? x * f : null };",
+        "const e = { salt: b.salt ?? 0 };", // display-total shape: not *_per100
+        "const f = { get: (p) => p.sat_fat_per100 ?? 0 };", // key is `get`
+      ].join("\n"),
+    );
+    expect(clean).toEqual([]);
+  });
+
+  it("no object literal under src/ coerces an unknown per-100g sat fat / salt / fibre / sugar to 0", () => {
+    const offenders = walkTsFiles(SRC_ROOT).flatMap((file) =>
+      zeroCoercedPer100(
+        path.relative(SRC_ROOT, file).split(path.sep).join("/"),
+        fs.readFileSync(file, "utf8").replace(/\r\n/g, "\n"),
+      ),
+    );
+    expect(offenders).toEqual([]);
   });
 });

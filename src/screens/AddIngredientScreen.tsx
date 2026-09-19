@@ -30,7 +30,10 @@ import { searchFood } from "../lib/openfoodfacts";
 import { useStore } from "../store/useStore";
 import { captureAndScanMealPhoto } from "../lib/mealPhotoCapture";
 import { sectionForTime, formatLastUsed } from "../lib/time";
-import { filterSavedIngredients } from "../lib/library";
+import {
+  filterSavedIngredients,
+  savedIngredientToProduct,
+} from "../lib/library";
 import {
   Colors,
   Spacing,
@@ -179,22 +182,9 @@ export function AddIngredientScreen() {
   };
 
   const handleLibrarySelect = (saved: SavedIngredient) => {
-    const product: FoodProduct = {
-      name: saved.name,
-      brand: saved.brand ?? "",
-      cal_per100: saved.cal_per100,
-      protein_per100: saved.protein_per100,
-      carbs_per100: saved.carbs_per100,
-      fat_per100: saved.fat_per100,
-      sat_fat_per100: saved.sat_fat_per100 ?? 0,
-      salt_per100: saved.salt_per100,
-      fibre_per100: saved.fibre_per100,
-      sugar_per100: saved.sugar_per100,
-      barcode: saved.barcode ?? undefined,
-      off_id: saved.off_id ?? undefined,
-    };
+    // Unknown small macros stay unknown — see savedIngredientToProduct.
     navigation.navigate("Product", {
-      product,
+      product: savedIngredientToProduct(saved),
       date,
       mealType,
       initialEatenAt: eatenAt,

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { filterSavedIngredients } from "../library";
+import { filterSavedIngredients, savedIngredientToProduct } from "../library";
 import type { SavedIngredientScored } from "../../types";
 
 function makeItem(
@@ -62,5 +62,50 @@ describe("filterSavedIngredients", () => {
   it("matches a substring in the middle of a word, not just a prefix", () => {
     const result = filterSavedIngredients(items, "oats");
     expect(result.map((i) => i.id)).toEqual(["3"]);
+  });
+});
+
+describe("savedIngredientToProduct (My Library → FoodProduct, for logging and for batches)", () => {
+  it("maps a NULL small macro to undefined — unknown stays unknown, never 0", () => {
+    const product = savedIngredientToProduct(
+      makeItem({
+        sat_fat_per100: null,
+        salt_per100: null,
+        fibre_per100: null,
+        sugar_per100: null,
+      }),
+    );
+    expect(product.sat_fat_per100).toBeUndefined();
+    expect(product.salt_per100).toBeUndefined();
+    expect(product.fibre_per100).toBeUndefined();
+    expect(product.sugar_per100).toBeUndefined();
+  });
+
+  it("keeps a stored 0 as 0 — a known zero (or a pre-migration ambiguous one) is not rewritten", () => {
+    const product = savedIngredientToProduct(
+      makeItem({ sat_fat_per100: 0, salt_per100: 0, fibre_per100: 0, sugar_per100: 0 }),
+    );
+    expect(product.sat_fat_per100).toBe(0);
+    expect(product.salt_per100).toBe(0);
+    expect(product.fibre_per100).toBe(0);
+    expect(product.sugar_per100).toBe(0);
+  });
+
+  it("carries known values and identity; null brand/barcode/off_id become the FoodProduct sentinels", () => {
+    const product = savedIngredientToProduct(makeItem());
+    expect(product).toEqual({
+      name: "Porridge",
+      brand: "",
+      cal_per100: 175,
+      protein_per100: 5,
+      carbs_per100: 24,
+      fat_per100: 3.2,
+      sat_fat_per100: 0.8,
+      salt_per100: 0.1,
+      fibre_per100: 2.4,
+      sugar_per100: 1.6,
+      barcode: undefined,
+      off_id: undefined,
+    });
   });
 });

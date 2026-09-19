@@ -725,6 +725,59 @@ describe("useStore.saveIngredient (existing-item bump branch)", () => {
   });
 });
 
+describe("useStore.saveIngredient (new-item insert branch)", () => {
+  // What matters is the WIRE body: postgrest-js sends JSON.stringify(row), so
+  // an `undefined` value means the key is absent and Postgres stores NULL
+  // (no default since 20260919120000). An explicit null would fail against a
+  // still-NOT NULL column; a 0 would be the original bug.
+  const wire = (row: unknown) => JSON.parse(JSON.stringify(row)) as Record<string, unknown>;
+
+  const baseProduct: FoodProduct = {
+    name: "Mystery granola",
+    brand: "",
+    cal_per100: 450,
+    protein_per100: 10,
+    carbs_per100: 60,
+    fat_per100: 15,
+    sat_fat_per100: undefined,
+    salt_per100: undefined,
+    fibre_per100: undefined,
+    sugar_per100: undefined,
+  };
+
+  beforeEach(() => {
+    useStore.getState().setUserId("test-user-id");
+  });
+
+  it("leaves an unknown small macro OUT of the request body — stored NULL; never 0, never an explicit null", async () => {
+    const capture = mockInsertSingle(makeSavedIngredient());
+    await useStore.getState().saveIngredient(baseProduct);
+
+    const body = wire(capture.row);
+    for (const key of ["sat_fat_per100", "salt_per100", "fibre_per100", "sugar_per100"]) {
+      expect(body, key).not.toHaveProperty(key);
+    }
+    expect(body.cal_per100).toBe(450);
+  });
+
+  it("sends known small macros, including a genuine 0", async () => {
+    const capture = mockInsertSingle(makeSavedIngredient());
+    await useStore.getState().saveIngredient({
+      ...baseProduct,
+      sat_fat_per100: 0,
+      salt_per100: 1.2,
+      fibre_per100: 3,
+      sugar_per100: 0,
+    });
+
+    const body = wire(capture.row);
+    expect(body.sat_fat_per100).toBe(0);
+    expect(body.salt_per100).toBe(1.2);
+    expect(body.fibre_per100).toBe(3);
+    expect(body.sugar_per100).toBe(0);
+  });
+});
+
 describe("useStore.deleteIngredient", () => {
   it("on success, removes the ingredient locally", async () => {
     const existing = makeSavedIngredient();

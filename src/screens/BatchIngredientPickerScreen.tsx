@@ -53,6 +53,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { searchFood } from "../lib/openfoodfacts";
 import { captureAndScanMealPhoto } from "../lib/mealPhotoCapture";
+import { savedIngredientToProduct } from "../lib/library";
 import { ScanButton } from "../components/ScanButton";
 import { useStore } from "../store/useStore";
 import {
@@ -64,7 +65,7 @@ import {
   Fonts,
   withDefaultFont,
 } from "../theme/tokens";
-import { FoodProduct, RootStackParamList, SavedIngredient } from "../types";
+import { FoodProduct, RootStackParamList } from "../types";
 
 // Traffic-light mapping for aiEstimate.confidence — same palette and same
 // meaning as ProductScreen's, so "trust this less" reads identically
@@ -82,23 +83,6 @@ const AI_CONFIDENCE_LABEL: Record<"high" | "medium" | "low", string> = {
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "BatchIngredientPicker">;
 type Tab = "search" | "library";
-
-function savedToProduct(saved: SavedIngredient): FoodProduct {
-  return {
-    name: saved.name,
-    brand: saved.brand ?? "",
-    cal_per100: saved.cal_per100,
-    protein_per100: saved.protein_per100,
-    carbs_per100: saved.carbs_per100,
-    fat_per100: saved.fat_per100,
-    sat_fat_per100: saved.sat_fat_per100 ?? 0,
-    salt_per100: saved.salt_per100,
-    fibre_per100: saved.fibre_per100,
-    sugar_per100: saved.sugar_per100,
-    barcode: saved.barcode ?? undefined,
-    off_id: saved.off_id ?? undefined,
-  };
-}
 
 export function BatchIngredientPickerScreen() {
   const navigation = useNavigation<Nav>();
@@ -462,7 +446,7 @@ export function BatchIngredientPickerScreen() {
                             styles.resultBorder,
                           pressed && { backgroundColor: Colors.surface2 },
                         ]}
-                        onPress={() => startPicking(savedToProduct(item))}
+                        onPress={() => startPicking(savedIngredientToProduct(item))}
                       >
                         <View style={styles.resultBody}>
                           <Text style={styles.resultName}>{item.name}</Text>

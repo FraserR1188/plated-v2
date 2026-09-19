@@ -441,10 +441,15 @@ export interface SavedIngredient {
   protein_per100: number;
   carbs_per100: number;
   fat_per100: number;
-  sat_fat_per100: number; // NOT NULL in DB
-  salt_per100: number;
-  fibre_per100: number;
-  sugar_per100: number;
+  // NULLABLE, no default, since 20260919120000_saved_ingredients_null_not_zero.
+  // NULL = unknown, 0 = known zero — same rule as MealEntry. Rows saved before
+  // that migration hold 0 for unknown and are indistinguishable from real
+  // zeros (not backfilled). Map NULL → undefined when building a FoodProduct
+  // (savedIngredientToProduct in lib/library.ts); never `?? 0`.
+  sat_fat_per100: number | null;
+  salt_per100: number | null;
+  fibre_per100: number | null;
+  sugar_per100: number | null;
   barcode: string | null;
   off_id: string | null;
   use_count: number;

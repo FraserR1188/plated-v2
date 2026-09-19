@@ -1474,7 +1474,18 @@ export const useStore = create<AppState>((set, get) => ({
         protein_per100: product.protein_per100,
         carbs_per100: product.carbs_per100,
         fat_per100: product.fat_per100,
-        sat_fat_per100: product.sat_fat_per100 ?? 0,
+        // Small four: the number when known, and when unknown the KEY IS
+        // OMITTED — FoodProduct carries unknown as `undefined`, which
+        // JSON.stringify drops from the request body, so Postgres stores NULL
+        // (20260919120000 dropped the old DEFAULT 0). Deliberately not
+        // `?? null`: against a column still NOT NULL (the migration not yet
+        // applied), an explicit null fails the insert, and this action only
+        // reports the error — the library row would silently never be
+        // created. Omitting is safe in either order. And never `?? 0`: that
+        // stored "zero sat fat" for foods we knew nothing about, and My
+        // Library re-adds carried it into meal_entries (guard B+ in
+        // nutrientCarriers.test.ts).
+        sat_fat_per100: product.sat_fat_per100,
         salt_per100: product.salt_per100,
         fibre_per100: product.fibre_per100,
         sugar_per100: product.sugar_per100,

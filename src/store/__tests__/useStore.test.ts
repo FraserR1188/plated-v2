@@ -688,6 +688,10 @@ describe("useStore.saveIngredient (existing-item bump branch)", () => {
       protein_per100: existing.protein_per100,
       carbs_per100: existing.carbs_per100,
       fat_per100: existing.fat_per100,
+      sat_fat_per100: undefined,
+      salt_per100: undefined,
+      fibre_per100: undefined,
+      sugar_per100: undefined,
     });
 
     expect(result?.use_count).toBe(4);
@@ -710,6 +714,10 @@ describe("useStore.saveIngredient (existing-item bump branch)", () => {
       protein_per100: existing.protein_per100,
       carbs_per100: existing.carbs_per100,
       fat_per100: existing.fat_per100,
+      sat_fat_per100: undefined,
+      salt_per100: undefined,
+      fibre_per100: undefined,
+      sugar_per100: undefined,
     });
 
     expect(result).toBeNull();
@@ -765,6 +773,10 @@ function makeProduct(overrides: Partial<FoodProduct> = {}): FoodProduct {
     protein_per100: 9.4,
     carbs_per100: 77.7,
     fat_per100: 1.3,
+    sat_fat_per100: undefined,
+    salt_per100: undefined,
+    fibre_per100: undefined,
+    sugar_per100: undefined,
     ...overrides,
   };
 }

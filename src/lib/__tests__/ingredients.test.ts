@@ -48,6 +48,10 @@ function offProduct(name: string, overrides: Partial<FoodProduct> = {}): FoodPro
     protein_per100: 5,
     carbs_per100: 10,
     fat_per100: 2,
+    sat_fat_per100: undefined,
+    salt_per100: undefined,
+    fibre_per100: undefined,
+    sugar_per100: undefined,
     ...overrides,
   };
 }

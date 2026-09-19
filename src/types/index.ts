@@ -47,10 +47,17 @@ export interface FoodProduct {
   protein_per100: number;
   carbs_per100: number;
   fat_per100: number;
-  sat_fat_per100?: number;
-  salt_per100?: number;
-  fibre_per100?: number;
-  sugar_per100?: number;
+  // REQUIRED KEYS, `undefined` VALUES. Not `?:`. `undefined` means "unknown"
+  // (never coalesce it to 0), but every literal that builds a FoodProduct
+  // must still list all four keys — spelling out `undefined` if it has to.
+  // With `?:`, leaving a key out entirely type-checked, and that is how
+  // ConnectedUserLogScreen's entryToProduct lost sat_fat_per100 without a
+  // single compiler error: a friend's known sat fat became NULL in the
+  // copier's log. A forgotten key is now a compile error, and CI runs tsc.
+  sat_fat_per100: number | undefined;
+  salt_per100: number | undefined;
+  fibre_per100: number | undefined;
+  sugar_per100: number | undefined;
   barcode?: string;
   off_id?: string;
   serving_label?: string;

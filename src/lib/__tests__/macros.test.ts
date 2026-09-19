@@ -6,6 +6,7 @@ import {
   needsManualEntry,
   canSubmitProduct,
   numOrNull,
+  parseGrams,
   canSaveCustomFood,
   PerHundredGram,
 } from "../macros";
@@ -279,6 +280,39 @@ describe("numOrNull", () => {
 
   it("parses a plain positive number", () => {
     expect(numOrNull("362")).toBe(362);
+  });
+});
+
+// The accept rule for every grams field that rescales a portion
+// (CopyConfirm, BundleApplyReview's ReviewRow, BatchEditor's IngredientRow).
+// Each of those screens commits the typed value as it changes whenever this
+// returns a number, and keeps the last good one when it returns null — so
+// what this accepts is exactly what Confirm/Save can write.
+describe("parseGrams", () => {
+  it("accepts a plain positive weight", () => {
+    expect(parseGrams("150")).toBe(150);
+    expect(parseGrams("12.5")).toBe(12.5);
+  });
+
+  it("accepts a comma decimal", () => {
+    expect(parseGrams("12,5")).toBe(12.5);
+  });
+
+  it("accepts a half-typed decimal, so the value tracks the keystrokes", () => {
+    expect(parseGrams("10.")).toBe(10);
+  });
+
+  it("rejects zero — a portion of nothing is not a weight", () => {
+    expect(parseGrams("0")).toBeNull();
+    expect(parseGrams("0.0")).toBeNull();
+  });
+
+  it("rejects negative, blank, garbage and non-finite input rather than zeroing the item", () => {
+    expect(parseGrams("-5")).toBeNull();
+    expect(parseGrams("")).toBeNull();
+    expect(parseGrams(",")).toBeNull();
+    expect(parseGrams("abc")).toBeNull();
+    expect(parseGrams("Infinity")).toBeNull();
   });
 });
 

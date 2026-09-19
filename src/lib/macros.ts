@@ -24,6 +24,22 @@ export function numOrNull(s: string): number | null {
 }
 
 /**
+ * The accept rule for a grams field that rescales a portion: a finite number
+ * above zero, comma decimals allowed. Anything else is "not a weight" and
+ * gives null, never 0 — the field keeps its last good weight rather than
+ * zeroing the item. Unlike numOrNull, a typed "0" is rejected: a portion of
+ * nothing isn't a weight.
+ *
+ * CopyConfirm, BundleApplyReview's ReviewRow and BatchEditor's IngredientRow
+ * all commit the typed text through this on every change, so Confirm/Save
+ * writes what's in the box even if the field never blurred.
+ */
+export function parseGrams(text: string): number | null {
+  const g = parseFloat(text.replace(",", "."));
+  return Number.isFinite(g) && g > 0 ? g : null;
+}
+
+/**
  * CreateFoodScreen's Save gate. Name + all four big-four macros PRESENT
  * (not merely positive) are the minimum for a useful entry.
  *

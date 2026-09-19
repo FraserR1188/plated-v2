@@ -47,6 +47,7 @@ import {
   initialCopyMealType,
 } from "../lib/social";
 import { dateKey, TimeOfDay } from "../lib/time";
+import { parseGrams } from "../lib/macros";
 import { CopyTargetPicker } from "../components/CopyTargetPicker";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 import { EntryDraft, MealType, RootStackParamList } from "../types";
@@ -64,13 +65,6 @@ function sumDrafts(drafts: EntryDraft[]) {
     }),
     { calories: 0, protein: 0, carbs: 0, fat: 0 },
   );
-}
-
-/** Same accept rule as BundleApplyReviewScreen's ReviewRow: a finite number
- *  above zero, comma decimals allowed. Anything else is "not a weight". */
-function parseGrams(text: string): number | null {
-  const g = parseFloat(text.replace(",", "."));
-  return Number.isFinite(g) && g > 0 ? g : null;
 }
 
 export function CopyConfirmScreen() {

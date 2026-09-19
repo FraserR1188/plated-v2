@@ -30,6 +30,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { KeyboardScreen } from "./KeyboardScreen";
 import {
   MACRO_KEYS,
   scaleTo100g,
@@ -179,7 +180,10 @@ export function LabelConfirmSheet({
       }}
       statusBarTranslucent
     >
-      <View style={styles.backdrop}>
+      {/* The dimmed backdrop IS the keyboard-avoiding view, so the dim reaches
+          behind the keyboard. offset={0}: a sheet must not inherit its host
+          screen's header height. */}
+      <KeyboardScreen offset={0} style={styles.backdrop}>
         <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
           <View style={styles.grabber} />
 
@@ -402,7 +406,7 @@ export function LabelConfirmSheet({
             </ScrollView>
           )}
         </View>
-      </View>
+      </KeyboardScreen>
     </Modal>
   );
 }

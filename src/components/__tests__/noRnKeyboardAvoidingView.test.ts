@@ -75,7 +75,9 @@ function rnKavUses(file: string): string[] {
         if (named && (ts.isNamedImports(named) || ts.isNamedExports(named))) {
           for (const el of named.elements) {
             if ((el.propertyName ?? el.name).text === "KeyboardAvoidingView") {
-              uses.push(`${line(el)}: named import from "react-native"`);
+              uses.push(
+                `${line(el)}: ${ts.isImportDeclaration(node) ? "named import" : "re-export"} from "react-native"`,
+              );
             }
           }
         }

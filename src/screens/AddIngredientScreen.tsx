@@ -16,8 +16,6 @@ import {
   StyleSheet,
   ActivityIndicator,
   ScrollView,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   Image,
   Alert,
@@ -51,6 +49,7 @@ import {
 } from "../types";
 import { SourceListNotice } from "../components/SourceNotice";
 import { ScanButton } from "../components/ScanButton";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "AddIngredient">;
 type Route = RouteProp<RootStackParamList, "AddIngredient">;
@@ -222,10 +221,7 @@ export function AddIngredientScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardScreen>
         {/* ── Header ──────────────────────────────────── */}
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable
@@ -265,6 +261,7 @@ export function AddIngredientScreen() {
         </View>
 
         <ScrollView
+          style={{ flex: 1 }}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.scroll}
@@ -563,7 +560,7 @@ export function AddIngredientScreen() {
 
           <View style={{ height: Spacing.xxl }} />
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardScreen>
     </SafeAreaView>
   );
 }

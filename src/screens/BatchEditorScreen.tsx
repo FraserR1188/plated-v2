@@ -50,8 +50,6 @@ import {
   TextInput,
   StyleSheet,
   ScrollView,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   Alert,
   ActivityIndicator,
@@ -61,6 +59,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore, BatchDraftIngredient } from "../store/useStore";
 import { BatchIngredientInput, scaleCompositionItem } from "../lib/compositions";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 import {
   Colors,
   Spacing,
@@ -318,10 +317,7 @@ export function BatchEditorScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardScreen>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable
             onPress={() => navigation.goBack()}
@@ -354,6 +350,7 @@ export function BatchEditorScreen() {
         </View>
 
         <ScrollView
+          style={{ flex: 1 }}
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -504,7 +501,7 @@ export function BatchEditorScreen() {
 
           <View style={{ height: Spacing.xxl }} />
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardScreen>
     </SafeAreaView>
   );
 }

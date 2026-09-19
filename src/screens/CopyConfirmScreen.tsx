@@ -48,6 +48,7 @@ import {
 } from "../lib/social";
 import { dateKey, TimeOfDay } from "../lib/time";
 import { CopyTargetPicker } from "../components/CopyTargetPicker";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 import { EntryDraft, MealType, RootStackParamList } from "../types";
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -180,148 +181,152 @@ export function CopyConfirmScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={["bottom"]}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Hero summary */}
-        <View style={styles.hero}>
-          <Text style={styles.heroTitle}>Copy to your log?</Text>
-          <Text style={styles.heroSource}>{payload.sourceName}</Text>
+      <KeyboardScreen>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Hero summary */}
+          <View style={styles.hero}>
+            <Text style={styles.heroTitle}>Copy to your log?</Text>
+            <Text style={styles.heroSource}>{payload.sourceName}</Text>
 
-          <View style={styles.statsRow}>
-            <View style={styles.statCell}>
-              <Text style={styles.statValue}>
-                {Math.round(totals.calories)}
-              </Text>
-              <Text style={styles.statLabel}>kcal</Text>
+            <View style={styles.statsRow}>
+              <View style={styles.statCell}>
+                <Text style={styles.statValue}>
+                  {Math.round(totals.calories)}
+                </Text>
+                <Text style={styles.statLabel}>kcal</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statCell}>
+                <Text style={styles.statValue}>{totals.protein.toFixed(1)}g</Text>
+                <Text style={styles.statLabel}>protein</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statCell}>
+                <Text style={styles.statValue}>{totals.carbs.toFixed(1)}g</Text>
+                <Text style={styles.statLabel}>carbs</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statCell}>
+                <Text style={styles.statValue}>{totals.fat.toFixed(1)}g</Text>
+                <Text style={styles.statLabel}>fat</Text>
+              </View>
             </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statCell}>
-              <Text style={styles.statValue}>{totals.protein.toFixed(1)}g</Text>
-              <Text style={styles.statLabel}>protein</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statCell}>
-              <Text style={styles.statValue}>{totals.carbs.toFixed(1)}g</Text>
-              <Text style={styles.statLabel}>carbs</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statCell}>
-              <Text style={styles.statValue}>{totals.fat.toFixed(1)}g</Text>
-              <Text style={styles.statLabel}>fat</Text>
-            </View>
+
+            {mode === "each" && (
+              <View style={styles.destinationRow}>
+                <Text style={styles.destinationText}>
+                  → each item copied to its own section
+                </Text>
+              </View>
+            )}
           </View>
 
-          {mode === "each" && (
-            <View style={styles.destinationRow}>
-              <Text style={styles.destinationText}>
-                → each item copied to its own section
-              </Text>
-            </View>
-          )}
-        </View>
+          {/* Copy target: Day always editable; Meal + Time editable only in
+              "shared" mode (a single ingredient or a meal_section) — full_day
+              preserves each entry's own section, so there is nothing for Meal
+              to override. */}
+          <View style={styles.targetCard}>
+            <CopyTargetPicker
+              dayKey={dayKey}
+              onDayKeyChange={setDayKey}
+              time={time}
+              onTimeChange={setTime}
+              mealType={mealType}
+              onMealTypeChange={setMealType}
+              mode={mode}
+            />
+          </View>
 
-        {/* Copy target: Day always editable; Meal + Time editable only in
-            "shared" mode (a single ingredient or a meal_section) — full_day
-            preserves each entry's own section, so there is nothing for Meal
-            to override. */}
-        <View style={styles.targetCard}>
-          <CopyTargetPicker
-            dayKey={dayKey}
-            onDayKeyChange={setDayKey}
-            time={time}
-            onTimeChange={setTime}
-            mealType={mealType}
-            onMealTypeChange={setMealType}
-            mode={mode}
-          />
-        </View>
-
-        {/* Entry breakdown */}
-        <Text style={styles.sectionLabel}>
-          {itemCount} item{itemCount !== 1 ? "s" : ""}
-        </Text>
-        <View style={styles.card}>
-          {isIngredient ? (
-            // Single ingredient: the portion is editable. Same shape and
-            // accept/revert rule as BundleApplyReviewScreen's ReviewRow;
-            // the kcal shown is drafts[0] — the row that will be inserted.
-            <View style={styles.entryRow}>
-              <View style={styles.entryMeta}>
-                <Text style={styles.entryName} numberOfLines={1}>
-                  {source.name}
-                </Text>
-                {!rescalable && (
-                  <Text style={styles.entryNote}>
-                    No saved weight for this item — copies unchanged.
-                  </Text>
-                )}
-              </View>
-              <View style={styles.gramsQty}>
-                <TextInput
-                  style={[
-                    styles.gramsInput,
-                    !rescalable && styles.gramsInputDisabled,
-                  ]}
-                  value={rescalable ? gramsText : "—"}
-                  onChangeText={onGramsChange}
-                  onBlur={onGramsBlur}
-                  onSubmitEditing={onGramsBlur}
-                  editable={rescalable}
-                  keyboardType="decimal-pad"
-                  returnKeyType="done"
-                  selectTextOnFocus
-                />
-                <Text style={styles.gramsUnit}>g</Text>
-              </View>
-              <Text style={styles.entryCalories}>
-                {Math.round(drafts[0].calories)} kcal
-              </Text>
-            </View>
-          ) : (
-            payload.entries.map((entry, i) => (
-              <View
-                key={entry.id}
-                style={[
-                  styles.entryRow,
-                  i < payload.entries.length - 1 && styles.entryRowBorder,
-                ]}
-              >
+          {/* Entry breakdown */}
+          <Text style={styles.sectionLabel}>
+            {itemCount} item{itemCount !== 1 ? "s" : ""}
+          </Text>
+          <View style={styles.card}>
+            {isIngredient ? (
+              // Single ingredient: the portion is editable. Same shape and
+              // accept/revert rule as BundleApplyReviewScreen's ReviewRow;
+              // the kcal shown is drafts[0] — the row that will be inserted.
+              <View style={styles.entryRow}>
                 <View style={styles.entryMeta}>
                   <Text style={styles.entryName} numberOfLines={1}>
-                    {entry.name}
+                    {source.name}
                   </Text>
-                  <Text style={styles.entrySub}>
-                    {entry.serving_g}g · {entry.meal_type}
-                  </Text>
+                  {!rescalable && (
+                    <Text style={styles.entryNote}>
+                      No saved weight for this item — copies unchanged.
+                    </Text>
+                  )}
+                </View>
+                <View style={styles.gramsQty}>
+                  <TextInput
+                    style={[
+                      styles.gramsInput,
+                      !rescalable && styles.gramsInputDisabled,
+                    ]}
+                    value={rescalable ? gramsText : "—"}
+                    onChangeText={onGramsChange}
+                    onBlur={onGramsBlur}
+                    onSubmitEditing={onGramsBlur}
+                    editable={rescalable}
+                    keyboardType="decimal-pad"
+                    returnKeyType="done"
+                    selectTextOnFocus
+                  />
+                  <Text style={styles.gramsUnit}>g</Text>
                 </View>
                 <Text style={styles.entryCalories}>
-                  {Math.round(entry.calories)} kcal
+                  {Math.round(drafts[0].calories)} kcal
                 </Text>
               </View>
-            ))
-          )}
-        </View>
-      </ScrollView>
+            ) : (
+              payload.entries.map((entry, i) => (
+                <View
+                  key={entry.id}
+                  style={[
+                    styles.entryRow,
+                    i < payload.entries.length - 1 && styles.entryRowBorder,
+                  ]}
+                >
+                  <View style={styles.entryMeta}>
+                    <Text style={styles.entryName} numberOfLines={1}>
+                      {entry.name}
+                    </Text>
+                    <Text style={styles.entrySub}>
+                      {entry.serving_g}g · {entry.meal_type}
+                    </Text>
+                  </View>
+                  <Text style={styles.entryCalories}>
+                    {Math.round(entry.calories)} kcal
+                  </Text>
+                </View>
+              ))
+            )}
+          </View>
+        </ScrollView>
 
-      {/* Sticky confirm button */}
-      <View style={styles.footer}>
-        <TouchableOpacity
-          onPress={handleConfirm}
-          disabled={confirming}
-          activeOpacity={0.85}
-          style={[styles.confirmBtn, confirming && styles.confirmBtnDisabled]}
-        >
-          {confirming ? (
-            <ActivityIndicator color={Colors.bg} />
-          ) : (
-            <Text style={styles.confirmBtnText}>
-              Add {itemCount} item{itemCount !== 1 ? "s" : ""} to my log
-            </Text>
-          )}
-        </TouchableOpacity>
-      </View>
+        {/* Sticky confirm button */}
+        <View style={styles.footer}>
+          <TouchableOpacity
+            onPress={handleConfirm}
+            disabled={confirming}
+            activeOpacity={0.85}
+            style={[styles.confirmBtn, confirming && styles.confirmBtnDisabled]}
+          >
+            {confirming ? (
+              <ActivityIndicator color={Colors.bg} />
+            ) : (
+              <Text style={styles.confirmBtnText}>
+                Add {itemCount} item{itemCount !== 1 ? "s" : ""} to my log
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardScreen>
     </SafeAreaView>
   );
 }

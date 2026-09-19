@@ -55,7 +55,7 @@ An issue only reaches `Verified` when a person exercises the flow again — your
 | PL-003 | Blocker | addEntry swallows insert errors; log silently lost | Fixed | 2026-09-19-internal | Master @ 5abcbcb; OTA Android 6219ac78 + iOS 939f4f9d. Device pass OK. Needs a tester log |
 | PL-001 | Major | Friend copy drops sat_fat to NULL | Fixed | 2026-09-19-internal | Rerouted via CopyConfirm → applyEntries; guards A + C. Now on master. Needs a tester copy |
 | PL-002 | Major | saved_ingredients coerces unknown small four to 0 | Fixed | 2026-09-19-internal | Migration 20260919120000 + guard B+. Existing zeros not backfilled |
-| PL-004 | Major | Android keyboard covers inputs on 13 surfaces | Logged | 2026-09-19-internal | KeyboardScreen wrapper (keyboard-controller), OTA-eligible |
+| PL-004 | Major | Android keyboard covers inputs on 13 surfaces | In progress | 2026-09-19-internal | KeyboardScreen wrapper on `fix/keyboard-screen-wrapper`; fingerprint unchanged, OTA-eligible. Device pass pending |
 | PL-005 | Major | BundleApplyReview applies last-blurred grams | Logged | 2026-09-19-internal | Live-text pattern; ships with PL-004 |
 | PL-006 | Major | BatchEditor Save can miss an uncommitted qty | Logged | 2026-09-19-internal | Live-text pattern; ships with PL-004 |
 | PL-007 | Major | CSV export and last30Days use UTC dates | Logged | 2026-09-19-internal | Use dateKey |

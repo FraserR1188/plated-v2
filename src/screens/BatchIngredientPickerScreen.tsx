@@ -43,8 +43,6 @@ import {
   StyleSheet,
   ActivityIndicator,
   ScrollView,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   Alert,
 } from "react-native";
@@ -55,6 +53,7 @@ import { searchFood } from "../lib/openfoodfacts";
 import { captureAndScanMealPhoto } from "../lib/mealPhotoCapture";
 import { savedIngredientToProduct } from "../lib/library";
 import { ScanButton } from "../components/ScanButton";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 import { useStore } from "../store/useStore";
 import {
   Colors,
@@ -219,10 +218,7 @@ export function BatchIngredientPickerScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardScreen>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable
             onPress={() =>
@@ -262,7 +258,12 @@ export function BatchIngredientPickerScreen() {
         </View>
 
         {picking ? (
-          <View style={styles.quantityBody}>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.quantityBody}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
             {picking.aiEstimate ? (
               <View style={styles.aiCard}>
                 <View style={styles.aiHeaderRow}>
@@ -326,7 +327,7 @@ export function BatchIngredientPickerScreen() {
             >
               <Text style={styles.primaryBtnText}>Add to batch</Text>
             </Pressable>
-          </View>
+          </ScrollView>
         ) : (
           <>
             <View style={styles.tabBar}>
@@ -348,6 +349,7 @@ export function BatchIngredientPickerScreen() {
             </View>
 
             <ScrollView
+              style={{ flex: 1 }}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               contentContainerStyle={styles.scroll}
@@ -474,7 +476,7 @@ export function BatchIngredientPickerScreen() {
             </ScrollView>
           </>
         )}
-      </KeyboardAvoidingView>
+      </KeyboardScreen>
     </SafeAreaView>
   );
 }

@@ -43,6 +43,7 @@ import {
 } from "../store/useStore";
 import { scaleEntryDraftGrams } from "../lib/compositions";
 import { formatTime } from "../lib/time";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 import {
   Colors,
   Spacing,
@@ -224,108 +225,112 @@ export function BundleApplyReviewScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={["bottom"]}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-      >
-        <View style={styles.hero}>
-          <Text style={styles.heroTitle}>Adjust & apply</Text>
-          <Text style={styles.heroSource}>{compositionApplyDraft.compositionName}</Text>
+      <KeyboardScreen>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.hero}>
+            <Text style={styles.heroTitle}>Adjust & apply</Text>
+            <Text style={styles.heroSource}>{compositionApplyDraft.compositionName}</Text>
 
-          <View style={styles.statsRow}>
-            <View style={styles.statCell}>
-              <Text style={styles.statValue}>{Math.round(totals.calories)}</Text>
-              <Text style={styles.statLabel}>kcal</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statCell}>
-              <Text style={styles.statValue}>{totals.protein.toFixed(1)}g</Text>
-              <Text style={styles.statLabel}>protein</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statCell}>
-              <Text style={styles.statValue}>{totals.carbs.toFixed(1)}g</Text>
-              <Text style={styles.statLabel}>carbs</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statCell}>
-              <Text style={styles.statValue}>{totals.fat.toFixed(1)}g</Text>
-              <Text style={styles.statLabel}>fat</Text>
+            <View style={styles.statsRow}>
+              <View style={styles.statCell}>
+                <Text style={styles.statValue}>{Math.round(totals.calories)}</Text>
+                <Text style={styles.statLabel}>kcal</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statCell}>
+                <Text style={styles.statValue}>{totals.protein.toFixed(1)}g</Text>
+                <Text style={styles.statLabel}>protein</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statCell}>
+                <Text style={styles.statValue}>{totals.carbs.toFixed(1)}g</Text>
+                <Text style={styles.statLabel}>carbs</Text>
+              </View>
+              <View style={styles.statDivider} />
+              <View style={styles.statCell}>
+                <Text style={styles.statValue}>{totals.fat.toFixed(1)}g</Text>
+                <Text style={styles.statLabel}>fat</Text>
+              </View>
             </View>
           </View>
-        </View>
 
-        <Text style={styles.sectionLabel}>
-          {itemCount} item{itemCount !== 1 ? "s" : ""}
-        </Text>
-        <View style={styles.card}>
-          {compositionApplyDraft.items.map((item, i) => (
-            <View
-              key={item.itemId}
-              style={
-                i < compositionApplyDraft.items.length - 1
-                  ? styles.rowBorder
-                  : undefined
-              }
-            >
-              <ReviewRow
-                item={item}
-                onCommitGrams={(g) => setCompositionApplyItemGrams(item.itemId, g)}
-              />
-            </View>
-          ))}
-        </View>
-      </ScrollView>
+          <Text style={styles.sectionLabel}>
+            {itemCount} item{itemCount !== 1 ? "s" : ""}
+          </Text>
+          <View style={styles.card}>
+            {compositionApplyDraft.items.map((item, i) => (
+              <View
+                key={item.itemId}
+                style={
+                  i < compositionApplyDraft.items.length - 1
+                    ? styles.rowBorder
+                    : undefined
+                }
+              >
+                <ReviewRow
+                  item={item}
+                  onCommitGrams={(g) => setCompositionApplyItemGrams(item.itemId, g)}
+                />
+              </View>
+            ))}
+          </View>
+        </ScrollView>
 
-      <View style={styles.footer}>
-        {/* Phase 2 — secondary to Confirm: smaller, muted, no button chrome,
-            and never rendered at all for a batch (canOfferSaveBack is false
-            whenever compositionKind !== 'bundle', regardless of anyChanged). */}
-        {isBundle && (
-          <Pressable
-            style={styles.saveBackRow}
-            disabled={!anyChanged}
-            onPress={() => setAlsoUpdateBundle((v) => !v)}
-            hitSlop={8}
-          >
-            <View
-              style={[
-                styles.checkbox,
-                alsoUpdateBundle && anyChanged && styles.checkboxChecked,
-                !anyChanged && styles.checkboxDisabled,
-              ]}
+        <View style={styles.footer}>
+          {/* Phase 2 — secondary to Confirm: smaller, muted, no button chrome,
+              and never rendered at all for a batch (canOfferSaveBack is false
+              whenever compositionKind !== 'bundle', regardless of anyChanged). */}
+          {isBundle && (
+            <Pressable
+              style={styles.saveBackRow}
+              disabled={!anyChanged}
+              onPress={() => setAlsoUpdateBundle((v) => !v)}
+              hitSlop={8}
             >
-              {alsoUpdateBundle && anyChanged && (
-                <Text style={styles.checkboxMark}>✓</Text>
-              )}
-            </View>
-            <Text
-              style={[
-                styles.saveBackLabel,
-                !anyChanged && styles.saveBackLabelDisabled,
-              ]}
-            >
-              {anyChanged
-                ? "Also update this bundle"
-                : "Also update this bundle — change a quantity above first"}
-            </Text>
-          </Pressable>
-        )}
-
-        <Pressable
-          onPress={handleConfirm}
-          disabled={applying}
-          style={[styles.confirmBtn, applying && styles.confirmBtnDisabled]}
-        >
-          {applying ? (
-            <ActivityIndicator color={Colors.bg} />
-          ) : (
-            <Text style={styles.confirmBtnText}>
-              Add {itemCount} item{itemCount !== 1 ? "s" : ""} to my log
-            </Text>
+              <View
+                style={[
+                  styles.checkbox,
+                  alsoUpdateBundle && anyChanged && styles.checkboxChecked,
+                  !anyChanged && styles.checkboxDisabled,
+                ]}
+              >
+                {alsoUpdateBundle && anyChanged && (
+                  <Text style={styles.checkboxMark}>✓</Text>
+                )}
+              </View>
+              <Text
+                style={[
+                  styles.saveBackLabel,
+                  !anyChanged && styles.saveBackLabelDisabled,
+                ]}
+              >
+                {anyChanged
+                  ? "Also update this bundle"
+                  : "Also update this bundle — change a quantity above first"}
+              </Text>
+            </Pressable>
           )}
-        </Pressable>
-      </View>
+
+          <Pressable
+            onPress={handleConfirm}
+            disabled={applying}
+            style={[styles.confirmBtn, applying && styles.confirmBtnDisabled]}
+          >
+            {applying ? (
+              <ActivityIndicator color={Colors.bg} />
+            ) : (
+              <Text style={styles.confirmBtnText}>
+                Add {itemCount} item{itemCount !== 1 ? "s" : ""} to my log
+              </Text>
+            )}
+          </Pressable>
+        </View>
+      </KeyboardScreen>
     </SafeAreaView>
   );
 }

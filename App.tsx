@@ -514,8 +514,8 @@ function AuthScreen({ onForgotPassword }: { onForgotPassword: () => void }) {
     <SafeAreaView style={styles.authSafe}>
       {/* targetSdk 36 + edge-to-edge (enforced from API 35) means the keyboard
           arrives as a WindowInsets change, not a window resize — there is no
-          native reflow to lean on here (see DeleteAccountScreen, which
-          predates this fix and still assumes one). This is
+          native reflow to lean on here (in-app screens get the same fix via
+          src/components/KeyboardScreen.tsx). This is
           react-native-keyboard-controller's KeyboardAvoidingView, which reads
           the live IME inset directly and works the same on both platforms —
           RN's built-in version measures Android's keyboard height as 0 on

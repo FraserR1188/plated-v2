@@ -29,8 +29,7 @@ import {
   Image,
   Pressable,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
+  ScrollView,
 } from "react-native";
 import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -38,6 +37,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { scanRecipeText, scanRecipeImage, RecipeScanSuccess } from "../lib/scanRecipe";
 import { captureRecipePhoto, pickRecipeImage } from "../lib/recipeImageCapture";
 import type { PreparedImage } from "../lib/imagePrep";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 import { Colors, Spacing, Radius, Typography, withDefaultFont } from "../theme/tokens";
 import { RootStackParamList } from "../types";
 
@@ -122,10 +122,7 @@ export function RecipeScanScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-      >
+      <KeyboardScreen>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable
             onPress={() => navigation.goBack()}
@@ -152,85 +149,92 @@ export function RecipeScanScreen() {
           ))}
         </View>
 
-        <View style={styles.body}>
-          {tab === "text" ? (
-            <>
-              <TextInput
-                style={styles.textArea}
-                value={text}
-                onChangeText={setText}
-                placeholder="Paste the recipe's ingredient list here…"
-                placeholderTextColor={Colors.textMuted}
-                multiline
-                textAlignVertical="top"
-              />
-              <Pressable
-                style={({ pressed }) => [
-                  styles.primaryBtn,
-                  (!text.trim() || busy) && styles.primaryBtnDisabled,
-                  pressed && { opacity: 0.88 },
-                ]}
-                onPress={handleScanText}
-                disabled={!text.trim() || busy}
-              >
-                {busy ? (
-                  <ActivityIndicator size="small" color={Colors.bg} />
-                ) : (
-                  <Text style={styles.primaryBtnText}>Scan</Text>
-                )}
-              </Pressable>
-            </>
-          ) : preview ? (
-            <>
-              <Image source={{ uri: preview.uri }} style={styles.previewImage} resizeMode="contain" />
-              <View style={styles.previewActions}>
-                <Pressable
-                  style={({ pressed }) => [styles.secondaryBtn, pressed && { opacity: 0.75 }]}
-                  onPress={() => setPreview(null)}
-                  disabled={busy}
-                >
-                  <Text style={styles.secondaryBtnText}>Retake</Text>
-                </Pressable>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.body}>
+            {tab === "text" ? (
+              <>
+                <TextInput
+                  style={styles.textArea}
+                  value={text}
+                  onChangeText={setText}
+                  placeholder="Paste the recipe's ingredient list here…"
+                  placeholderTextColor={Colors.textMuted}
+                  multiline
+                  textAlignVertical="top"
+                />
                 <Pressable
                   style={({ pressed }) => [
                     styles.primaryBtn,
-                    { flex: 1 },
-                    busy && styles.primaryBtnDisabled,
+                    (!text.trim() || busy) && styles.primaryBtnDisabled,
                     pressed && { opacity: 0.88 },
                   ]}
-                  onPress={handleScanPhoto}
-                  disabled={busy}
+                  onPress={handleScanText}
+                  disabled={!text.trim() || busy}
                 >
                   {busy ? (
                     <ActivityIndicator size="small" color={Colors.bg} />
                   ) : (
-                    <Text style={styles.primaryBtnText}>Scan this photo</Text>
+                    <Text style={styles.primaryBtnText}>Scan</Text>
                   )}
                 </Pressable>
+              </>
+            ) : preview ? (
+              <>
+                <Image source={{ uri: preview.uri }} style={styles.previewImage} resizeMode="contain" />
+                <View style={styles.previewActions}>
+                  <Pressable
+                    style={({ pressed }) => [styles.secondaryBtn, pressed && { opacity: 0.75 }]}
+                    onPress={() => setPreview(null)}
+                    disabled={busy}
+                  >
+                    <Text style={styles.secondaryBtnText}>Retake</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.primaryBtn,
+                      { flex: 1 },
+                      busy && styles.primaryBtnDisabled,
+                      pressed && { opacity: 0.88 },
+                    ]}
+                    onPress={handleScanPhoto}
+                    disabled={busy}
+                  >
+                    {busy ? (
+                      <ActivityIndicator size="small" color={Colors.bg} />
+                    ) : (
+                      <Text style={styles.primaryBtnText}>Scan this photo</Text>
+                    )}
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <View style={styles.photoChoices}>
+                <Pressable
+                  style={({ pressed }) => [styles.photoChoiceBtn, pressed && { opacity: 0.75 }]}
+                  onPress={() => handleCapture("camera")}
+                  disabled={busy}
+                >
+                  <Text style={styles.photoChoiceIcon}>📷</Text>
+                  <Text style={styles.photoChoiceText}>Take photo</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [styles.photoChoiceBtn, pressed && { opacity: 0.75 }]}
+                  onPress={() => handleCapture("library")}
+                  disabled={busy}
+                >
+                  <Text style={styles.photoChoiceIcon}>🖼️</Text>
+                  <Text style={styles.photoChoiceText}>Choose from library</Text>
+                </Pressable>
               </View>
-            </>
-          ) : (
-            <View style={styles.photoChoices}>
-              <Pressable
-                style={({ pressed }) => [styles.photoChoiceBtn, pressed && { opacity: 0.75 }]}
-                onPress={() => handleCapture("camera")}
-                disabled={busy}
-              >
-                <Text style={styles.photoChoiceIcon}>📷</Text>
-                <Text style={styles.photoChoiceText}>Take photo</Text>
-              </Pressable>
-              <Pressable
-                style={({ pressed }) => [styles.photoChoiceBtn, pressed && { opacity: 0.75 }]}
-                onPress={() => handleCapture("library")}
-                disabled={busy}
-              >
-                <Text style={styles.photoChoiceIcon}>🖼️</Text>
-                <Text style={styles.photoChoiceText}>Choose from library</Text>
-              </Pressable>
-            </View>
-          )}
-        </View>
-      </KeyboardAvoidingView>
+            )}
+          </View>
+        </ScrollView>
+      </KeyboardScreen>
     </SafeAreaView>
   );
 }
@@ -273,6 +277,9 @@ const styles = StyleSheet.create(
     tabText: { fontSize: Typography.sm, fontWeight: Typography.medium, color: Colors.textSub },
     tabTextActive: { color: Colors.bg, fontWeight: Typography.bold },
 
+    // flexGrow so body (and the textArea inside it) still fills the screen,
+    // and shrinks with it when the keyboard lifts the view.
+    scroll: { flexGrow: 1 },
     body: { flex: 1, paddingHorizontal: Spacing.md, gap: Spacing.md },
 
     textArea: {

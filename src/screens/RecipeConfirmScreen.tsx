@@ -24,8 +24,6 @@ import {
   Switch,
   Pressable,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
 } from "react-native";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
@@ -41,6 +39,7 @@ import { searchFood } from "../lib/openfoodfacts";
 import { captureAndScanLabel } from "../lib/labelCapture";
 import { labelExtractionToFoodProduct, type ExtractSuccess } from "../lib/labelExtraction";
 import { LabelConfirmSheet, type LabelConfirmApply } from "../components/LabelConfirmSheet";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 import { useStore } from "../store/useStore";
 import { Colors, Spacing, Radius, Typography, Fonts, withDefaultFont } from "../theme/tokens";
 import { FoodProduct, RootStackParamList } from "../types";
@@ -232,7 +231,7 @@ export function RecipeConfirmScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <KeyboardScreen>
         <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Pressable
             onPress={() => navigation.goBack()}
@@ -292,7 +291,7 @@ export function RecipeConfirmScreen() {
             </Text>
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardScreen>
     </SafeAreaView>
   );
 }

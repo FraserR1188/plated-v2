@@ -26,6 +26,7 @@ import { DateTimeField } from "../components/DateTimeField";
 import { CalorieRing } from "../components/CalorieRing";
 import { MacroBar } from "../components/MacroBar";
 import { CopyTargetPicker } from "../components/CopyTargetPicker";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 import { useStore, todayKey } from "../store/useStore";
 import { mealEntryToProduct } from "../lib/foodLookup";
 import { previewComposition, bundlesOnly } from "../lib/compositions";
@@ -1439,156 +1440,159 @@ function ApplyBundleSheet({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <Pressable style={sheetStyles.backdrop} onPress={onClose} />
-      <View style={sheetStyles.sheet}>
-        <View style={sheetStyles.grabber} />
-        <Text style={sheetStyles.title}>
-          Add a bundle to {dayLabel.toLowerCase()}
-        </Text>
+      {/* offset={0}: a sheet must not inherit its host screen's header height. */}
+      <KeyboardScreen offset={0}>
+        <Pressable style={sheetStyles.backdrop} onPress={onClose} />
+        <View style={sheetStyles.sheet}>
+          <View style={sheetStyles.grabber} />
+          <Text style={sheetStyles.title}>
+            Add a bundle to {dayLabel.toLowerCase()}
+          </Text>
 
-        <ScrollView style={{ maxHeight: 460 }}>
-          {bundles.length === 0 && (
-            <Text style={sheetStyles.empty}>
-              No bundles yet. Long-press a few items on any day and save them as
-              one.
-            </Text>
-          )}
+          <ScrollView style={{ maxHeight: 460 }}>
+            {bundles.length === 0 && (
+              <Text style={sheetStyles.empty}>
+                No bundles yet. Long-press a few items on any day and save them as
+                one.
+              </Text>
+            )}
 
-          {bundles.map((bundle) => {
-            const preview = previewComposition(bundle, dayKey);
-            const kcal = Math.round(
-              bundle.items.reduce((s, i) => s + i.calories, 0),
-            );
-            const isOpen = expanded === bundle.id;
+            {bundles.map((bundle) => {
+              const preview = previewComposition(bundle, dayKey);
+              const kcal = Math.round(
+                bundle.items.reduce((s, i) => s + i.calories, 0),
+              );
+              const isOpen = expanded === bundle.id;
 
-            return (
-              <View key={bundle.id} style={sheetStyles.bundle}>
-                <View style={sheetStyles.bundleHead}>
-                  <Pressable
-                    style={{ flex: 1 }}
-                    onPress={() => setExpanded(isOpen ? null : bundle.id)}
-                    onLongPress={() => {
-                      setRenaming(bundle.id);
-                      setDraftName(bundle.name);
-                    }}
-                  >
-                    {renaming === bundle.id ? (
-                      <TextInput
-                        style={sheetStyles.renameInput}
-                        value={draftName}
-                        onChangeText={setDraftName}
-                        autoFocus
-                        selectTextOnFocus
-                        onBlur={() => commitRename(bundle.id)}
-                        onSubmitEditing={() => commitRename(bundle.id)}
-                        returnKeyType="done"
-                      />
-                    ) : (
-                      <Text style={sheetStyles.bundleName}>{bundle.name}</Text>
-                    )}
-                    <Text style={sheetStyles.bundleMeta}>
-                      {bundle.items.length}{" "}
-                      {bundle.items.length === 1 ? "item" : "items"} · {kcal}{" "}
-                      kcal {isOpen ? "▴" : "▾"}
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    style={({ pressed }) => [
-                      sheetStyles.applyBtn,
-                      pressed && { opacity: 0.8 },
-                    ]}
-                    onPress={() => openTimePicker(bundle)}
-                  >
-                    <Text style={sheetStyles.applyBtnText}>Add</Text>
-                  </Pressable>
-                </View>
-
-                {isOpen && (
-                  <View style={sheetStyles.items}>
-                    {preview.map(({ item, planned }) => (
-                      <View key={item.id} style={sheetStyles.item}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={sheetStyles.itemName} numberOfLines={1}>
-                            {item.name}
-                          </Text>
-                          <Text style={sheetStyles.itemMeta}>
-                            {/* This sheet only ever shows bundle items, whose
-                                eaten_time/meal_type are guaranteed non-null by
-                                previewComposition's own bundleItemTime guard
-                                (it would have thrown before this array ever
-                                existed) — the "—" fallback is belt-and-braces
-                                display safety, not an expected case. */}
-                            {item.eaten_time?.slice(0, 5) ?? "—"} ·{" "}
-                            {item.meal_type ? MEAL_LABELS[item.meal_type] : "—"}{" "}
-                            · {Math.round(item.calories)} kcal
-                          </Text>
-                        </View>
-
-                        <View
-                          style={[
-                            sheetStyles.pill,
-                            planned
-                              ? sheetStyles.pillPlanned
-                              : sheetStyles.pillLogged,
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              sheetStyles.pillText,
-                              planned
-                                ? sheetStyles.pillTextPlanned
-                                : sheetStyles.pillTextLogged,
-                            ]}
-                          >
-                            {planned ? "Planned" : "Logged"}
-                          </Text>
-                        </View>
-
-                        <Pressable
-                          hitSlop={8}
-                          onPress={async () => {
-                            const { error } = await removeCompositionItem(
-                              bundle.id,
-                              item.id,
-                            );
-                            if (error)
-                              Alert.alert("Couldn't remove that", error);
-                          }}
-                        >
-                          <Text style={sheetStyles.remove}>✕</Text>
-                        </Pressable>
-                      </View>
-                    ))}
-
-                    {preview.some((p) => !p.planned) && (
-                      <Text style={sheetStyles.note}>
-                        Times already past today will be saved as{" "}
-                        <Text style={sheetStyles.noteStrong}>eaten</Text>, not
-                        planned.
-                      </Text>
-                    )}
-
+              return (
+                <View key={bundle.id} style={sheetStyles.bundle}>
+                  <View style={sheetStyles.bundleHead}>
                     <Pressable
-                      style={sheetStyles.deleteBundle}
-                      onPress={() => confirmDeleteBundle(bundle)}
+                      style={{ flex: 1 }}
+                      onPress={() => setExpanded(isOpen ? null : bundle.id)}
+                      onLongPress={() => {
+                        setRenaming(bundle.id);
+                        setDraftName(bundle.name);
+                      }}
                     >
-                      <Text style={sheetStyles.deleteBundleText}>
-                        Delete this bundle
+                      {renaming === bundle.id ? (
+                        <TextInput
+                          style={sheetStyles.renameInput}
+                          value={draftName}
+                          onChangeText={setDraftName}
+                          autoFocus
+                          selectTextOnFocus
+                          onBlur={() => commitRename(bundle.id)}
+                          onSubmitEditing={() => commitRename(bundle.id)}
+                          returnKeyType="done"
+                        />
+                      ) : (
+                        <Text style={sheetStyles.bundleName}>{bundle.name}</Text>
+                      )}
+                      <Text style={sheetStyles.bundleMeta}>
+                        {bundle.items.length}{" "}
+                        {bundle.items.length === 1 ? "item" : "items"} · {kcal}{" "}
+                        kcal {isOpen ? "▴" : "▾"}
                       </Text>
                     </Pressable>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-          <View style={{ height: Spacing.lg }} />
-        </ScrollView>
 
-        <Pressable style={sheetStyles.close} onPress={onClose}>
-          <Text style={sheetStyles.closeText}>Close</Text>
-        </Pressable>
-      </View>
+                    <Pressable
+                      style={({ pressed }) => [
+                        sheetStyles.applyBtn,
+                        pressed && { opacity: 0.8 },
+                      ]}
+                      onPress={() => openTimePicker(bundle)}
+                    >
+                      <Text style={sheetStyles.applyBtnText}>Add</Text>
+                    </Pressable>
+                  </View>
+
+                  {isOpen && (
+                    <View style={sheetStyles.items}>
+                      {preview.map(({ item, planned }) => (
+                        <View key={item.id} style={sheetStyles.item}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={sheetStyles.itemName} numberOfLines={1}>
+                              {item.name}
+                            </Text>
+                            <Text style={sheetStyles.itemMeta}>
+                              {/* This sheet only ever shows bundle items, whose
+                                  eaten_time/meal_type are guaranteed non-null by
+                                  previewComposition's own bundleItemTime guard
+                                  (it would have thrown before this array ever
+                                  existed) — the "—" fallback is belt-and-braces
+                                  display safety, not an expected case. */}
+                              {item.eaten_time?.slice(0, 5) ?? "—"} ·{" "}
+                              {item.meal_type ? MEAL_LABELS[item.meal_type] : "—"}{" "}
+                              · {Math.round(item.calories)} kcal
+                            </Text>
+                          </View>
+
+                          <View
+                            style={[
+                              sheetStyles.pill,
+                              planned
+                                ? sheetStyles.pillPlanned
+                                : sheetStyles.pillLogged,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                sheetStyles.pillText,
+                                planned
+                                  ? sheetStyles.pillTextPlanned
+                                  : sheetStyles.pillTextLogged,
+                              ]}
+                            >
+                              {planned ? "Planned" : "Logged"}
+                            </Text>
+                          </View>
+
+                          <Pressable
+                            hitSlop={8}
+                            onPress={async () => {
+                              const { error } = await removeCompositionItem(
+                                bundle.id,
+                                item.id,
+                              );
+                              if (error)
+                                Alert.alert("Couldn't remove that", error);
+                            }}
+                          >
+                            <Text style={sheetStyles.remove}>✕</Text>
+                          </Pressable>
+                        </View>
+                      ))}
+
+                      {preview.some((p) => !p.planned) && (
+                        <Text style={sheetStyles.note}>
+                          Times already past today will be saved as{" "}
+                          <Text style={sheetStyles.noteStrong}>eaten</Text>, not
+                          planned.
+                        </Text>
+                      )}
+
+                      <Pressable
+                        style={sheetStyles.deleteBundle}
+                        onPress={() => confirmDeleteBundle(bundle)}
+                      >
+                        <Text style={sheetStyles.deleteBundleText}>
+                          Delete this bundle
+                        </Text>
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+            <View style={{ height: Spacing.lg }} />
+          </ScrollView>
+
+          <Pressable style={sheetStyles.close} onPress={onClose}>
+            <Text style={sheetStyles.closeText}>Close</Text>
+          </Pressable>
+        </View>
+      </KeyboardScreen>
 
       {pickingTimeFor && (
         <DateTimeField
@@ -1639,74 +1643,77 @@ function SaveBundleSheet({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <Pressable style={sheetStyles.backdrop} onPress={onClose} />
-      <View style={sheetStyles.sheet}>
-        <View style={sheetStyles.grabber} />
-        <Text style={sheetStyles.title}>
-          Save {n === 1 ? "this" : `these ${n}`} as a bundle
-        </Text>
-
-        <TextInput
-          style={sheetStyles.nameInput}
-          value={name}
-          onChangeText={setName}
-          placeholder="Sunday chilli, My breakfast…"
-          placeholderTextColor={Colors.textMuted}
-          returnKeyType="done"
-          onSubmitEditing={() => name.trim() && onCreate(name)}
-        />
-
-        <Pressable
-          style={({ pressed }) => [
-            sheetStyles.primary,
-            !name.trim() && sheetStyles.primaryDisabled,
-            pressed && name.trim() && { opacity: 0.85 },
-          ]}
-          disabled={!name.trim()}
-          onPress={() => onCreate(name)}
-        >
-          <Text
-            style={[
-              sheetStyles.primaryText,
-              !name.trim() && sheetStyles.primaryTextDisabled,
-            ]}
-          >
-            Save as a new bundle
+      {/* offset={0}: a sheet must not inherit its host screen's header height. */}
+      <KeyboardScreen offset={0}>
+        <Pressable style={sheetStyles.backdrop} onPress={onClose} />
+        <View style={sheetStyles.sheet}>
+          <View style={sheetStyles.grabber} />
+          <Text style={sheetStyles.title}>
+            Save {n === 1 ? "this" : `these ${n}`} as a bundle
           </Text>
-        </Pressable>
 
-        {/* Adding to an existing bundle is what makes a bundle EDITOR
-            unnecessary: you add food from the day where the food already is. */}
-        {bundles.length > 0 && (
-          <>
-            <Text style={sheetStyles.orLabel}>or add to an existing one</Text>
-            <ScrollView style={{ maxHeight: 220 }}>
-              {bundles.map((b) => (
-                <Pressable
-                  key={b.id}
-                  style={({ pressed }) => [
-                    sheetStyles.appendRow,
-                    pressed && { opacity: 0.7 },
-                  ]}
-                  onPress={() => onAppend(b)}
-                >
-                  <Text style={sheetStyles.appendName} numberOfLines={1}>
-                    {b.name}
-                  </Text>
-                  <Text style={sheetStyles.appendMeta}>
-                    {b.items.length} → {b.items.length + n}
-                  </Text>
-                </Pressable>
-              ))}
-              <View style={{ height: Spacing.md }} />
-            </ScrollView>
-          </>
-        )}
+          <TextInput
+            style={sheetStyles.nameInput}
+            value={name}
+            onChangeText={setName}
+            placeholder="Sunday chilli, My breakfast…"
+            placeholderTextColor={Colors.textMuted}
+            returnKeyType="done"
+            onSubmitEditing={() => name.trim() && onCreate(name)}
+          />
 
-        <Pressable style={sheetStyles.close} onPress={onClose}>
-          <Text style={sheetStyles.closeText}>Cancel</Text>
-        </Pressable>
-      </View>
+          <Pressable
+            style={({ pressed }) => [
+              sheetStyles.primary,
+              !name.trim() && sheetStyles.primaryDisabled,
+              pressed && name.trim() && { opacity: 0.85 },
+            ]}
+            disabled={!name.trim()}
+            onPress={() => onCreate(name)}
+          >
+            <Text
+              style={[
+                sheetStyles.primaryText,
+                !name.trim() && sheetStyles.primaryTextDisabled,
+              ]}
+            >
+              Save as a new bundle
+            </Text>
+          </Pressable>
+
+          {/* Adding to an existing bundle is what makes a bundle EDITOR
+              unnecessary: you add food from the day where the food already is. */}
+          {bundles.length > 0 && (
+            <>
+              <Text style={sheetStyles.orLabel}>or add to an existing one</Text>
+              <ScrollView style={{ maxHeight: 220 }}>
+                {bundles.map((b) => (
+                  <Pressable
+                    key={b.id}
+                    style={({ pressed }) => [
+                      sheetStyles.appendRow,
+                      pressed && { opacity: 0.7 },
+                    ]}
+                    onPress={() => onAppend(b)}
+                  >
+                    <Text style={sheetStyles.appendName} numberOfLines={1}>
+                      {b.name}
+                    </Text>
+                    <Text style={sheetStyles.appendMeta}>
+                      {b.items.length} → {b.items.length + n}
+                    </Text>
+                  </Pressable>
+                ))}
+                <View style={{ height: Spacing.md }} />
+              </ScrollView>
+            </>
+          )}
+
+          <Pressable style={sheetStyles.close} onPress={onClose}>
+            <Text style={sheetStyles.closeText}>Cancel</Text>
+          </Pressable>
+        </View>
+      </KeyboardScreen>
     </Modal>
   );
 }

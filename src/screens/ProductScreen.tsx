@@ -20,6 +20,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { DateTimeField } from "../components/DateTimeField";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 import { useStore, todayKey, MealEntryPatch } from "../store/useStore";
 import {
   formatTime,
@@ -741,512 +742,518 @@ export function ProductScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
-      <ScrollView
-        ref={scrollRef}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scroll}
-      >
-        {/* ── Header ──────────────────────────────────── */}
-        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
-          <Pressable
-            onPress={() => navigation.goBack()}
-            style={({ pressed }) => [
-              styles.backBtn,
-              pressed && { opacity: 0.6 },
-            ]}
-            hitSlop={12}
-          >
-            <Text style={styles.backArrow}>‹</Text>
-          </Pressable>
-          <View style={styles.headerCentre}>
-            <Text style={styles.headerTitle}>
-              {isEditing
-                ? "Edit entry"
-                : isPlanned
-                  ? "Plan a meal"
-                  : "Add to meal"}
-            </Text>
-            {isEditing ? (
-              <View style={styles.mealPill}>
-                <Text style={styles.mealPillText}>{mealLabel}</Text>
-              </View>
-            ) : (
-              <View style={styles.mealTypeRow}>
-                {MEAL_TYPES.map((mt) => (
-                  <Pressable
-                    key={mt}
-                    onPress={() => setMealType(mt)}
-                    style={({ pressed }) => [
-                      styles.mealTypeChip,
-                      mealType === mt && styles.mealTypeChipActive,
-                      pressed && { opacity: 0.75 },
+      <KeyboardScreen>
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1 }}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.scroll}
+        >
+          {/* ── Header ──────────────────────────────────── */}
+          <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
+            <Pressable
+              onPress={() => navigation.goBack()}
+              style={({ pressed }) => [
+                styles.backBtn,
+                pressed && { opacity: 0.6 },
+              ]}
+              hitSlop={12}
+            >
+              <Text style={styles.backArrow}>‹</Text>
+            </Pressable>
+            <View style={styles.headerCentre}>
+              <Text style={styles.headerTitle}>
+                {isEditing
+                  ? "Edit entry"
+                  : isPlanned
+                    ? "Plan a meal"
+                    : "Add to meal"}
+              </Text>
+              {isEditing ? (
+                <View style={styles.mealPill}>
+                  <Text style={styles.mealPillText}>{mealLabel}</Text>
+                </View>
+              ) : (
+                <View style={styles.mealTypeRow}>
+                  {MEAL_TYPES.map((mt) => (
+                    <Pressable
+                      key={mt}
+                      onPress={() => setMealType(mt)}
+                      style={({ pressed }) => [
+                        styles.mealTypeChip,
+                        mealType === mt && styles.mealTypeChipActive,
+                        pressed && { opacity: 0.75 },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.mealTypeChipText,
+                          mealType === mt && styles.mealTypeChipTextActive,
+                        ]}
+                      >
+                        {MEAL_LABELS[mt]}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+            </View>
+          </View>
+
+          {/* ── AI estimate notice ──────────────────────── */}
+          {/* Only present on a draft built from scan-meal-photo. Two very
+              different states share this card:
+                - First pass: "AI estimate" header, confidence badge, the
+                  model's alternatives as tappable chips, a "Something else…"
+                  escape hatch.
+                - Corrected pass (userCorrected): the identity is now
+                  user-asserted and guaranteed correct — but the MACROS still
+                  came entirely from the model and still depend on it having
+                  honoured the correction. That's a MORE deceptive failure
+                  mode than an honest wrong guess (a confidently-wrong name
+                  makes the whole card read as trustworthy), so this state
+                  keeps a loud, high-contrast warning instead of the muted
+                  first-pass notes, and escalates further if the server
+                  flagged identityDivergence. */}
+          {draft.aiEstimate ? (
+            <View style={styles.aiCard}>
+              <View style={styles.aiHeaderRow}>
+                <Text style={styles.aiTitle}>
+                  {draft.aiEstimate.userCorrected
+                    ? "✏️ From your correction"
+                    : "🤖 AI estimate"}
+                </Text>
+                {!draft.aiEstimate.userCorrected && (
+                  <View
+                    style={[
+                      styles.confidencePill,
+                      { backgroundColor: `${AI_CONFIDENCE_COLOR[draft.aiEstimate.confidence]}18` },
                     ]}
                   >
                     <Text
                       style={[
-                        styles.mealTypeChipText,
-                        mealType === mt && styles.mealTypeChipTextActive,
+                        styles.confidencePillText,
+                        { color: AI_CONFIDENCE_COLOR[draft.aiEstimate.confidence] },
                       ]}
                     >
-                      {MEAL_LABELS[mt]}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            )}
-          </View>
-        </View>
-
-        {/* ── AI estimate notice ──────────────────────── */}
-        {/* Only present on a draft built from scan-meal-photo. Two very
-            different states share this card:
-              - First pass: "AI estimate" header, confidence badge, the
-                model's alternatives as tappable chips, a "Something else…"
-                escape hatch.
-              - Corrected pass (userCorrected): the identity is now
-                user-asserted and guaranteed correct — but the MACROS still
-                came entirely from the model and still depend on it having
-                honoured the correction. That's a MORE deceptive failure
-                mode than an honest wrong guess (a confidently-wrong name
-                makes the whole card read as trustworthy), so this state
-                keeps a loud, high-contrast warning instead of the muted
-                first-pass notes, and escalates further if the server
-                flagged identityDivergence. */}
-        {draft.aiEstimate ? (
-          <View style={styles.aiCard}>
-            <View style={styles.aiHeaderRow}>
-              <Text style={styles.aiTitle}>
-                {draft.aiEstimate.userCorrected
-                  ? "✏️ From your correction"
-                  : "🤖 AI estimate"}
-              </Text>
-              {!draft.aiEstimate.userCorrected && (
-                <View
-                  style={[
-                    styles.confidencePill,
-                    { backgroundColor: `${AI_CONFIDENCE_COLOR[draft.aiEstimate.confidence]}18` },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.confidencePillText,
-                      { color: AI_CONFIDENCE_COLOR[draft.aiEstimate.confidence] },
-                    ]}
-                  >
-                    {AI_CONFIDENCE_LABEL[draft.aiEstimate.confidence]} confidence
-                  </Text>
-                </View>
-              )}
-            </View>
-
-            {draft.aiEstimate.userCorrected ? (
-              <View
-                style={[
-                  styles.correctedWarningBox,
-                  draft.aiEstimate.identityDivergence &&
-                    styles.correctedWarningBoxDanger,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.correctedWarningText,
-                    draft.aiEstimate.identityDivergence &&
-                      styles.correctedWarningTextDanger,
-                  ]}
-                >
-                  Macros still estimated — check before logging.
-                  {draft.aiEstimate.identityDivergence
-                    ? " The AI's own read of this photo didn't match your correction — these numbers may still reflect the old guess."
-                    : ""}
-                </Text>
-              </View>
-            ) : (
-              draft.aiEstimate.notes.map((note, i) => (
-                <Text key={i} style={styles.aiNote}>
-                  {note}
-                </Text>
-              ))
-            )}
-
-            {!titleEditing && (
-              <View style={styles.chipsRow}>
-                {!draft.aiEstimate.userCorrected &&
-                  draft.aiEstimate.alternatives.map((alt) => (
-                    <Pressable
-                      key={alt}
-                      style={({ pressed }) => [
-                        styles.chip,
-                        pressed && { opacity: 0.7 },
-                        reestimating && styles.chipDisabled,
-                      ]}
-                      onPress={() => runReestimate(alt)}
-                      disabled={reestimating}
-                    >
-                      <Text style={styles.chipText} numberOfLines={1}>
-                        {alt}
-                      </Text>
-                    </Pressable>
-                  ))}
-                <Pressable
-                  style={({ pressed }) => [
-                    styles.chip,
-                    styles.chipGhost,
-                    pressed && { opacity: 0.7 },
-                    reestimating && styles.chipDisabled,
-                  ]}
-                  onPress={() => openCorrection()}
-                  disabled={reestimating}
-                >
-                  <Text style={styles.chipGhostText}>Something else…</Text>
-                </Pressable>
-              </View>
-            )}
-
-            {titleEditing && (
-              <View style={styles.titleEditRow}>
-                <TextInput
-                  style={styles.titleEditInput}
-                  value={titleDraft}
-                  onChangeText={setTitleDraft}
-                  placeholder="What is this actually?"
-                  placeholderTextColor={Colors.textMuted}
-                  autoFocus
-                  returnKeyType="done"
-                  onSubmitEditing={() => runReestimate(titleDraft)}
-                  editable={!reestimating}
-                />
-                <View style={styles.titleEditActions}>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.titleEditCancel,
-                      pressed && { opacity: 0.7 },
-                    ]}
-                    onPress={() => setTitleEditing(false)}
-                    disabled={reestimating}
-                  >
-                    <Text style={styles.titleEditCancelText}>Cancel</Text>
-                  </Pressable>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.titleEditSubmit,
-                      pressed && { opacity: 0.88 },
-                      (!titleDraft.trim() || reestimating) &&
-                        styles.titleEditSubmitDisabled,
-                    ]}
-                    onPress={() => runReestimate(titleDraft)}
-                    disabled={!titleDraft.trim() || reestimating}
-                  >
-                    {reestimating ? (
-                      <ActivityIndicator size="small" color={Colors.bg} />
-                    ) : (
-                      <Text style={styles.titleEditSubmitText}>
-                        Re-estimate macros
-                      </Text>
-                    )}
-                  </Pressable>
-                </View>
-              </View>
-            )}
-
-            {reestimateError ? (
-              <Text style={styles.aiErrorText}>{reestimateError}</Text>
-            ) : null}
-          </View>
-        ) : null}
-
-        {/* ── Product identity card ───────────────────── */}
-        <View style={styles.productCard}>
-          <View style={styles.identityRow}>
-            <ProductThumb uri={draft.image_url} path={draft.image_path} />
-            <View style={styles.identityText}>
-              <Text style={styles.productName}>{draft.name}</Text>
-              {draft.brand ? (
-                <Text style={styles.productBrand}>{draft.brand}</Text>
-              ) : null}
-              {/* The correction MACHINERY lives in the AI card above, next
-                  to the guess it corrects — but the user's eye lands here
-                  first. Without this, the only door into that flow is a
-                  chip that may be a full screen-height away. */}
-              {draft.aiEstimate && !titleEditing ? (
-                <Pressable
-                  onPress={() => openCorrection()}
-                  disabled={reestimating}
-                  hitSlop={6}
-                >
-                  <Text style={styles.fixItLink}>Not the right dish? Fix it</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          </View>
-          <SourceNotice source={draft.source} barcode={draft.barcode} />
-          <View style={styles.cardDivider} />
-          <Text style={styles.refLabel}>Per 100g</Text>
-          <View style={styles.macroGrid}>
-            {MACRO_META.map((m) => (
-              <View
-                key={m.key}
-                style={[styles.macroCell, { backgroundColor: `${m.color}12` }]}
-              >
-                {draft.aiEstimate ? (
-                  <View style={styles.macroCellValueRow}>
-                    <TextInput
-                      style={[styles.macroCellInput, { color: m.color }]}
-                      value={macroText[m.key]}
-                      onChangeText={(t) => updateMacro(m, t)}
-                      keyboardType="decimal-pad"
-                      selectTextOnFocus
-                    />
-                    <Text style={[styles.macroCellUnit, { color: m.color }]}>
-                      {" "}
-                      {m.unit}
+                      {AI_CONFIDENCE_LABEL[draft.aiEstimate.confidence]} confidence
                     </Text>
                   </View>
-                ) : isMacroCellMissing(m, draft, bigFourMissing) ? (
-                  <Text style={styles.macroCellValMissing}>—</Text>
-                ) : (
-                  <Text style={[styles.macroCellVal, { color: m.color }]}>
-                    {m.get(draft)}
-                    <Text style={styles.macroCellUnit}> {m.unit}</Text>
-                  </Text>
                 )}
-                <Text style={styles.macroCellLabel}>{m.label}</Text>
               </View>
-            ))}
-          </View>
-        </View>
 
-        {/* ── Serving size card ───────────────────────── */}
-        <View style={styles.card}>
-          <Text style={styles.cardSectionLabel}>Serving size</Text>
-
-          {servingPreset ? (
-            <Text style={styles.servingSuggestion}>
-              Suggested serving:{" "}
-              <Text style={styles.servingSuggestionValue}>
-                {draft.serving_label ?? `${servingPreset}g`}
-              </Text>
-            </Text>
-          ) : null}
-
-          <View style={styles.servingRow}>
-            <TextInput
-              style={styles.servingInput}
-              value={serving}
-              onChangeText={setServing}
-              keyboardType="decimal-pad"
-              selectTextOnFocus
-            />
-            <Text style={styles.servingUnit}>g</Text>
-          </View>
-          <View style={styles.presets}>
-            {presets.map((v) => {
-              const active = serving === String(v);
-              const isServing = servingPreset === v;
-              return (
-                <Pressable
-                  key={v}
-                  style={({ pressed }) => [
-                    styles.preset,
-                    active && styles.presetActive,
-                    pressed && !active && { opacity: 0.7 },
+              {draft.aiEstimate.userCorrected ? (
+                <View
+                  style={[
+                    styles.correctedWarningBox,
+                    draft.aiEstimate.identityDivergence &&
+                      styles.correctedWarningBoxDanger,
                   ]}
-                  onPress={() => setServing(String(v))}
                 >
                   <Text
                     style={[
-                      styles.presetText,
-                      active && styles.presetTextActive,
+                      styles.correctedWarningText,
+                      draft.aiEstimate.identityDivergence &&
+                        styles.correctedWarningTextDanger,
                     ]}
                   >
-                    {isServing ? `★ ${v}g` : `${v}g`}
+                    Macros still estimated — check before logging.
+                    {draft.aiEstimate.identityDivergence
+                      ? " The AI's own read of this photo didn't match your correction — these numbers may still reflect the old guess."
+                      : ""}
                   </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
-
-        {/* ── Timing card — TWO chips ─────────────────── */}
-        {/*
-          Two chips, not one control: Android's picker cannot do date and time in
-          a single dialog. Two taps for a planned meal, and — crucially — ZERO
-          extra taps for the 95% case of logging something you just ate, because
-          the date chip already says Today.
-        */}
-        <View style={styles.card}>
-          <Text style={styles.cardSectionLabel}>
-            {isPlanned ? "When will you eat this?" : "When did you eat this?"}
-          </Text>
-
-          <View style={styles.whenRow}>
-            <Pressable
-              style={({ pressed }) => [
-                styles.whenChip,
-                isPlanned && styles.whenChipPlanned,
-                pressed && { opacity: 0.8 },
-              ]}
-              onPress={() => setPickerMode("date")}
-            >
-              <Text style={styles.whenIcon}>{isPlanned ? "📅" : "🗓"}</Text>
-              <Text
-                style={[styles.whenValue, isPlanned && styles.whenValuePlanned]}
-                numberOfLines={1}
-              >
-                {dayLabel}
-              </Text>
-            </Pressable>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.whenChip,
-                isPlanned && styles.whenChipPlanned,
-                pressed && { opacity: 0.8 },
-              ]}
-              onPress={() => setPickerMode("time")}
-            >
-              <Text style={styles.whenIcon}>🕐</Text>
-              <Text
-                style={[
-                  styles.whenValue,
-                  styles.whenValueMono,
-                  isPlanned && styles.whenValuePlanned,
-                ]}
-              >
-                {formatTime(eatenAt.toISOString())}
-              </Text>
-            </Pressable>
-          </View>
-
-          <Text style={styles.whenCaption}>
-            {isPlanned ? (
-              <>
-                Saved as a plan.{" "}
-                <Text style={styles.whenCaptionStrong}>
-                  We'll ask if you actually ate it.
-                </Text>
-              </>
-            ) : (
-              <>
-                Plated at{" "}
-                <Text style={styles.whenCaptionStrong}>
-                  {formatTime(eatenAt.toISOString())}
-                </Text>
-                , {dayLabel.toLowerCase()}.
-              </>
-            )}
-          </Text>
-
-          {pickerMode && (
-            <DateTimeField
-              visible={pickerMode != null}
-              value={eatenAt}
-              mode={pickerMode}
-              is24Hour
-              onConfirm={pickerMode === "date" ? onDateChange : onTimeChange}
-              onCancel={() => setPickerMode(null)}
-            />
-          )}
-        </View>
-
-        {/* ── Live preview card ───────────────────────── */}
-        <View style={styles.card}>
-          <View style={styles.previewHeader}>
-            <Text style={styles.cardSectionLabel}>Nutrition preview</Text>
-            <View style={styles.previewServingBadge}>
-              <Text style={styles.previewServingText}>for {g || 0}g</Text>
-            </View>
-          </View>
-          {bigFourMissing ? (
-            <Text style={styles.calValueMissing}>No data</Text>
-          ) : (
-            <View style={styles.calRow}>
-              <Text style={styles.calValue}>{preview.calories}</Text>
-              <Text style={styles.calUnit}>kcal</Text>
-            </View>
-          )}
-          <View style={styles.cardDivider} />
-          <View style={styles.previewGrid}>
-            {previewRows.slice(1).map((m) => (
-              <View key={m.label} style={styles.previewCell}>
-                {m.missing ? (
-                  <Text style={styles.previewCellValMissing}>—</Text>
-                ) : (
-                  <Text style={[styles.previewCellVal, { color: m.color }]}>
-                    {m.value}
-                    <Text style={styles.previewCellUnit}>{m.unit}</Text>
+                </View>
+              ) : (
+                draft.aiEstimate.notes.map((note, i) => (
+                  <Text key={i} style={styles.aiNote}>
+                    {note}
                   </Text>
-                )}
-                <Text style={styles.previewCellLabel}>{m.label}</Text>
+                ))
+              )}
+
+              {!titleEditing && (
+                <View style={styles.chipsRow}>
+                  {!draft.aiEstimate.userCorrected &&
+                    draft.aiEstimate.alternatives.map((alt) => (
+                      <Pressable
+                        key={alt}
+                        style={({ pressed }) => [
+                          styles.chip,
+                          pressed && { opacity: 0.7 },
+                          reestimating && styles.chipDisabled,
+                        ]}
+                        onPress={() => runReestimate(alt)}
+                        disabled={reestimating}
+                      >
+                        <Text style={styles.chipText} numberOfLines={1}>
+                          {alt}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.chip,
+                      styles.chipGhost,
+                      pressed && { opacity: 0.7 },
+                      reestimating && styles.chipDisabled,
+                    ]}
+                    onPress={() => openCorrection()}
+                    disabled={reestimating}
+                  >
+                    <Text style={styles.chipGhostText}>Something else…</Text>
+                  </Pressable>
+                </View>
+              )}
+
+              {titleEditing && (
+                <View style={styles.titleEditRow}>
+                  <TextInput
+                    style={styles.titleEditInput}
+                    value={titleDraft}
+                    onChangeText={setTitleDraft}
+                    placeholder="What is this actually?"
+                    placeholderTextColor={Colors.textMuted}
+                    autoFocus
+                    returnKeyType="done"
+                    onSubmitEditing={() => runReestimate(titleDraft)}
+                    editable={!reestimating}
+                  />
+                  <View style={styles.titleEditActions}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.titleEditCancel,
+                        pressed && { opacity: 0.7 },
+                      ]}
+                      onPress={() => setTitleEditing(false)}
+                      disabled={reestimating}
+                    >
+                      <Text style={styles.titleEditCancelText}>Cancel</Text>
+                    </Pressable>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.titleEditSubmit,
+                        pressed && { opacity: 0.88 },
+                        (!titleDraft.trim() || reestimating) &&
+                          styles.titleEditSubmitDisabled,
+                      ]}
+                      onPress={() => runReestimate(titleDraft)}
+                      disabled={!titleDraft.trim() || reestimating}
+                    >
+                      {reestimating ? (
+                        <ActivityIndicator size="small" color={Colors.bg} />
+                      ) : (
+                        <Text style={styles.titleEditSubmitText}>
+                          Re-estimate macros
+                        </Text>
+                      )}
+                    </Pressable>
+                  </View>
+                </View>
+              )}
+
+              {reestimateError ? (
+                <Text style={styles.aiErrorText}>{reestimateError}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {/* ── Product identity card ───────────────────── */}
+          <View style={styles.productCard}>
+            <View style={styles.identityRow}>
+              <ProductThumb uri={draft.image_url} path={draft.image_path} />
+              <View style={styles.identityText}>
+                <Text style={styles.productName}>{draft.name}</Text>
+                {draft.brand ? (
+                  <Text style={styles.productBrand}>{draft.brand}</Text>
+                ) : null}
+                {/* The correction MACHINERY lives in the AI card above, next
+                    to the guess it corrects — but the user's eye lands here
+                    first. Without this, the only door into that flow is a
+                    chip that may be a full screen-height away. */}
+                {draft.aiEstimate && !titleEditing ? (
+                  <Pressable
+                    onPress={() => openCorrection()}
+                    disabled={reestimating}
+                    hitSlop={6}
+                  >
+                    <Text style={styles.fixItLink}>Not the right dish? Fix it</Text>
+                  </Pressable>
+                ) : null}
               </View>
-            ))}
+            </View>
+            <SourceNotice source={draft.source} barcode={draft.barcode} />
+            <View style={styles.cardDivider} />
+            <Text style={styles.refLabel}>Per 100g</Text>
+            <View style={styles.macroGrid}>
+              {MACRO_META.map((m) => (
+                <View
+                  key={m.key}
+                  style={[styles.macroCell, { backgroundColor: `${m.color}12` }]}
+                >
+                  {draft.aiEstimate ? (
+                    <View style={styles.macroCellValueRow}>
+                      <TextInput
+                        style={[styles.macroCellInput, { color: m.color }]}
+                        value={macroText[m.key]}
+                        onChangeText={(t) => updateMacro(m, t)}
+                        keyboardType="decimal-pad"
+                        selectTextOnFocus
+                      />
+                      <Text style={[styles.macroCellUnit, { color: m.color }]}>
+                        {" "}
+                        {m.unit}
+                      </Text>
+                    </View>
+                  ) : isMacroCellMissing(m, draft, bigFourMissing) ? (
+                    <Text style={styles.macroCellValMissing}>—</Text>
+                  ) : (
+                    <Text style={[styles.macroCellVal, { color: m.color }]}>
+                      {m.get(draft)}
+                      <Text style={styles.macroCellUnit}> {m.unit}</Text>
+                    </Text>
+                  )}
+                  <Text style={styles.macroCellLabel}>{m.label}</Text>
+                </View>
+              ))}
+            </View>
           </View>
-          {bigFourMissing && (
-            <>
-              <Text style={styles.noDataCaption}>
-                This product has no usable nutrition data from Open Food
-                Facts, so it can't be logged yet.
+
+          {/* ── Serving size card ───────────────────────── */}
+          <View style={styles.card}>
+            <Text style={styles.cardSectionLabel}>Serving size</Text>
+
+            {servingPreset ? (
+              <Text style={styles.servingSuggestion}>
+                Suggested serving:{" "}
+                <Text style={styles.servingSuggestionValue}>
+                  {draft.serving_label ?? `${servingPreset}g`}
+                </Text>
               </Text>
+            ) : null}
+
+            <View style={styles.servingRow}>
+              <TextInput
+                style={styles.servingInput}
+                value={serving}
+                onChangeText={setServing}
+                keyboardType="decimal-pad"
+                selectTextOnFocus
+              />
+              <Text style={styles.servingUnit}>g</Text>
+            </View>
+            <View style={styles.presets}>
+              {presets.map((v) => {
+                const active = serving === String(v);
+                const isServing = servingPreset === v;
+                return (
+                  <Pressable
+                    key={v}
+                    style={({ pressed }) => [
+                      styles.preset,
+                      active && styles.presetActive,
+                      pressed && !active && { opacity: 0.7 },
+                    ]}
+                    onPress={() => setServing(String(v))}
+                  >
+                    <Text
+                      style={[
+                        styles.presetText,
+                        active && styles.presetTextActive,
+                      ]}
+                    >
+                      {isServing ? `★ ${v}g` : `${v}g`}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
+          {/* ── Timing card — TWO chips ─────────────────── */}
+          {/*
+            Two chips, not one control: Android's picker cannot do date and time in
+            a single dialog. Two taps for a planned meal, and — crucially — ZERO
+            extra taps for the 95% case of logging something you just ate, because
+            the date chip already says Today.
+          */}
+          <View style={styles.card}>
+            <Text style={styles.cardSectionLabel}>
+              {isPlanned ? "When will you eat this?" : "When did you eat this?"}
+            </Text>
+
+            <View style={styles.whenRow}>
               <Pressable
-                onPress={handleEnterManually}
-                hitSlop={8}
                 style={({ pressed }) => [
-                  styles.manualEntryLink,
-                  pressed && { opacity: 0.7 },
+                  styles.whenChip,
+                  isPlanned && styles.whenChipPlanned,
+                  pressed && { opacity: 0.8 },
                 ]}
+                onPress={() => setPickerMode("date")}
               >
-                <Text style={styles.manualEntryLinkText}>
-                  Enter nutrition manually
+                <Text style={styles.whenIcon}>{isPlanned ? "📅" : "🗓"}</Text>
+                <Text
+                  style={[styles.whenValue, isPlanned && styles.whenValuePlanned]}
+                  numberOfLines={1}
+                >
+                  {dayLabel}
                 </Text>
               </Pressable>
-            </>
-          )}
-        </View>
 
-        <View style={{ height: isEditing ? 160 : 100 }} />
-      </ScrollView>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.whenChip,
+                  isPlanned && styles.whenChipPlanned,
+                  pressed && { opacity: 0.8 },
+                ]}
+                onPress={() => setPickerMode("time")}
+              >
+                <Text style={styles.whenIcon}>🕐</Text>
+                <Text
+                  style={[
+                    styles.whenValue,
+                    styles.whenValueMono,
+                    isPlanned && styles.whenValuePlanned,
+                  ]}
+                >
+                  {formatTime(eatenAt.toISOString())}
+                </Text>
+              </Pressable>
+            </View>
 
-      {/* ── Sticky submit button ───────────────────────── */}
-      <View style={styles.fab}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.addBtn,
-            !canSubmit && styles.addBtnDisabled,
-            pressed && canSubmit && { opacity: 0.88 },
-          ]}
-          onPress={handleSubmit}
-          disabled={!canSubmit || saving || reestimating}
-        >
-          {saving ? (
-            <ActivityIndicator color={Colors.bg} />
-          ) : (
-            <Text
-              style={[
-                styles.addBtnText,
-                !canSubmit && styles.addBtnTextDisabled,
-              ]}
-            >
-              {isEditing
-                ? "Update entry"
-                : isPlanned
-                  ? `Plan ${mealLabel.toLowerCase()} for ${dayLabel.toLowerCase()}`
-                  : `Add to ${mealLabel}`}
+            <Text style={styles.whenCaption}>
+              {isPlanned ? (
+                <>
+                  Saved as a plan.{" "}
+                  <Text style={styles.whenCaptionStrong}>
+                    We'll ask if you actually ate it.
+                  </Text>
+                </>
+              ) : (
+                <>
+                  Plated at{" "}
+                  <Text style={styles.whenCaptionStrong}>
+                    {formatTime(eatenAt.toISOString())}
+                  </Text>
+                  , {dayLabel.toLowerCase()}.
+                </>
+              )}
             </Text>
-          )}
-        </Pressable>
 
-        {isEditing && (
+            {pickerMode && (
+              <DateTimeField
+                visible={pickerMode != null}
+                value={eatenAt}
+                mode={pickerMode}
+                is24Hour
+                onConfirm={pickerMode === "date" ? onDateChange : onTimeChange}
+                onCancel={() => setPickerMode(null)}
+              />
+            )}
+          </View>
+
+          {/* ── Live preview card ───────────────────────── */}
+          <View style={styles.card}>
+            <View style={styles.previewHeader}>
+              <Text style={styles.cardSectionLabel}>Nutrition preview</Text>
+              <View style={styles.previewServingBadge}>
+                <Text style={styles.previewServingText}>for {g || 0}g</Text>
+              </View>
+            </View>
+            {bigFourMissing ? (
+              <Text style={styles.calValueMissing}>No data</Text>
+            ) : (
+              <View style={styles.calRow}>
+                <Text style={styles.calValue}>{preview.calories}</Text>
+                <Text style={styles.calUnit}>kcal</Text>
+              </View>
+            )}
+            <View style={styles.cardDivider} />
+            <View style={styles.previewGrid}>
+              {previewRows.slice(1).map((m) => (
+                <View key={m.label} style={styles.previewCell}>
+                  {m.missing ? (
+                    <Text style={styles.previewCellValMissing}>—</Text>
+                  ) : (
+                    <Text style={[styles.previewCellVal, { color: m.color }]}>
+                      {m.value}
+                      <Text style={styles.previewCellUnit}>{m.unit}</Text>
+                    </Text>
+                  )}
+                  <Text style={styles.previewCellLabel}>{m.label}</Text>
+                </View>
+              ))}
+            </View>
+            {bigFourMissing && (
+              <>
+                <Text style={styles.noDataCaption}>
+                  This product has no usable nutrition data from Open Food
+                  Facts, so it can't be logged yet.
+                </Text>
+                <Pressable
+                  onPress={handleEnterManually}
+                  hitSlop={8}
+                  style={({ pressed }) => [
+                    styles.manualEntryLink,
+                    pressed && { opacity: 0.7 },
+                  ]}
+                >
+                  <Text style={styles.manualEntryLinkText}>
+                    Enter nutrition manually
+                  </Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+
+          <View style={{ height: Spacing.xxl }} />
+        </ScrollView>
+
+        {/* ── Footer: submit (and delete, when editing) ───── */}
+        {/* Normal layout, not position: absolute, so KeyboardScreen's padding
+            lifts it with the ScrollView above it. */}
+        <View style={styles.footer}>
           <Pressable
             style={({ pressed }) => [
-              styles.deleteBtn,
-              pressed && { opacity: 0.7 },
+              styles.addBtn,
+              !canSubmit && styles.addBtnDisabled,
+              pressed && canSubmit && { opacity: 0.88 },
             ]}
-            onPress={handleDelete}
-            disabled={saving}
+            onPress={handleSubmit}
+            disabled={!canSubmit || saving || reestimating}
           >
-            <Text style={styles.deleteBtnText}>Delete entry</Text>
+            {saving ? (
+              <ActivityIndicator color={Colors.bg} />
+            ) : (
+              <Text
+                style={[
+                  styles.addBtnText,
+                  !canSubmit && styles.addBtnTextDisabled,
+                ]}
+              >
+                {isEditing
+                  ? "Update entry"
+                  : isPlanned
+                    ? `Plan ${mealLabel.toLowerCase()} for ${dayLabel.toLowerCase()}`
+                    : `Add to ${mealLabel}`}
+              </Text>
+            )}
           </Pressable>
-        )}
-      </View>
+
+          {isEditing && (
+            <Pressable
+              style={({ pressed }) => [
+                styles.deleteBtn,
+                pressed && { opacity: 0.7 },
+              ]}
+              onPress={handleDelete}
+              disabled={saving}
+            >
+              <Text style={styles.deleteBtnText}>Delete entry</Text>
+            </Pressable>
+          )}
+        </View>
+      </KeyboardScreen>
     </SafeAreaView>
   );
 }
@@ -1829,11 +1836,7 @@ const styles = StyleSheet.create(
     fontWeight: Typography.medium,
   },
 
-  fab: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
+  footer: {
     paddingHorizontal: Spacing.md,
     paddingTop: Spacing.sm,
     paddingBottom: Spacing.lg,

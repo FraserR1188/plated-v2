@@ -22,8 +22,6 @@ import {
   ScrollView,
   ActivityIndicator,
   Pressable,
-  KeyboardAvoidingView,
-  Platform,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
@@ -32,6 +30,7 @@ import { RootStackParamList } from "../types";
 import { supabase } from "../lib/supabase";
 import { deleteAccount } from "../lib/account";
 import { useStore } from "../store/useStore";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 import {
   Colors,
   Spacing,
@@ -98,16 +97,9 @@ export function DeleteAccountScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
-      {/* behavior is deliberately undefined on Android: native windowSoftInputMode
-          resize (the default here — softwareKeyboardLayoutMode is unset in
-          app.json) plus this ScrollView already shift content correctly.
-          Adding 'height' or 'padding' on top of that fights the native resize
-          and produces a doubled offset — don't "fix" this into a value. */}
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={{ flex: 1 }}
-      >
+      <KeyboardScreen>
         <ScrollView
+          style={{ flex: 1 }}
           contentContainerStyle={styles.scroll}
           showsVerticalScrollIndicator={false}
           // Not optional: without this, the first tap on the confirm button
@@ -204,7 +196,7 @@ export function DeleteAccountScreen() {
 
           <View style={{ height: Spacing.xxl }} />
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardScreen>
     </SafeAreaView>
   );
 }

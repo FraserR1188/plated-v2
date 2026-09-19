@@ -15,6 +15,7 @@ import { useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../types";
 import { useStore } from "../store/useStore";
+import { KeyboardScreen } from "../components/KeyboardScreen";
 import { exportCSV, last30Days } from "../lib/csv";
 import {
   Colors,
@@ -567,649 +568,652 @@ export function SettingsScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {/* ── Header ─────────────────────────────────── */}
-        <Text style={styles.heading}>Settings</Text>
+      <KeyboardScreen>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.scroll}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* ── Header ─────────────────────────────────── */}
+          <Text style={styles.heading}>Settings</Text>
 
-        {/* ── Username / Profile ─────────────────────── */}
-        <SectionLabel title="Your profile" />
-        <View style={styles.card}>
-          {usernameLoading ? (
-            <ActivityIndicator
-              color={Colors.green}
-              style={{ paddingVertical: Spacing.md }}
-            />
-          ) : usernameEditing ? (
-            /* Edit form */
-            <View style={styles.usernameForm}>
-              <View style={styles.usernameFieldWrap}>
-                <Text style={styles.usernameFieldLabel}>Username</Text>
-                <View style={styles.usernameInputRow}>
-                  <Text style={styles.usernameAt}>@</Text>
+          {/* ── Username / Profile ─────────────────────── */}
+          <SectionLabel title="Your profile" />
+          <View style={styles.card}>
+            {usernameLoading ? (
+              <ActivityIndicator
+                color={Colors.green}
+                style={{ paddingVertical: Spacing.md }}
+              />
+            ) : usernameEditing ? (
+              /* Edit form */
+              <View style={styles.usernameForm}>
+                <View style={styles.usernameFieldWrap}>
+                  <Text style={styles.usernameFieldLabel}>Username</Text>
+                  <View style={styles.usernameInputRow}>
+                    <Text style={styles.usernameAt}>@</Text>
+                    <TextInput
+                      style={[
+                        styles.usernameInput,
+                        usernameError ? styles.usernameInputError : null,
+                      ]}
+                      value={usernameInput}
+                      onChangeText={handleUsernameChange}
+                      placeholder="your_username"
+                      placeholderTextColor={Colors.textMuted}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      maxLength={30}
+                    />
+                  </View>
+                  <Text style={styles.usernameHint}>
+                    3–30 chars · lowercase letters, numbers, underscores
+                  </Text>
+                  {usernameError && (
+                    <Text style={styles.usernameErrorText}>{usernameError}</Text>
+                  )}
+                </View>
+
+                <View
+                  style={[styles.usernameFieldWrap, { marginTop: Spacing.sm }]}
+                >
+                  <Text style={styles.usernameFieldLabel}>
+                    Display name (optional)
+                  </Text>
                   <TextInput
-                    style={[
-                      styles.usernameInput,
-                      usernameError ? styles.usernameInputError : null,
-                    ]}
-                    value={usernameInput}
-                    onChangeText={handleUsernameChange}
-                    placeholder="your_username"
+                    style={styles.usernameInput}
+                    value={displayNameInput}
+                    onChangeText={setDisplayNameInput}
+                    placeholder="Your Name"
                     placeholderTextColor={Colors.textMuted}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    maxLength={30}
+                    maxLength={40}
                   />
                 </View>
-                <Text style={styles.usernameHint}>
-                  3–30 chars · lowercase letters, numbers, underscores
-                </Text>
-                {usernameError && (
-                  <Text style={styles.usernameErrorText}>{usernameError}</Text>
-                )}
-              </View>
 
-              <View
-                style={[styles.usernameFieldWrap, { marginTop: Spacing.sm }]}
-              >
-                <Text style={styles.usernameFieldLabel}>
-                  Display name (optional)
-                </Text>
-                <TextInput
-                  style={styles.usernameInput}
-                  value={displayNameInput}
-                  onChangeText={setDisplayNameInput}
-                  placeholder="Your Name"
-                  placeholderTextColor={Colors.textMuted}
-                  maxLength={40}
-                />
-              </View>
-
-              <View style={styles.usernameActions}>
-                {currentUsername && (
+                <View style={styles.usernameActions}>
+                  {currentUsername && (
+                    <Pressable
+                      onPress={() => {
+                        setUsernameInput(currentUsername);
+                        setUsernameError(null);
+                        setUsernameEditing(false);
+                      }}
+                      style={styles.cancelBtn}
+                    >
+                      <Text style={styles.cancelBtnText}>Cancel</Text>
+                    </Pressable>
+                  )}
                   <Pressable
-                    onPress={() => {
-                      setUsernameInput(currentUsername);
-                      setUsernameError(null);
-                      setUsernameEditing(false);
-                    }}
-                    style={styles.cancelBtn}
+                    onPress={handleSaveUsername}
+                    disabled={usernameSaving}
+                    style={[
+                      styles.saveUsernameBtn,
+                      {
+                        flex: currentUsername ? 1 : undefined,
+                        width: currentUsername ? undefined : "100%",
+                      },
+                    ]}
                   >
-                    <Text style={styles.cancelBtnText}>Cancel</Text>
+                    {usernameSaving ? (
+                      <ActivityIndicator color={Colors.bg} />
+                    ) : (
+                      <Text style={styles.saveUsernameBtnText}>Save profile</Text>
+                    )}
                   </Pressable>
-                )}
+                </View>
+              </View>
+            ) : (
+              /* Display row */
+              <View style={styles.usernameDisplay}>
+                <View>
+                  <Text style={styles.usernameDisplayName}>
+                    @{currentUsername}
+                  </Text>
+                  {displayNameInput ? (
+                    <Text style={styles.usernameDisplaySub}>
+                      {displayNameInput}
+                    </Text>
+                  ) : null}
+                  {usernameSaved && (
+                    <Text style={styles.usernameSavedText}>✓ Profile saved</Text>
+                  )}
+                </View>
                 <Pressable
-                  onPress={handleSaveUsername}
-                  disabled={usernameSaving}
-                  style={[
-                    styles.saveUsernameBtn,
-                    {
-                      flex: currentUsername ? 1 : undefined,
-                      width: currentUsername ? undefined : "100%",
-                    },
-                  ]}
+                  onPress={() => setUsernameEditing(true)}
+                  style={styles.editBtn}
                 >
-                  {usernameSaving ? (
-                    <ActivityIndicator color={Colors.bg} />
+                  <Text style={styles.editBtnText}>Edit</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+
+          {/* ── Sharing ────────────────────────────────── */}
+          <SectionLabel title="Sharing" />
+          <View style={styles.card}>
+            {usernameLoading ? (
+              <ActivityIndicator
+                color={Colors.green}
+                style={{ paddingVertical: Spacing.md }}
+              />
+            ) : (
+              <>
+                <View style={styles.sharePlannedRow}>
+                  <View style={styles.sharePlannedTextWrap}>
+                    <Text style={styles.sharePlannedLabel}>
+                      Share your meal plans
+                    </Text>
+                    <Text style={styles.sharePlannedSub}>
+                      Friends can see meals you've planned but haven't eaten
+                      yet. Off by default.
+                    </Text>
+                  </View>
+                  {sharePlannedSaving ? (
+                    <ActivityIndicator color={Colors.green} size="small" />
                   ) : (
-                    <Text style={styles.saveUsernameBtnText}>Save profile</Text>
+                    <Switch
+                      value={sharePlannedOn}
+                      onValueChange={handleToggleSharePlanned}
+                      disabled={sharePlannedSaving}
+                      trackColor={{ false: Colors.border, true: Colors.green }}
+                    />
+                  )}
+                </View>
+                {sharePlannedError && (
+                  <Text style={styles.sharePlannedErrorText}>
+                    {sharePlannedError}
+                  </Text>
+                )}
+              </>
+            )}
+          </View>
+
+          {/* ── WHOOP ──────────────────────────────────── */}
+          <SectionLabel title="Whoop" />
+          <View style={styles.card}>
+            {whoopLoading ? (
+              <ActivityIndicator
+                color={Colors.green}
+                style={{ paddingVertical: Spacing.md }}
+              />
+            ) : connected ? (
+              /* Connected */
+              <View>
+                <View style={styles.whoopStatusRow}>
+                  <View style={styles.whoopStatusLeft}>
+                    {/* A stale timestamp with no explanation is worse than no
+                        timestamp: the user reads "Last synced yesterday", assumes
+                        it's still working, and never finds out it has been
+                        failing for a week. */}
+                    <View
+                      style={[
+                        styles.whoopDot,
+                        syncStatus === "failing" && {
+                          backgroundColor: Colors.danger,
+                        },
+                        syncStatus === "partial" && {
+                          backgroundColor: Colors.warning,
+                        },
+                      ]}
+                    />
+                    <View>
+                      <Text style={styles.whoopStatusText}>Connected</Text>
+                      <Text
+                        style={[
+                          styles.whoopStatusSub,
+                          syncStatus === "failing" && { color: Colors.danger },
+                          syncStatus === "partial" && { color: Colors.warning },
+                        ]}
+                      >
+                        {syncStatus === "failing"
+                          ? lastSync
+                            ? `Sync failing · last worked ${lastSync}`
+                            : "Sync failing"
+                          : syncStatus === "partial"
+                            ? lastSync
+                              ? `Synced ${lastSync} · some data still catching up`
+                              : "Synced, some data still catching up"
+                            : lastSync
+                              ? `Last synced ${lastSync}`
+                              : "Not synced yet"}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <Text style={styles.whoopBody}>
+                  plated is pulling your recovery, sleep and strain so it can sit
+                  alongside what you've eaten.
+                </Text>
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.whoopSyncBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={handleSyncWhoop}
+                  disabled={whoopSyncing || whoopBusy}
+                >
+                  {whoopSyncing ? (
+                    <ActivityIndicator color={Colors.green} size="small" />
+                  ) : (
+                    <Text style={styles.whoopSyncBtnText}>Sync now</Text>
+                  )}
+                </Pressable>
+
+                {syncNote && <Text style={styles.whoopNoteText}>{syncNote}</Text>}
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.whoopDisconnectBtn,
+                    { marginTop: Spacing.sm },
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={handleDisconnectWhoop}
+                  disabled={whoopBusy || whoopSyncing}
+                >
+                  {whoopBusy ? (
+                    <ActivityIndicator color={Colors.danger} size="small" />
+                  ) : (
+                    <Text style={styles.whoopDisconnectBtnText}>Disconnect</Text>
                   )}
                 </Pressable>
               </View>
-            </View>
-          ) : (
-            /* Display row */
-            <View style={styles.usernameDisplay}>
-              <View>
-                <Text style={styles.usernameDisplayName}>
-                  @{currentUsername}
-                </Text>
-                {displayNameInput ? (
-                  <Text style={styles.usernameDisplaySub}>
-                    {displayNameInput}
-                  </Text>
-                ) : null}
-                {usernameSaved && (
-                  <Text style={styles.usernameSavedText}>✓ Profile saved</Text>
-                )}
-              </View>
-              <Pressable
-                onPress={() => setUsernameEditing(true)}
-                style={styles.editBtn}
-              >
-                <Text style={styles.editBtnText}>Edit</Text>
-              </Pressable>
-            </View>
-          )}
-        </View>
-
-        {/* ── Sharing ────────────────────────────────── */}
-        <SectionLabel title="Sharing" />
-        <View style={styles.card}>
-          {usernameLoading ? (
-            <ActivityIndicator
-              color={Colors.green}
-              style={{ paddingVertical: Spacing.md }}
-            />
-          ) : (
-            <>
-              <View style={styles.sharePlannedRow}>
-                <View style={styles.sharePlannedTextWrap}>
-                  <Text style={styles.sharePlannedLabel}>
-                    Share your meal plans
-                  </Text>
-                  <Text style={styles.sharePlannedSub}>
-                    Friends can see meals you've planned but haven't eaten
-                    yet. Off by default.
-                  </Text>
-                </View>
-                {sharePlannedSaving ? (
-                  <ActivityIndicator color={Colors.green} size="small" />
-                ) : (
-                  <Switch
-                    value={sharePlannedOn}
-                    onValueChange={handleToggleSharePlanned}
-                    disabled={sharePlannedSaving}
-                    trackColor={{ false: Colors.border, true: Colors.green }}
-                  />
-                )}
-              </View>
-              {sharePlannedError && (
-                <Text style={styles.sharePlannedErrorText}>
-                  {sharePlannedError}
-                </Text>
-              )}
-            </>
-          )}
-        </View>
-
-        {/* ── WHOOP ──────────────────────────────────── */}
-        <SectionLabel title="Whoop" />
-        <View style={styles.card}>
-          {whoopLoading ? (
-            <ActivityIndicator
-              color={Colors.green}
-              style={{ paddingVertical: Spacing.md }}
-            />
-          ) : connected ? (
-            /* Connected */
-            <View>
-              <View style={styles.whoopStatusRow}>
-                <View style={styles.whoopStatusLeft}>
-                  {/* A stale timestamp with no explanation is worse than no
-                      timestamp: the user reads "Last synced yesterday", assumes
-                      it's still working, and never finds out it has been
-                      failing for a week. */}
-                  <View
-                    style={[
-                      styles.whoopDot,
-                      syncStatus === "failing" && {
-                        backgroundColor: Colors.danger,
-                      },
-                      syncStatus === "partial" && {
-                        backgroundColor: Colors.warning,
-                      },
-                    ]}
-                  />
-                  <View>
-                    <Text style={styles.whoopStatusText}>Connected</Text>
-                    <Text
-                      style={[
-                        styles.whoopStatusSub,
-                        syncStatus === "failing" && { color: Colors.danger },
-                        syncStatus === "partial" && { color: Colors.warning },
-                      ]}
-                    >
-                      {syncStatus === "failing"
-                        ? lastSync
-                          ? `Sync failing · last worked ${lastSync}`
-                          : "Sync failing"
-                        : syncStatus === "partial"
-                          ? lastSync
-                            ? `Synced ${lastSync} · some data still catching up`
-                            : "Synced, some data still catching up"
-                          : lastSync
-                            ? `Last synced ${lastSync}`
-                            : "Not synced yet"}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-
-              <Text style={styles.whoopBody}>
-                plated is pulling your recovery, sleep and strain so it can sit
-                alongside what you've eaten.
-              </Text>
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.whoopSyncBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleSyncWhoop}
-                disabled={whoopSyncing || whoopBusy}
-              >
-                {whoopSyncing ? (
-                  <ActivityIndicator color={Colors.green} size="small" />
-                ) : (
-                  <Text style={styles.whoopSyncBtnText}>Sync now</Text>
-                )}
-              </Pressable>
-
-              {syncNote && <Text style={styles.whoopNoteText}>{syncNote}</Text>}
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.whoopDisconnectBtn,
-                  { marginTop: Spacing.sm },
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleDisconnectWhoop}
-                disabled={whoopBusy || whoopSyncing}
-              >
-                {whoopBusy ? (
-                  <ActivityIndicator color={Colors.danger} size="small" />
-                ) : (
-                  <Text style={styles.whoopDisconnectBtnText}>Disconnect</Text>
-                )}
-              </Pressable>
-            </View>
-          ) : (
-            /* Not connected, or revoked */
-            <View>
-              <Text style={styles.whoopBody}>
-                {revoked
-                  ? "Your Whoop connection stopped working — access was revoked, or it expired. Reconnect and plated will pick up where it left off."
-                  : "Connect Whoop and plated will line up what you eat against how you actually recovered, slept and trained. Food is only half the story."}
-              </Text>
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.whoopConnectBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleConnectWhoop}
-                disabled={whoopBusy}
-              >
-                {whoopBusy ? (
-                  <ActivityIndicator color={Colors.bg} />
-                ) : (
-                  <Text style={styles.whoopConnectBtnText}>
-                    {revoked ? "Reconnect Whoop" : "Connect Whoop"}
-                  </Text>
-                )}
-              </Pressable>
-            </View>
-          )}
-
-          {whoopError && (
-            <Text style={styles.whoopErrorText}>{whoopError}</Text>
-          )}
-        </View>
-
-        {/* ── Health Connect ─────────────────────────── */}
-        <SectionLabel title="Health Connect" />
-        <View style={styles.card}>
-          {hcLoading ? (
-            <ActivityIndicator
-              color={Colors.green}
-              style={{ paddingVertical: Spacing.md }}
-            />
-          ) : hcAvailability?.status === "unsupported" ? (
-            /* Not actionable — nothing to install, nothing to ask for. */
-            <Text style={styles.whoopBody}>
-              This device can't use Health Connect — the version of Android
-              on it is too old, and there's no update that adds support.
-            </Text>
-          ) : hcAvailability?.status === "not_installed" ? (
-            /* Actionable — Health Connect is a separate Play Store app on
-               this OS version, not something the device already has. */
-            <View>
-              <Text style={styles.whoopBody}>
-                Health Connect isn't installed yet. Once it is, plated can
-                see how your meals line up with sleep, heart rate
-                variability, resting heart rate and workouts collected by
-                apps like Fitbit or Garmin.
-              </Text>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.whoopConnectBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleInstallHealthConnect}
-              >
-                <Text style={styles.whoopConnectBtnText}>
-                  Install Health Connect
-                </Text>
-              </Pressable>
-            </View>
-          ) : hcNativeError ? (
-            /* A genuine native failure reading or requesting grant state —
-               NOT a permission decision. Must win over the granted/blocked/
-               never-asked branches below: there is no trustworthy grant
-               data to render underneath it, and treating this as "denied"
-               is exactly the bug this branch exists to prevent. */
-            <View>
-              <Text style={styles.whoopBody}>
-                Health Connect couldn't be reached just now — this isn't
-                about your permissions, something went wrong talking to it.
-                Try again in a moment.
-              </Text>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.whoopConnectBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleConnectHealthConnect}
-                disabled={hcBusy}
-              >
-                {hcBusy ? (
-                  <ActivityIndicator color={Colors.bg} />
-                ) : (
-                  <Text style={styles.whoopConnectBtnText}>Try again</Text>
-                )}
-              </Pressable>
-              <Text style={styles.whoopErrorText}>{hcNativeError}</Text>
-            </View>
-          ) : hcGrants && !isHealthConnectFullyDenied(hcGrants) ? (
-            /* At least one domain granted. Shown per-type, honestly — a
-               user who grants sleep but denies HRV sees exactly that, not
-               a single all-or-nothing "connected" flag. */
-            <View>
-              <View style={styles.hcGrantList}>
-                <HcGrantRow label="Sleep" granted={hcGrants.sleep} />
-                <HcGrantRow
-                  label="Heart rate variability"
-                  granted={hcGrants.hrv}
-                />
-                <HcGrantRow
-                  label="Resting heart rate"
-                  granted={hcGrants.resting_hr}
-                />
-                <HcGrantRow label="Workouts" granted={hcGrants.workouts} />
-              </View>
-
-              <Text style={[styles.whoopBody, { marginTop: Spacing.md }]}>
-                plated reads what you've granted from Health Connect so it
-                can sit alongside what you've eaten.
-              </Text>
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.whoopSyncBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleSyncHealthConnect}
-                disabled={hcSyncing || hcBusy}
-              >
-                {hcSyncing ? (
-                  <ActivityIndicator color={Colors.green} size="small" />
-                ) : (
-                  <Text style={styles.whoopSyncBtnText}>Sync now</Text>
-                )}
-              </Pressable>
-
-              {hcSyncNote && (
-                <Text style={styles.whoopNoteText}>{hcSyncNote}</Text>
-              )}
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.hcUpdateBtn,
-                  { marginTop: Spacing.sm },
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleConnectHealthConnect}
-                disabled={hcBusy || hcSyncing}
-              >
-                {hcBusy ? (
-                  <ActivityIndicator color={Colors.textSub} size="small" />
-                ) : (
-                  <Text style={styles.hcUpdateBtnText}>Update access</Text>
-                )}
-              </Pressable>
-            </View>
-          ) : hcHasRequested ? (
-            /* A request genuinely completed and nothing came back granted.
-               This MAY be Android's own two-refusal wall, or it may just be
-               a single dismissal — requestPermission() exposes no signal
-               distinguishing the two (see requestHealthConnectAccess's doc
-               comment), so we don't claim either. Offer both a retry (works
-               if it wasn't the wall) and the settings deep link (works
-               either way). */
-            <View>
-              <Text style={styles.whoopBody}>
-                Health Connect access is off. You can try connecting again,
-                or turn it on directly from Health Connect's own settings.
-              </Text>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.whoopConnectBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleConnectHealthConnect}
-                disabled={hcBusy}
-              >
-                {hcBusy ? (
-                  <ActivityIndicator color={Colors.bg} />
-                ) : (
-                  <Text style={styles.whoopConnectBtnText}>Try again</Text>
-                )}
-              </Pressable>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.hcUpdateBtn,
-                  { marginTop: Spacing.sm },
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleOpenHealthConnectSettings}
-              >
-                <Text style={styles.hcUpdateBtnText}>
-                  Open Health Connect settings
-                </Text>
-              </Pressable>
-            </View>
-          ) : (
-            /* Never asked yet. */
-            <View>
-              <Text style={styles.whoopBody}>
-                Connect Health Connect and see how your meals line up with
-                sleep, heart rate variability, resting heart rate and
-                workouts collected by apps like Fitbit or Garmin.
-              </Text>
-              <Pressable
-                style={({ pressed }) => [
-                  styles.whoopConnectBtn,
-                  pressed && { opacity: 0.85 },
-                ]}
-                onPress={handleConnectHealthConnect}
-                disabled={hcBusy}
-              >
-                {hcBusy ? (
-                  <ActivityIndicator color={Colors.bg} />
-                ) : (
-                  <Text style={styles.whoopConnectBtnText}>
-                    Connect Health Connect
-                  </Text>
-                )}
-              </Pressable>
-            </View>
-          )}
-
-          {hcError && <Text style={styles.whoopErrorText}>{hcError}</Text>}
-        </View>
-
-        {/* ── Daily goals ────────────────────────────── */}
-        <SectionLabel title="Daily goals" />
-        <View style={styles.card}>
-          {GOAL_FIELDS.map((field, i) => (
-            <View
-              key={field.key}
-              style={[
-                styles.goalRow,
-                i < GOAL_FIELDS.length - 1 && styles.goalBorder,
-              ]}
-            >
-              <View style={styles.goalLeft}>
-                <View
-                  style={[styles.goalDot, { backgroundColor: field.color }]}
-                />
-                <Text style={styles.goalLabel}>{field.label}</Text>
-              </View>
-              <View style={styles.goalRight}>
-                <TextInput
-                  style={[
-                    styles.goalInput,
-                    { borderColor: `${field.color}30` },
-                  ]}
-                  value={values[field.key]}
-                  onChangeText={(v) => handleChange(field.key, v)}
-                  keyboardType="decimal-pad"
-                  selectTextOnFocus
-                  placeholderTextColor={Colors.textMuted}
-                />
-                <Text style={styles.goalUnit}>{field.unit}</Text>
-              </View>
-            </View>
-          ))}
-
-          <Pressable
-            style={({ pressed }) => [
-              styles.saveBtn,
-              saved && styles.saveBtnSaved,
-              pressed && { opacity: 0.85 },
-            ]}
-            onPress={handleSave}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color={Colors.bg} />
             ) : (
-              <Text style={styles.saveBtnText}>
-                {saved ? "✓  Goals saved" : "Save goals"}
-              </Text>
+              /* Not connected, or revoked */
+              <View>
+                <Text style={styles.whoopBody}>
+                  {revoked
+                    ? "Your Whoop connection stopped working — access was revoked, or it expired. Reconnect and plated will pick up where it left off."
+                    : "Connect Whoop and plated will line up what you eat against how you actually recovered, slept and trained. Food is only half the story."}
+                </Text>
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.whoopConnectBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={handleConnectWhoop}
+                  disabled={whoopBusy}
+                >
+                  {whoopBusy ? (
+                    <ActivityIndicator color={Colors.bg} />
+                  ) : (
+                    <Text style={styles.whoopConnectBtnText}>
+                      {revoked ? "Reconnect Whoop" : "Connect Whoop"}
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
             )}
-          </Pressable>
-        </View>
 
-        {/* ── Account ────────────────────────────────── */}
-        <SectionLabel title="Account" />
-        <View style={styles.card}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.libRow,
-              styles.goalBorder,
-              pressed && { backgroundColor: Colors.surface2 },
-            ]}
-            onPress={() => navigation.navigate("About")}
-          >
-            <View style={styles.libBody}>
-              <Text style={styles.libName}>About & legal</Text>
-            </View>
-            <Text style={styles.libChevron}>›</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              styles.signOutBtn,
-              { marginTop: Spacing.md },
-              pressed && { opacity: 0.85 },
-            ]}
-            onPress={handleSignOut}
-          >
-            <Text style={styles.signOutBtnText}>Sign out</Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              styles.deleteAccountBtn,
-              { marginTop: Spacing.sm },
-              pressed && { opacity: 0.85 },
-            ]}
-            onPress={() => navigation.navigate("DeleteAccount")}
-          >
-            <Text style={styles.deleteAccountBtnText}>Delete account</Text>
-          </Pressable>
-        </View>
-
-        <View style={{ height: Spacing.xxl }} />
-
-        {/* ── CSV Export ─────────────────────────────── */}
-        <SectionLabel title="Export data" />
-        <View style={styles.card}>
-          <Text style={styles.exportInfo}>
-            Your data is yours. Export the last 30 days as a CSV to keep, or to
-            dig into in a spreadsheet.
-          </Text>
-          <View style={styles.colsBox}>
-            <Text style={styles.colsLabel}>Included columns</Text>
-            <Text style={styles.colsText}>
-              date · time · meal · ingredient · brand · serving · calories ·
-              protein · carbs · fat · sat fat · salt · fibre · sugar · source
-            </Text>
+            {whoopError && (
+              <Text style={styles.whoopErrorText}>{whoopError}</Text>
+            )}
           </View>
-          {exporting ? (
-            <View style={styles.exportLoading}>
-              <ActivityIndicator color={Colors.green} size="small" />
-              <Text style={styles.exportLoadingText}>Preparing file…</Text>
-            </View>
-          ) : (
+
+          {/* ── Health Connect ─────────────────────────── */}
+          <SectionLabel title="Health Connect" />
+          <View style={styles.card}>
+            {hcLoading ? (
+              <ActivityIndicator
+                color={Colors.green}
+                style={{ paddingVertical: Spacing.md }}
+              />
+            ) : hcAvailability?.status === "unsupported" ? (
+              /* Not actionable — nothing to install, nothing to ask for. */
+              <Text style={styles.whoopBody}>
+                This device can't use Health Connect — the version of Android
+                on it is too old, and there's no update that adds support.
+              </Text>
+            ) : hcAvailability?.status === "not_installed" ? (
+              /* Actionable — Health Connect is a separate Play Store app on
+                 this OS version, not something the device already has. */
+              <View>
+                <Text style={styles.whoopBody}>
+                  Health Connect isn't installed yet. Once it is, plated can
+                  see how your meals line up with sleep, heart rate
+                  variability, resting heart rate and workouts collected by
+                  apps like Fitbit or Garmin.
+                </Text>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.whoopConnectBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={handleInstallHealthConnect}
+                >
+                  <Text style={styles.whoopConnectBtnText}>
+                    Install Health Connect
+                  </Text>
+                </Pressable>
+              </View>
+            ) : hcNativeError ? (
+              /* A genuine native failure reading or requesting grant state —
+                 NOT a permission decision. Must win over the granted/blocked/
+                 never-asked branches below: there is no trustworthy grant
+                 data to render underneath it, and treating this as "denied"
+                 is exactly the bug this branch exists to prevent. */
+              <View>
+                <Text style={styles.whoopBody}>
+                  Health Connect couldn't be reached just now — this isn't
+                  about your permissions, something went wrong talking to it.
+                  Try again in a moment.
+                </Text>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.whoopConnectBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={handleConnectHealthConnect}
+                  disabled={hcBusy}
+                >
+                  {hcBusy ? (
+                    <ActivityIndicator color={Colors.bg} />
+                  ) : (
+                    <Text style={styles.whoopConnectBtnText}>Try again</Text>
+                  )}
+                </Pressable>
+                <Text style={styles.whoopErrorText}>{hcNativeError}</Text>
+              </View>
+            ) : hcGrants && !isHealthConnectFullyDenied(hcGrants) ? (
+              /* At least one domain granted. Shown per-type, honestly — a
+                 user who grants sleep but denies HRV sees exactly that, not
+                 a single all-or-nothing "connected" flag. */
+              <View>
+                <View style={styles.hcGrantList}>
+                  <HcGrantRow label="Sleep" granted={hcGrants.sleep} />
+                  <HcGrantRow
+                    label="Heart rate variability"
+                    granted={hcGrants.hrv}
+                  />
+                  <HcGrantRow
+                    label="Resting heart rate"
+                    granted={hcGrants.resting_hr}
+                  />
+                  <HcGrantRow label="Workouts" granted={hcGrants.workouts} />
+                </View>
+
+                <Text style={[styles.whoopBody, { marginTop: Spacing.md }]}>
+                  plated reads what you've granted from Health Connect so it
+                  can sit alongside what you've eaten.
+                </Text>
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.whoopSyncBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={handleSyncHealthConnect}
+                  disabled={hcSyncing || hcBusy}
+                >
+                  {hcSyncing ? (
+                    <ActivityIndicator color={Colors.green} size="small" />
+                  ) : (
+                    <Text style={styles.whoopSyncBtnText}>Sync now</Text>
+                  )}
+                </Pressable>
+
+                {hcSyncNote && (
+                  <Text style={styles.whoopNoteText}>{hcSyncNote}</Text>
+                )}
+
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.hcUpdateBtn,
+                    { marginTop: Spacing.sm },
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={handleConnectHealthConnect}
+                  disabled={hcBusy || hcSyncing}
+                >
+                  {hcBusy ? (
+                    <ActivityIndicator color={Colors.textSub} size="small" />
+                  ) : (
+                    <Text style={styles.hcUpdateBtnText}>Update access</Text>
+                  )}
+                </Pressable>
+              </View>
+            ) : hcHasRequested ? (
+              /* A request genuinely completed and nothing came back granted.
+                 This MAY be Android's own two-refusal wall, or it may just be
+                 a single dismissal — requestPermission() exposes no signal
+                 distinguishing the two (see requestHealthConnectAccess's doc
+                 comment), so we don't claim either. Offer both a retry (works
+                 if it wasn't the wall) and the settings deep link (works
+                 either way). */
+              <View>
+                <Text style={styles.whoopBody}>
+                  Health Connect access is off. You can try connecting again,
+                  or turn it on directly from Health Connect's own settings.
+                </Text>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.whoopConnectBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={handleConnectHealthConnect}
+                  disabled={hcBusy}
+                >
+                  {hcBusy ? (
+                    <ActivityIndicator color={Colors.bg} />
+                  ) : (
+                    <Text style={styles.whoopConnectBtnText}>Try again</Text>
+                  )}
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.hcUpdateBtn,
+                    { marginTop: Spacing.sm },
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={handleOpenHealthConnectSettings}
+                >
+                  <Text style={styles.hcUpdateBtnText}>
+                    Open Health Connect settings
+                  </Text>
+                </Pressable>
+              </View>
+            ) : (
+              /* Never asked yet. */
+              <View>
+                <Text style={styles.whoopBody}>
+                  Connect Health Connect and see how your meals line up with
+                  sleep, heart rate variability, resting heart rate and
+                  workouts collected by apps like Fitbit or Garmin.
+                </Text>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.whoopConnectBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={handleConnectHealthConnect}
+                  disabled={hcBusy}
+                >
+                  {hcBusy ? (
+                    <ActivityIndicator color={Colors.bg} />
+                  ) : (
+                    <Text style={styles.whoopConnectBtnText}>
+                      Connect Health Connect
+                    </Text>
+                  )}
+                </Pressable>
+              </View>
+            )}
+
+            {hcError && <Text style={styles.whoopErrorText}>{hcError}</Text>}
+          </View>
+
+          {/* ── Daily goals ────────────────────────────── */}
+          <SectionLabel title="Daily goals" />
+          <View style={styles.card}>
+            {GOAL_FIELDS.map((field, i) => (
+              <View
+                key={field.key}
+                style={[
+                  styles.goalRow,
+                  i < GOAL_FIELDS.length - 1 && styles.goalBorder,
+                ]}
+              >
+                <View style={styles.goalLeft}>
+                  <View
+                    style={[styles.goalDot, { backgroundColor: field.color }]}
+                  />
+                  <Text style={styles.goalLabel}>{field.label}</Text>
+                </View>
+                <View style={styles.goalRight}>
+                  <TextInput
+                    style={[
+                      styles.goalInput,
+                      { borderColor: `${field.color}30` },
+                    ]}
+                    value={values[field.key]}
+                    onChangeText={(v) => handleChange(field.key, v)}
+                    keyboardType="decimal-pad"
+                    selectTextOnFocus
+                    placeholderTextColor={Colors.textMuted}
+                  />
+                  <Text style={styles.goalUnit}>{field.unit}</Text>
+                </View>
+              </View>
+            ))}
+
             <Pressable
               style={({ pressed }) => [
-                styles.exportBtn,
+                styles.saveBtn,
+                saved && styles.saveBtnSaved,
                 pressed && { opacity: 0.85 },
               ]}
-              onPress={handleExport}
+              onPress={handleSave}
+              disabled={saving}
             >
-              <Text style={styles.exportBtnText}>Export last 30 days</Text>
+              {saving ? (
+                <ActivityIndicator color={Colors.bg} />
+              ) : (
+                <Text style={styles.saveBtnText}>
+                  {saved ? "✓  Goals saved" : "Save goals"}
+                </Text>
+              )}
             </Pressable>
-          )}
-        </View>
-
-        {/* ── Saved ingredients ──────────────────────── */}
-        <SectionLabel
-          title="Saved ingredients"
-          count={savedIngredients.length}
-        />
-        {savedIngredients.length === 0 ? (
-          <View style={styles.emptyLibCard}>
-            <Text style={styles.emptyLibText}>
-              Ingredients you log frequently will appear here for quick re-use.
-            </Text>
           </View>
-        ) : (
+
+          {/* ── Account ────────────────────────────────── */}
+          <SectionLabel title="Account" />
           <View style={styles.card}>
-            {savedIngredients.map((item, i) => (
-              <Pressable
-                key={item.id}
-                style={({ pressed }) => [
-                  styles.libRow,
-                  i < savedIngredients.length - 1 && styles.goalBorder,
-                  pressed && { backgroundColor: Colors.surface2 },
-                ]}
-                onLongPress={() => handleDeleteIngredient(item.id, item.name)}
-              >
-                <View style={styles.libBody}>
-                  <Text style={styles.libName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <Text style={styles.libSub}>
-                    {item.brand ? `${item.brand} · ` : ""}
-                    {item.cal_per100} kcal/100g · used {item.use_count}×
-                  </Text>
-                </View>
-                <Text style={styles.libChevron}>›</Text>
-              </Pressable>
-            ))}
-            <Text style={styles.libHint}>
-              Long-press to remove from library
-            </Text>
+            <Pressable
+              style={({ pressed }) => [
+                styles.libRow,
+                styles.goalBorder,
+                pressed && { backgroundColor: Colors.surface2 },
+              ]}
+              onPress={() => navigation.navigate("About")}
+            >
+              <View style={styles.libBody}>
+                <Text style={styles.libName}>About & legal</Text>
+              </View>
+              <Text style={styles.libChevron}>›</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.signOutBtn,
+                { marginTop: Spacing.md },
+                pressed && { opacity: 0.85 },
+              ]}
+              onPress={handleSignOut}
+            >
+              <Text style={styles.signOutBtnText}>Sign out</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.deleteAccountBtn,
+                { marginTop: Spacing.sm },
+                pressed && { opacity: 0.85 },
+              ]}
+              onPress={() => navigation.navigate("DeleteAccount")}
+            >
+              <Text style={styles.deleteAccountBtnText}>Delete account</Text>
+            </Pressable>
           </View>
-        )}
 
-        <View style={{ height: Spacing.xxl }} />
-      </ScrollView>
+          <View style={{ height: Spacing.xxl }} />
+
+          {/* ── CSV Export ─────────────────────────────── */}
+          <SectionLabel title="Export data" />
+          <View style={styles.card}>
+            <Text style={styles.exportInfo}>
+              Your data is yours. Export the last 30 days as a CSV to keep, or to
+              dig into in a spreadsheet.
+            </Text>
+            <View style={styles.colsBox}>
+              <Text style={styles.colsLabel}>Included columns</Text>
+              <Text style={styles.colsText}>
+                date · time · meal · ingredient · brand · serving · calories ·
+                protein · carbs · fat · sat fat · salt · fibre · sugar · source
+              </Text>
+            </View>
+            {exporting ? (
+              <View style={styles.exportLoading}>
+                <ActivityIndicator color={Colors.green} size="small" />
+                <Text style={styles.exportLoadingText}>Preparing file…</Text>
+              </View>
+            ) : (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.exportBtn,
+                  pressed && { opacity: 0.85 },
+                ]}
+                onPress={handleExport}
+              >
+                <Text style={styles.exportBtnText}>Export last 30 days</Text>
+              </Pressable>
+            )}
+          </View>
+
+          {/* ── Saved ingredients ──────────────────────── */}
+          <SectionLabel
+            title="Saved ingredients"
+            count={savedIngredients.length}
+          />
+          {savedIngredients.length === 0 ? (
+            <View style={styles.emptyLibCard}>
+              <Text style={styles.emptyLibText}>
+                Ingredients you log frequently will appear here for quick re-use.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.card}>
+              {savedIngredients.map((item, i) => (
+                <Pressable
+                  key={item.id}
+                  style={({ pressed }) => [
+                    styles.libRow,
+                    i < savedIngredients.length - 1 && styles.goalBorder,
+                    pressed && { backgroundColor: Colors.surface2 },
+                  ]}
+                  onLongPress={() => handleDeleteIngredient(item.id, item.name)}
+                >
+                  <View style={styles.libBody}>
+                    <Text style={styles.libName} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    <Text style={styles.libSub}>
+                      {item.brand ? `${item.brand} · ` : ""}
+                      {item.cal_per100} kcal/100g · used {item.use_count}×
+                    </Text>
+                  </View>
+                  <Text style={styles.libChevron}>›</Text>
+                </Pressable>
+              ))}
+              <Text style={styles.libHint}>
+                Long-press to remove from library
+              </Text>
+            </View>
+          )}
+
+          <View style={{ height: Spacing.xxl }} />
+        </ScrollView>
+      </KeyboardScreen>
     </SafeAreaView>
   );
 }

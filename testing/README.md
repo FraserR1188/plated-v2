@@ -11,6 +11,7 @@ Every round of testing on plated. gets a record here: what the tester said, and 
 | `testing/session-template.md` | The record format — raw feedback plus the rectification log |
 | `testing/YYYY-MM-DD-<tester>.md` | One per session |
 | `testing/YYYY-MM-DD-internal.md` | Issues found by the developer rather than a tester (Tester = "self (dev pass)") |
+| `testing/archive/` | Files from the retired P-TF system (`register.md`, `incident-form-template.md`), kept unchanged |
 
 ## The loop
 
@@ -42,11 +43,14 @@ Issues you find yourself go in a dated `-internal.md` doc using the same templat
 
 An issue only reaches `Verified` when a person exercises the flow again — your own re-test counts as `Fixed`, not `Verified`.
 
+P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New issues use PL-.
+
 ## Sessions
 
 | Date | Tester | Build / version | Device | Issues raised | Still open | Doc |
 |---|---|---|---|---|---|---|
-| 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` | Pixel (Android) | 14 | 13 | `testing/2026-09-19-internal.md` |
+| 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` | Pixel (Android) | 15 | 14 | `testing/2026-09-19-internal.md` |
+| 2026-08-25 | Ian | Not recorded (newest Android store build then: v6, `f48184c`) | Google Pixel 10, Android 17 | 4 | 4 | `testing/2026-08-25-ian.md` |
 
 ## Open issues across all sessions
 
@@ -61,9 +65,14 @@ An issue only reaches `Verified` when a person exercises the flow again — your
 | PL-007 | Major | CSV export and last30Days use UTC dates | Logged | 2026-09-19-internal | Use dateKey |
 | PL-008 | Major | CSV exports NULL small four as 0.0 | Logged | 2026-09-19-internal | Empty cell for NULL |
 | PL-011 | Major | meal_entries big four can't represent unknown | Deferred | 2026-09-19-internal | Riskier schema change; separate decision |
+| P-TF01b | Major | Never asked for calorie or macro targets | Logged | 2026-08-25-ian | No onboarding; new accounts run on DEFAULT_GOALS (2000 kcal) until set in Settings. No fix found |
+| P-TF02a | Major | Food search kept erroring; worked after numerous retries | Logged | 2026-08-25-ian | Probable fix, unconfirmed: e958f4d (OFF User-Agent + timeout), Android v8+ and iOS build 3. Symptom not tied to it |
 | PL-010 | Minor | buildEditPatch snaps edits to the rounding grid | Deferred | 2026-09-19-internal | Bounded drift, not urgent |
 | PL-014 | Minor | Copy-a-day failures double-report to Sentry | Logged | 2026-09-19-internal | Audit applyEntries callers |
 | PL-012 | Minor | Tesco Gold Coffee library row saved all-zero | Deferred | 2026-09-19-internal | Check the OFF source first |
+| PL-015 | Minor | Clearing an AI macro cell on ProductScreen stores 0, not NULL | Logged | 2026-09-19-internal | Hard to reach: the AI fills all eight |
+| P-TF01a | Minor | No confirmation email after sign-up | Logged | 2026-08-25-ian | None is sent: Confirm email is off (mailer_autoconfirm true, measured 2026-09-19). 87e16cf fixed the false copy; 8eb2e5e's "Check your email" screen may still show. A new-account sign-up check decides. Blocker if Confirm email is turned on and mail doesn't arrive |
+| P-TF02b | Minor | Search "sometimes seems to need a space after the item name" | Logged | 2026-08-25-ian | Queries are trimmed, so the space can't change results; it re-fires the same search (a retry). No fix found |
 | PL-013 | Polish | RecipeConfirm doubles the bottom inset | Fixed | 2026-09-19-internal | SafeAreaView edge kept, footer inset dropped. Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK. Needs a tester |
 
 ## Closed issues

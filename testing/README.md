@@ -57,7 +57,7 @@ An issue only reaches `Verified` when a person exercises the flow again — your
 | PL-002 | Major | saved_ingredients coerces unknown small four to 0 | Fixed | 2026-09-19-internal | Migration 20260919120000 + guard B+. Existing zeros not backfilled |
 | PL-004 | Major | Android keyboard covers inputs on 13 surfaces | In progress | 2026-09-19-internal | KeyboardScreen wrapper on `fix/keyboard-screen-wrapper`; fingerprint unchanged, OTA-eligible. Device pass pending |
 | PL-005 | Major | BundleApplyReview applies last-blurred grams | In progress | 2026-09-19-internal | Commit-on-change (live text) on `fix/keyboard-screen-wrapper`; ships with PL-004. Device pass pending |
-| PL-006 | Major | BatchEditor Save can miss an uncommitted qty | Logged | 2026-09-19-internal | Live-text pattern; ships with PL-004 |
+| PL-006 | Major | BatchEditor Save can miss an uncommitted qty | In progress | 2026-09-19-internal | Commit-on-change (live text) on `fix/keyboard-screen-wrapper`; ships with PL-004. Device pass pending |
 | PL-007 | Major | CSV export and last30Days use UTC dates | Logged | 2026-09-19-internal | Use dateKey |
 | PL-008 | Major | CSV exports NULL small four as 0.0 | Logged | 2026-09-19-internal | Empty cell for NULL |
 | PL-011 | Major | meal_entries big four can't represent unknown | Deferred | 2026-09-19-internal | Riskier schema change; separate decision |

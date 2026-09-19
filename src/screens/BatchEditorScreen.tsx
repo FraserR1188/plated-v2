@@ -59,6 +59,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore, BatchDraftIngredient } from "../store/useStore";
 import { BatchIngredientInput, scaleCompositionItem } from "../lib/compositions";
+import { parseGrams } from "../lib/macros";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 import {
   Colors,
@@ -124,13 +125,19 @@ function IngredientRow({
 }) {
   const [qtyText, setQtyText] = useState(String(ingredient.quantityG));
 
-  const commit = () => {
-    const g = parseFloat(qtyText.replace(",", "."));
-    if (Number.isFinite(g) && g > 0) {
-      onQuantityChange(g);
-    } else {
-      setQtyText(String(ingredient.quantityG)); // revert — don't accept garbage
-    }
+  // Live text, as in CopyConfirm (PL-006): every change that parses goes to
+  // the store at once, so the header Save — reachable while this field is
+  // still focused — can't save a quantity older than the one in the box.
+  // A committed quantity clears yield and portion (YIELD-ON-EDIT, in the
+  // store action), which disables Save until they're confirmed again.
+  const onQtyChange = (text: string) => {
+    setQtyText(text);
+    const g = parseGrams(text);
+    if (g != null) onQuantityChange(g);
+  };
+  const onQtyBlur = () => {
+    // revert — don't accept garbage; the store keeps the last good quantity
+    if (parseGrams(qtyText) == null) setQtyText(String(ingredient.quantityG));
   };
 
   return (
@@ -148,9 +155,9 @@ function IngredientRow({
       <TextInput
         style={styles.ingredientQtyInput}
         value={qtyText}
-        onChangeText={setQtyText}
-        onBlur={commit}
-        onSubmitEditing={commit}
+        onChangeText={onQtyChange}
+        onBlur={onQtyBlur}
+        onSubmitEditing={onQtyBlur}
         keyboardType="decimal-pad"
         returnKeyType="done"
       />

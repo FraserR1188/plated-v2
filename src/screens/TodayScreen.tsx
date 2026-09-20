@@ -28,6 +28,14 @@ import { MacroBar } from "../components/MacroBar";
 import { CopyTargetPicker } from "../components/CopyTargetPicker";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 import { useStore, todayKey } from "../store/useStore";
+import {
+  WhoopScoresPanel,
+} from "../components/WhoopScoresPanel";
+import {
+  getWhoopScoresForDate,
+  WhoopScores,
+  NO_SCORES,
+} from "../lib/whoopScores";
 import { mealEntryToProduct } from "../lib/foodLookup";
 import { previewComposition, bundlesOnly } from "../lib/compositions";
 import { draftsFromDay, sharedMealType } from "../lib/entries";
@@ -651,6 +659,27 @@ function DayPage({
     getEntriesForDate,
     getWorkoutsForDate,
   } = useStore();
+  // Seeded from a local cache before any network read (PR 4), so this is
+  // already correct on the first frame for a returning WHOOP user and the
+  // ring does not jump sideways when the connection row lands.
+  const whoopConnected = useStore((s) => s.whoopConnected);
+  const whoopRefreshToken = useStore((s) => s.biometricRefreshToken);
+
+  // Per-page, keyed on this page's own date. The 3-page window means the
+  // neighbours fetch too, which is deliberate: swiping should not wait.
+  const [whoopScores, setWhoopScores] = useState<WhoopScores>(NO_SCORES);
+  useEffect(() => {
+    if (!whoopConnected) return;
+    let cancelled = false;
+    // No stale carry-over: a failure resolves to NO_SCORES rather than
+    // leaving the previous day's numbers under this day's date.
+    getWhoopScoresForDate(date).then((s) => {
+      if (!cancelled) setWhoopScores(s);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [date, whoopConnected, whoopRefreshToken]);
 
   const isPageToday = date === today;
   const isFuture = isFutureDay(date);
@@ -905,13 +934,21 @@ function DayPage({
           style={styles.ringCard}
           onLayout={(e) => setHeroHeight(e.nativeEvent.layout.height)}
         >
-          <CalorieRing
-            consumed={kcalEaten}
-            planned={kcalPlanned}
-            goal={goals.calories}
-            size={200}
-            stroke={14}
-          />
+          {/* The ring sits off-centre when the panel is there, rather than
+              the panel being squeezed in beside a centred ring. CalorieRing
+              itself is untouched — the offset is this row's business, and a
+              ring that resized with the panel would make the two layouts
+              hard to compare at a glance. */}
+          <View style={styles.ringRow}>
+            <CalorieRing
+              consumed={kcalEaten}
+              planned={kcalPlanned}
+              goal={goals.calories}
+              size={200}
+              stroke={14}
+            />
+            {whoopConnected && <WhoopScoresPanel scores={whoopScores} />}
+          </View>
 
           <View style={styles.ringStatsRow}>
             <RingStat
@@ -2981,6 +3018,14 @@ const styles = StyleSheet.create({
     color: Colors.textSub,
   },
 
+  ringRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    // Part of the 82dp budget: 200 (ring) + 12 + 82 = 294dp of the 328dp
+    // available inside the card at 360dp width.
+    gap: 12,
+  },
   ringCard: {
     backgroundColor: Colors.surface,
     borderRadius: Radius.card,

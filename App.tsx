@@ -338,7 +338,13 @@ function App() {
         }),
       );
       void refetchIfSyncWroteData(whoop, whoopSyncWroteData, {
-        refetch: () => useStore.getState().fetchWorkouts(),
+        refetch: async () => {
+          await useStore.getState().fetchWorkouts();
+          // PR 5: Today's WHOOP scores panel joins this same callback, so
+          // a sync that lands new scores updates the panel rather than
+          // leaving the pre-sync numbers until the next focus.
+          useStore.getState().bumpBiometricRefresh();
+        },
         report: reportError,
       });
 

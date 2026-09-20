@@ -258,6 +258,14 @@ interface AppState {
   /** PL-023: whether `goals` is real, defaulted, or unknown. */
   goalsState: GoalsState;
   /**
+   * Bumped when a sync writes biometric rows (PL-018's post-sync refetch).
+   * Today's WHOOP panel watches it so a foreground sync that lands new
+   * scores re-reads them, rather than showing the pre-sync numbers until
+   * the next focus. A counter rather than a timestamp: it only ever needs
+   * to be DIFFERENT from last time.
+   */
+  biometricRefreshToken: number;
+  /**
    * Whether WHOOP is connected. Drives Today's LAYOUT (the scores column
    * beside the ring), not just its content, which is why it is seeded from
    * a local cache before any network read. `revoked` counts as false.
@@ -293,6 +301,8 @@ interface AppState {
   reset: () => void;
   fetchEntries: () => Promise<void>;
   fetchGoals: () => Promise<void>;
+  /** Tell the biometric surfaces a sync wrote something. */
+  bumpBiometricRefresh: () => void;
   /** Seed from cache, then reconcile against the connection row. */
   loadWhoopConnection: () => Promise<void>;
   /** Settings' connect/disconnect. Writes the store and the cache together. */
@@ -572,6 +582,7 @@ export const useStore = create<AppState>((set, get) => ({
   goals: DEFAULT_GOALS,
   goalsState: "loading",
   whoopConnected: false,
+  biometricRefreshToken: 0,
   loading: false,
   viewedDate: todayKey(),
   incomingRequestCount: 0,
@@ -599,6 +610,7 @@ export const useStore = create<AppState>((set, get) => ({
       goals: DEFAULT_GOALS,
       goalsState: "loading",
       whoopConnected: false,
+      biometricRefreshToken: 0,
       loading: false,
       viewedDate: todayKey(),
       incomingRequestCount: 0,
@@ -698,6 +710,9 @@ export const useStore = create<AppState>((set, get) => ({
    * launch, which is the jump this whole mechanism exists to prevent.
    * Only a SUCCESSFUL read is allowed to change the layout.
    */
+  bumpBiometricRefresh: () =>
+    set((s) => ({ biometricRefreshToken: s.biometricRefreshToken + 1 })),
+
   loadWhoopConnection: async () => {
     const { userId } = get();
     if (!userId) return;

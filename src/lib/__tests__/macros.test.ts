@@ -4,6 +4,7 @@ import {
   computeServingTotals,
   hasUsableNutrition,
   missingMacros,
+  hasNoNutritionData,
   needsManualEntry,
   canSubmitProduct,
   numOrNull,
@@ -459,6 +460,93 @@ describe("PL-028: needsManualEntry also fires on a partial product", () => {
         fat_per100: 0,
         source: "custom",
       }),
+    ).toBe(false);
+  });
+});
+
+// ============================================================
+// PL-028 item 3 — bundle items with no nutrition data at all.
+//
+// A bundle FREEZES its items at creation, which is the point of a bundle.
+// So a bundle built in July from an OFF product with no nutrition still
+// writes those zeros today, long after the barcode path was fixed — that
+// is how the 14 Sep chia rows were created.
+//
+// The hard part is Salt. Two production bundle items are "Salt, 6 g" with
+// calories/protein/carbs/fat all 0 and salt = 5.895 — a CORRECT all-zero
+// big four. Prompting on those would be wrong and would train people to
+// dismiss the prompt.
+// ============================================================
+
+describe("PL-028: hasNoNutritionData distinguishes 'unknown' from 'genuinely zero'", () => {
+  const zeroBigFour = {
+    calories: 0,
+    protein: 0,
+    carbs: 0,
+    fat: 0,
+  };
+
+  it("flags an item that asserts no positive nutrient anywhere", () => {
+    // Brown onions (20699321): big four 0, small four all NULL. OFF has
+    // 0 of 8 keys for it. Nothing is known about this food.
+    expect(
+      hasNoNutritionData({
+        ...zeroBigFour,
+        sat_fat: null,
+        salt: null,
+        fibre: null,
+        sugar: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("flags a pre-PL-002 item whose unknowns were coerced to 0", () => {
+    // Chia in "Ultimate Yogurt Breakfast", frozen 15 Jul: every one of the
+    // eight stored as 0, because the coercion predated the NULL fix.
+    expect(
+      hasNoNutritionData({
+        ...zeroBigFour,
+        sat_fat: 0,
+        salt: 0,
+        fibre: 0,
+        sugar: 0,
+      }),
+    ).toBe(true);
+  });
+
+  it("does NOT flag Salt, which is genuinely 0 kcal and asserts its salt", () => {
+    // The production case that rules out a blanket all-zero rule.
+    expect(
+      hasNoNutritionData({
+        ...zeroBigFour,
+        sat_fat: 0,
+        salt: 5.895,
+        fibre: 0,
+        sugar: 0,
+      }),
+    ).toBe(false);
+  });
+
+  it("does NOT flag anything with a real big-four value", () => {
+    expect(
+      hasNoNutritionData({
+        calories: 42.7,
+        protein: 2.19,
+        carbs: 0.69,
+        fat: 2.86,
+        sat_fat: null,
+        salt: null,
+        fibre: null,
+        sugar: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("does NOT flag a food known to be pure fibre or pure sugar", () => {
+    // Psyllium husk, or a glucose tablet: big four may read 0 on a poor
+    // label, but the item still asserts something positive about itself.
+    expect(
+      hasNoNutritionData({ ...zeroBigFour, sat_fat: null, salt: null, fibre: 8, sugar: null }),
     ).toBe(false);
   });
 });

@@ -31,6 +31,7 @@ import { useStore, todayKey } from "../store/useStore";
 import {
   WhoopScoresPanel,
 } from "../components/WhoopScoresPanel";
+import { hasNoNutritionData } from "../lib/macros";
 import {
   getWhoopScoresForDate,
   WhoopScores,
@@ -551,6 +552,36 @@ export function TodayScreen() {
           // review draft and hands off to BundleApplyReviewScreen for
           // per-item quantity adjustment before anything is inserted.
           setSheet(null);
+
+          // PL-028: a bundle FREEZES its items, so one built from a product
+          // Open Food Facts knew nothing about still writes those zeros
+          // today — long after the barcode path was fixed. That is exactly
+          // how the 14 Sep chia rows were created. Say so before applying
+          // rather than silently logging a food as 0 kcal.
+          const blank = bundle.items.filter(hasNoNutritionData);
+          if (blank.length > 0) {
+            const names = blank.map((i) => i.name).join(", ");
+            Alert.alert(
+              "No nutrition data",
+              `${names} ${blank.length === 1 ? "has" : "have"} no nutrition ` +
+                `information saved. Applying this bundle would log ` +
+                `${blank.length === 1 ? "it" : "them"} as zero. Edit the ` +
+                `bundle to add real values, or apply anyway and correct ` +
+                `${blank.length === 1 ? "it" : "them"} afterwards.`,
+              [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Apply anyway",
+                  onPress: () => {
+                    startCompositionApplyDraft(bundle, viewedDate, anchor);
+                    navigation.navigate("BundleApplyReview");
+                  },
+                },
+              ],
+            );
+            return;
+          }
+
           startCompositionApplyDraft(bundle, viewedDate, anchor);
           navigation.navigate("BundleApplyReview");
         }}

@@ -127,6 +127,52 @@ export function missingMacros(
 }
 
 /**
+ * PL-028. Does this stored row assert NOTHING positive about the food?
+ *
+ * For a BUNDLE ITEM, which freezes its values at creation, this is the
+ * question that matters on apply: a bundle built in July from a product
+ * OFF knew nothing about still writes those zeros today, long after the
+ * barcode path was fixed. That is exactly how the 14 Sep chia rows were
+ * created.
+ *
+ * THE HARD CASE IS SALT, and it is why this is not "are the big four all
+ * zero?". Two production bundle items are "Salt, 6 g" with the big four
+ * genuinely 0 and `salt = 5.895` — a correct all-zero big four. Prompting
+ * on those would be wrong, and would teach people to dismiss the prompt.
+ *
+ * So the test is: across all eight nutrients, is there any positive value
+ * at all? A food that asserts 5.895 g of salt is telling us something. A
+ * row of zeros and nulls is telling us nothing, whether the zeros came
+ * from OFF having no data or from the pre-PL-002 coercion of unknowns.
+ *
+ * Note this deliberately treats a stored 0 and a stored NULL alike here.
+ * Elsewhere that distinction is load-bearing and must be preserved; for
+ * "do we know anything about this food", both mean no.
+ */
+export function hasNoNutritionData(row: {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  sat_fat?: number | null;
+  salt?: number | null;
+  fibre?: number | null;
+  sugar?: number | null;
+}): boolean {
+  const values = [
+    row.calories,
+    row.protein,
+    row.carbs,
+    row.fat,
+    row.sat_fat,
+    row.salt,
+    row.fibre,
+    row.sugar,
+  ];
+  return !values.some((v) => v != null && v > 0);
+}
+
+/**
  * "No usable nutrition" detector (Phase 2). Energy + the big three
  * (protein/carbs/fat) are the only fields that can never legitimately be
  * zero ACROSS ALL FOUR AT ONCE for a real food — sat-fat/salt/fibre/sugar

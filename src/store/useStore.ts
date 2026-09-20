@@ -636,6 +636,20 @@ export const useStore = create<AppState>((set, get) => ({
     set({ workouts });
   },
 
+  /**
+   * PL-017: a user with no `goals` row is the NORMAL state of a new account,
+   * not a failure. Nothing in sign-up writes one (P-TF01b: there is no
+   * onboarding), so the row appears only when targets are set in Settings —
+   * and this runs on every auth event (App.tsx), so `.single()`'s PGRST116
+   * filed a Sentry error on every launch for those users and buried real
+   * failures in the `operation:fetchGoals` signal.
+   *
+   * `.maybeSingle()` returns `{ data: null, error: null }` for zero rows, so
+   * "no targets set" and "the query failed" are finally distinguishable.
+   * No PGRST116 code check belongs alongside it: with maybeSingle this query
+   * can no longer produce that code, and a check for it would be dead code
+   * that swallows a real error if the query shape ever changes.
+   */
   fetchGoals: async () => {
     const { userId } = get();
     if (!userId) return;
@@ -643,21 +657,35 @@ export const useStore = create<AppState>((set, get) => ({
       .from("goals")
       .select("*")
       .eq("user_id", userId)
-      .single();
-    if (error) reportError("fetchGoals", error, { level: "error" });
-    if (data)
-      set({
-        goals: {
-          calories: data.calories,
-          protein: data.protein,
-          carbs: data.carbs,
-          fat: data.fat,
-          satFat: data.sat_fat ?? 20,
-          salt: data.salt,
-          fibre: data.fibre,
-          sugar: data.sugar,
-        },
-      });
+      .maybeSingle();
+
+    if (error) {
+      // A genuine failure. Keep whatever goals are already loaded rather
+      // than pretending the user has none.
+      reportError("fetchGoals", error, { level: "error" });
+      return;
+    }
+
+    if (!data) {
+      // No targets set. Explicit rather than a fall-through, so a row
+      // deleted under a signed-in user drops back to the defaults instead
+      // of leaving stale targets on screen.
+      set({ goals: DEFAULT_GOALS });
+      return;
+    }
+
+    set({
+      goals: {
+        calories: data.calories,
+        protein: data.protein,
+        carbs: data.carbs,
+        fat: data.fat,
+        satFat: data.sat_fat ?? DEFAULT_GOALS.satFat,
+        salt: data.salt,
+        fibre: data.fibre,
+        sugar: data.sugar,
+      },
+    });
   },
 
   /**

@@ -48,6 +48,11 @@ import {
   REDIRECT_URI as WHOOP_CALLBACK_PREFIX,
 } from "./src/lib/whoop";
 import { syncHealthConnect } from "./src/lib/healthConnectSync";
+import {
+  refetchIfSyncWroteData,
+  whoopSyncWroteData,
+  healthConnectSyncWroteData,
+} from "./src/lib/syncRefetch";
 import { reportError } from "./src/lib/reportError";
 
 function ErrorFallback({ onReset }: { onReset: () => void }) {
@@ -310,33 +315,45 @@ function App() {
   // A failure here is silent BY DESIGN. Settings owns the visible sync state.
   // An error banner on the Today screen because a background poll timed out is
   // the app complaining to someone who never asked it to do anything.
+  //
+  // PL-018: each sync is now also watched, so whatever it writes is re-read
+  // rather than sitting in the database until the next focus or pull-to-
+  // refresh. Still fire-and-forget — runSyncs() returns immediately and the
+  // watchers resolve on their own. See src/lib/syncRefetch.ts for which
+  // outcomes count as "wrote something" (a throttled WHOOP call and an
+  // empty Health Connect pass both skip the refetch) and for why only
+  // workouts are re-read: no sync can touch meal_entries.
   useEffect(() => {
     if (!session) return;
 
-    syncWhoop().catch((e) =>
-      reportError("whoopBackgroundSync", e, {
-        fingerprint: ["whoop-background-sync"],
-      }),
-    );
-    syncHealthConnect().catch((e) =>
-      reportError("healthConnectSync:foreground", e, {
-        fingerprint: ["health-connect-foreground-sync"],
-      }),
-    );
+    const runSyncs = () => {
+      const whoop = syncWhoop();
+      whoop.catch((e) =>
+        reportError("whoopBackgroundSync", e, {
+          fingerprint: ["whoop-background-sync"],
+        }),
+      );
+      void refetchIfSyncWroteData(whoop, whoopSyncWroteData, {
+        refetch: () => useStore.getState().fetchWorkouts(),
+        report: reportError,
+      });
+
+      const healthConnect = syncHealthConnect();
+      healthConnect.catch((e) =>
+        reportError("healthConnectSync:foreground", e, {
+          fingerprint: ["health-connect-foreground-sync"],
+        }),
+      );
+      void refetchIfSyncWroteData(healthConnect, healthConnectSyncWroteData, {
+        refetch: () => useStore.getState().fetchWorkouts(),
+        report: reportError,
+      });
+    };
+
+    runSyncs();
 
     const sub = AppState.addEventListener("change", (next) => {
-      if (next === "active") {
-        syncWhoop().catch((e) =>
-          reportError("whoopBackgroundSync", e, {
-            fingerprint: ["whoop-background-sync"],
-          }),
-        );
-        syncHealthConnect().catch((e) =>
-          reportError("healthConnectSync:foreground", e, {
-            fingerprint: ["health-connect-foreground-sync"],
-          }),
-        );
-      }
+      if (next === "active") runSyncs();
     });
     return () => sub.remove();
   }, [session]);

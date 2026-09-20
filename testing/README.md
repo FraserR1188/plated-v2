@@ -68,7 +68,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | PL-011 | Major | meal_entries big four can't represent unknown | Deferred | 2026-09-19-internal | Riskier schema change; separate decision |
 | P-TF01b | Major | Never asked for calorie or macro targets | Logged | 2026-08-25-ian | No onboarding; new accounts run on DEFAULT_GOALS (2000 kcal) until set in Settings. No fix found |
 | P-TF02a | Major | Food search kept erroring; worked after numerous retries | Logged | 2026-08-25-ian | Probable fix, unconfirmed: e958f4d (OFF User-Agent + timeout), Android v8+ and iOS build 3. Symptom not tied to it |
-| PL-018 | Major | Today/workouts don't refetch when a foreground sync resolves | Logged | 2026-09-20-internal | App.tsx:313-342 fire-and-forget; Today reads before the sync lands |
+| PL-018 | Major | Today/workouts don't refetch when a foreground sync resolves | In progress | 2026-09-20-internal | syncRefetch.ts watches each sync; refetches only when it wrote. Awaiting device pass |
 | PL-010 | Minor | buildEditPatch snaps edits to the rounding grid | Deferred | 2026-09-19-internal | Bounded drift, not urgent |
 | PL-014 | Minor | Copy-a-day failures double-report to Sentry | Logged | 2026-09-19-internal | Audit applyEntries callers |
 | PL-012 | Minor | Tesco Gold Coffee library row saved all-zero | Deferred | 2026-09-19-internal | Check the OFF source first |

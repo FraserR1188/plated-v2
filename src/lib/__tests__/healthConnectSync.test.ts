@@ -89,6 +89,9 @@ import {
   ensureHealthConnectInitialized,
 } from "../healthConnect";
 import { syncHealthConnect } from "../healthConnectSync";
+// Mocked globally in vitest.setup.ts. Only the deletion test below reaches
+// postBatch, so only it needs invoke to answer like the real function.
+import { supabase } from "../supabase";
 
 const EMPTY_GRANTS = {
   sleep: false,
@@ -119,7 +122,7 @@ describe("syncHealthConnect — grant-state result handling", () => {
 
     const result = await syncHealthConnect();
 
-    expect(result).toEqual({ ok: false, counts: {}, errors: {} });
+    expect(result).toEqual({ ok: false, counts: {}, deletions: {}, errors: {} });
     expect(readRecords).not.toHaveBeenCalled();
     expect(getChanges).not.toHaveBeenCalled();
   });
@@ -186,8 +189,46 @@ describe("syncHealthConnect — distinguishing outcomes (the 'Nothing new.' mask
     expect(result).toEqual({
       ok: true,
       counts: { sleep: 0, hrv: 0 },
+      // Nothing moved in either direction — PL-018's refetch reads this
+      // alongside counts, and both being empty is what "nothing happened"
+      // has to look like.
+      deletions: {},
       errors: {},
     });
+  });
+
+  // PL-018. A workout deleted in another app reaches us as a deletion with
+  // ZERO upserts. Counted only in `counts`, that pass is indistinguishable
+  // from "nothing happened", so Today never re-reads and keeps rendering a
+  // workout the database no longer has.
+  it("a deletion-only pass records the deletion, and does not look like an empty sync", async () => {
+    vi.mocked(getHealthConnectGrantState).mockResolvedValue({
+      status: "ok",
+      grants: { ...EMPTY_GRANTS, workouts: true },
+    });
+    vi.mocked(AsyncStorage.getItem).mockResolvedValue(
+      JSON.stringify({
+        token: "tok0",
+        baselineWindowDays: 180,
+        baselineAt: "2026-09-01T00:00:00.000Z",
+      }),
+    );
+    vi.mocked(getChanges).mockResolvedValue({
+      upsertionChanges: [],
+      deletionChanges: [{ recordId: "gone-1" }, { recordId: "gone-2" }],
+      nextChangesToken: "tok1",
+      hasMore: false,
+      changesTokenExpired: false,
+    } as never);
+    vi.mocked(supabase.functions.invoke).mockResolvedValue({
+      data: { ok: true },
+      error: null,
+    } as never);
+
+    const result = await syncHealthConnect();
+
+    expect(result.counts).toEqual({ workouts: 0 });
+    expect(result.deletions).toEqual({ workouts: 2 });
   });
 
   it("every attempted domain failed: ok:false, counts stays EMPTY (nothing succeeded) — must not collapse to the same shape as 'nothing to fetch'", async () => {

@@ -182,9 +182,23 @@ export type HealthConnectSyncResult = {
   ok: boolean;
   /** Records upserted per domain that was attempted. Domains with no grant are simply absent. */
   counts: Partial<Record<SyncableDomain, number>>;
+  /**
+   * Records DELETED per domain, kept separate from `counts` rather than
+   * folded into it: `counts` is what Settings reports as "N records
+   * synced", and a deletion is not a record synced. It is still a change
+   * to what Today should be showing, though — a workout deleted in another
+   * app propagates here with zero upserts — so PL-018's refetch decision
+   * (src/lib/syncRefetch.ts) reads both. Without this, a deletion-only
+   * pass looks identical to "nothing happened" and Today keeps rendering a
+   * workout the database no longer has.
+   */
+  deletions: Partial<Record<SyncableDomain, number>>;
   /** Domains that were granted but failed this pass. Others still ran. */
   errors: Partial<Record<SyncableDomain, string>>;
 };
+
+/** What one record type's pass moved, in each direction. */
+type RecordTypeSyncCounts = { upserts: number; deletions: number };
 
 function tokenStorageKey(recordType: string): string {
   return `health_connect_changes_token:${recordType}`;
@@ -514,7 +528,9 @@ async function bootstrapToken(
   });
 }
 
-async function syncRecordType(recordType: RecordType): Promise<number> {
+async function syncRecordType(
+  recordType: RecordType,
+): Promise<RecordTypeSyncCounts> {
   // Belt-and-braces: syncHealthConnect() below already calls this
   // transitively (via getHealthConnectGrantState()) before ever reaching
   // this function, but readRecords()/getChanges() have the exact same
@@ -529,10 +545,13 @@ async function syncRecordType(recordType: RecordType): Promise<number> {
   if (!stored) {
     const { total, windowDays } = await pullWidestAvailable(recordType);
     await bootstrapToken(recordType, windowDays);
-    return total;
+    // A first-ever pull is a date-range read, which cannot surface
+    // deletions at all — there is nothing yet to have been deleted from.
+    return { upserts: total, deletions: 0 };
   }
 
   let total = 0;
+  let deletions = 0;
   let baselineWindowDays = stored.baselineWindowDays;
   let baselineAt = stored.baselineAt;
 
@@ -575,7 +594,7 @@ async function syncRecordType(recordType: RecordType): Promise<number> {
       const { total: repullTotal, windowDays } = await pullWidestAvailable(recordType);
       total += repullTotal;
       await bootstrapToken(recordType, windowDays);
-      return total;
+      return { upserts: total, deletions };
     }
 
     const upserts = result.upsertionChanges.map((c) => c.record);
@@ -584,6 +603,7 @@ async function syncRecordType(recordType: RecordType): Promise<number> {
     if (upserts.length > 0 || deletedRecordIds.length > 0) {
       await postBatch(recordType, upserts, deletedRecordIds);
       total += upserts.length;
+      deletions += deletedRecordIds.length;
     }
 
     // Advanced ONLY after a successful post — see postBatch's doc comment.
@@ -600,7 +620,7 @@ async function syncRecordType(recordType: RecordType): Promise<number> {
     if (!result.hasMore) break;
   }
 
-  return total;
+  return { upserts: total, deletions };
 }
 
 /**
@@ -622,7 +642,12 @@ async function runSyncHealthConnect(): Promise<HealthConnectSyncResult> {
   // There is nothing trustworthy to sync against, so stop here rather than
   // treating the error as "every domain denied."
   if (grantResult.status === "error") {
-    const result: HealthConnectSyncResult = { ok: false, counts: {}, errors: {} };
+    const result: HealthConnectSyncResult = {
+      ok: false,
+      counts: {},
+      deletions: {},
+      errors: {},
+    };
     devLog("healthConnectSync:result", {
       ...result,
       stoppedBeforeAnyDomain: true,
@@ -633,6 +658,7 @@ async function runSyncHealthConnect(): Promise<HealthConnectSyncResult> {
   const grants = grantResult.grants;
 
   const counts: Partial<Record<SyncableDomain, number>> = {};
+  const deletions: Partial<Record<SyncableDomain, number>> = {};
   const errors: Partial<Record<SyncableDomain, string>> = {};
 
   for (const domain of SYNCABLE_DOMAINS) {
@@ -640,7 +666,13 @@ async function runSyncHealthConnect(): Promise<HealthConnectSyncResult> {
 
     const recordType = DOMAIN_RECORD_TYPE[domain] as RecordType;
     try {
-      counts[domain] = await syncRecordType(recordType);
+      const moved = await syncRecordType(recordType);
+      counts[domain] = moved.upserts;
+      // Only recorded when non-zero: an attempted domain is already
+      // distinguishable by its presence in `counts`, and a { sleep: 0 }
+      // here would say "we checked for deletions" where the existing
+      // convention is that absence means the domain wasn't attempted.
+      if (moved.deletions > 0) deletions[domain] = moved.deletions;
     } catch (e) {
       reportError(`healthConnectSync:${domain}`, e);
       errors[domain] = e instanceof Error ? e.message : "Sync failed.";
@@ -650,6 +682,7 @@ async function runSyncHealthConnect(): Promise<HealthConnectSyncResult> {
   const result: HealthConnectSyncResult = {
     ok: Object.keys(errors).length === 0,
     counts,
+    deletions,
     errors,
   };
   devLog("healthConnectSync:result", result);

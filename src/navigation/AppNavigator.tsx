@@ -1,5 +1,5 @@
 // ============================================================
-// src/navigation/AppNavigator.tsx — updated for social feature
+// src/navigation/AppNavigator.tsx
 // ============================================================
 //
 // Structure:
@@ -7,18 +7,27 @@
 //   └── MainTabs (bottom tab bar)
 //       ├── Today    → TodayScreen
 //       ├── History  → HistoryScreen
-//       ├── Friends  → FriendsScreen        ← NEW
+//       ├── Friends  → FriendsScreen
 //       └── Settings → SettingsScreen
+//   ├── Batches        (push, native header)  ← was a 5th tab; opened from
+//   │                                            Today's header instead
 //   ├── AddIngredient  (modal)
 //   ├── Scanner        (full-screen modal)
 //   ├── Product        (modal)
-//   ├── ConnectedUserLog  (push)             ← NEW
-//   ├── CopyConfirm       (push)             ← NEW
-//   └── BundleApplyReview (push)             ← NEW (apply-time quantity review)
+//   ├── BatchEditor / BatchIngredientPicker / RecipeScan / RecipeConfirm (modals)
+//   ├── ConnectedUserLog  (push)
+//   ├── CopyConfirm       (push)
+//   └── BundleApplyReview (push — apply-time quantity review)
+//
+// Batches sits on the ROOT stack, not inside a tab: every editor it opens
+// is already a sibling here, so pushing it changed no other route's
+// behaviour (BatchEditor's goBack, RecipeConfirm's pop(2), the picker's
+// Scanner round-trip all stay relative, and no popToTop is reachable from
+// that flow).
 // ============================================================
 
 import React, { useRef } from "react";
-import { Text } from "react-native";
+import { Pressable, StyleSheet, Text } from "react-native";
 import {
   NavigationContainer,
   useNavigationContainerRef,
@@ -43,7 +52,7 @@ import { RecipeConfirmScreen } from "../screens/RecipeConfirmScreen";
 import { ConnectedUserLogScreen } from "../screens/ConnectedUserLogScreen";
 import { CopyConfirmScreen } from "../screens/CopyConfirmScreen";
 import { TabBar } from "../components/TabBar";
-import { Colors, Fonts, NavTheme } from "../theme/tokens";
+import { Colors, Fonts, NavTheme, Typography } from "../theme/tokens";
 import { RootStackParamList, BottomTabParamList } from "../types";
 import { CreateFoodScreen } from "../screens/CreateFoodScreen";
 import { AboutScreen } from "../screens/AboutScreen";
@@ -52,46 +61,26 @@ import { DeleteAccountScreen } from "../screens/DeleteAccountScreen";
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<BottomTabParamList>();
 
-// ─── Tab icons ───────────────────────────────────────────────
-//
-// ⚠ THIS MAP DOESN'T ACTUALLY RENDER ANYTHING. MainTabs uses a fully custom
-// `tabBar` prop (TabBar, below), and TabBar.tsx keys its OWN icon lookup off
-// the route LABEL, never reading `options.tabBarIcon` from here. This map
-// (and TabIcon below) only exists to satisfy React Navigation's typed
-// `tabBarIcon` option — pre-existing before Batches, not introduced by it.
-// The icon that actually shows up is TabBar.tsx's TAB_ICONS. Kept both in
-// sync below so this doesn't quietly rot further, but if you're trying to
-// change what's on screen, that file is the one to edit.
-
-const TAB_ICONS: Record<keyof BottomTabParamList, string> = {
-  Today: "○", // replace with your SVG icon components
-  History: "◫",
-  Friends: "◎", // ← people / friends icon
-  Batches: "⊞",
-  Settings: "⊙",
-};
-
-function TabIcon({
-  name,
-  focused,
-}: {
-  name: keyof BottomTabParamList;
-  focused: boolean;
-}) {
-  return (
-    <Text
-      style={{
-        fontSize: 22,
-        opacity: focused ? 1 : 0.45,
-        color: focused ? Colors.green : Colors.text,
-      }}
-    >
-      {TAB_ICONS[name]}
-    </Text>
-  );
-}
+// Header actions rendered into the native header — tokens only, matching
+// the screen-drawn headers elsewhere (BatchEditor, CreateFood).
+const headerStyles = StyleSheet.create({
+  action: {
+    fontSize: Typography.sm,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
+    color: Colors.green,
+  },
+});
 
 // ─── Bottom tabs ─────────────────────────────────────────────
+//
+// No tabBarIcon options here. MainTabs uses a fully custom `tabBar` prop
+// (TabBar, below), which keys its own icon map off the ROUTE NAME and
+// never reads options.tabBarIcon — so the pair of TAB_ICONS/TabIcon that
+// used to sit here rendered nothing at all, existed only to satisfy the
+// typed option, and had already drifted from the icons actually on screen.
+// TabBar.tsx is the one place an icon is now declared, and its map is
+// typed to BottomTabParamList so a tab without one won't compile.
 
 function MainTabs() {
   return (
@@ -102,52 +91,22 @@ function MainTabs() {
       <Tab.Screen
         name="Today"
         component={TodayScreen}
-        options={{
-          tabBarIcon: ({ focused }) => (
-            <TabIcon name="Today" focused={focused} />
-          ),
-          tabBarLabel: "Today",
-        }}
+        options={{ tabBarLabel: "Today" }}
       />
       <Tab.Screen
         name="History"
         component={HistoryScreen}
-        options={{
-          tabBarIcon: ({ focused }) => (
-            <TabIcon name="History" focused={focused} />
-          ),
-          tabBarLabel: "History",
-        }}
+        options={{ tabBarLabel: "History" }}
       />
       <Tab.Screen
         name="Friends"
         component={FriendsScreen}
-        options={{
-          tabBarIcon: ({ focused }) => (
-            <TabIcon name="Friends" focused={focused} />
-          ),
-          tabBarLabel: "Friends",
-        }}
-      />
-      <Tab.Screen
-        name="Batches"
-        component={BatchesScreen}
-        options={{
-          tabBarIcon: ({ focused }) => (
-            <TabIcon name="Batches" focused={focused} />
-          ),
-          tabBarLabel: "Batches",
-        }}
+        options={{ tabBarLabel: "Friends" }}
       />
       <Tab.Screen
         name="Settings"
         component={SettingsScreen}
-        options={{
-          tabBarIcon: ({ focused }) => (
-            <TabIcon name="Settings" focused={focused} />
-          ),
-          tabBarLabel: "Settings",
-        }}
+        options={{ tabBarLabel: "Settings" }}
       />
     </Tab.Navigator>
   );
@@ -232,7 +191,28 @@ export function AppNavigator() {
           }}
         />
 
-        {/* Batches */}
+        {/* Batches — a pushed screen since the tab was retired, with the
+            native header rather than one of its own: it is now reached
+            from Today, so it needs the platform back affordance, and
+            "+ New" is the one action its old in-screen header carried. */}
+        <Stack.Screen
+          name="Batches"
+          component={BatchesScreen}
+          options={({ navigation }) => ({
+            title: "Batches",
+            headerRight: () => (
+              <Pressable
+                onPress={() => navigation.navigate("BatchEditor", {})}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="New batch"
+                style={({ pressed }) => pressed && { opacity: 0.7 }}
+              >
+                <Text style={headerStyles.action}>＋ New</Text>
+              </Pressable>
+            ),
+          })}
+        />
         <Stack.Screen
           name="BatchEditor"
           component={BatchEditorScreen}

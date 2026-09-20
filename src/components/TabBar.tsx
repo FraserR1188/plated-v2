@@ -4,10 +4,13 @@
 // Custom bottom tab bar — green pill active indicator,
 // dark surface background, safe-area aware.
 // No hardcoded tab count — each tabItem is flex:1, so it divides evenly at
-// 3, 4, or (as of Batches) 5 tabs. At 5, each tab's share shrinks by about a
-// fifth versus 4 — labels use numberOfLines/adjustsFontSizeToFit as a
-// defensive floor, but the actual fit on a real device hasn't been screen-
-// checked from here (no device access in this environment) — eyeball it.
+// 3, 4 or 5 tabs. Batches left the bar when it became a pushed screen off
+// Today's header; the slot it freed is what Insights now occupies, so the
+// count is unchanged at 5. At 5 and 360dp each tab gets ~70dp, of which
+// ~42dp is label room after the pill's padding — the widest label in use
+// ("Settings") measures ~41dp, so labels fit without shrinking, and
+// numberOfLines/adjustsFontSizeToFit remain as the defensive floor for a
+// larger system font scale.
 // ============================================================
 
 import React, { useEffect, useRef } from "react";
@@ -31,14 +34,23 @@ import {
   Overlay,
 } from "../theme/tokens";
 import { useStore } from "../store/useStore";
+import { BottomTabParamList } from "../types";
 
 // Tab icon map — emoji/unicode placeholders.
 // Swap these for your SVG icon components if you have them.
-const TAB_ICONS: Record<string, { default: string; active: string }> = {
+//
+// Keyed by ROUTE NAME and typed to BottomTabParamList, not Record<string>
+// and not the tab's label: a label is a display string that nothing stops
+// drifting from the route, and under Record<string> a tab with no entry
+// here compiled cleanly and silently rendered the "·" placeholder below.
+// Adding a tab without an icon is now a compile error at this literal.
+const TAB_ICONS: Record<
+  keyof BottomTabParamList,
+  { default: string; active: string }
+> = {
   Today: { default: "⊕", active: "⊕" },
   History: { default: "◫", active: "◫" },
   Friends: { default: "◎", active: "◎" },
-  Batches: { default: "⊞", active: "⊞" },
   Settings: { default: "⊙", active: "⊙" },
 };
 
@@ -55,6 +67,8 @@ const SOCIAL_ENABLED = true;
 
 interface TabItemProps {
   label: string;
+  /** Resolved by the caller from the route name — see TAB_ICONS. */
+  icons: { default: string; active: string };
   focused: boolean;
   /** Unread count overlay on the icon. Omitted or 0 renders no badge — never a "0". */
   badgeCount?: number;
@@ -64,13 +78,13 @@ interface TabItemProps {
 
 function TabItem({
   label,
+  icons,
   focused,
   badgeCount,
   onPress,
   onLongPress,
 }: TabItemProps) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  const icons = TAB_ICONS[label] ?? { default: "·", active: "·" };
 
   // Subtle pop on focus
   useEffect(() => {
@@ -201,10 +215,19 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
             });
           };
 
+          // Unreachable by typing — TAB_ICONS covers every
+          // BottomTabParamList key — but a tab bar that throws is a worse
+          // failure than one placeholder glyph, so the fallback stays.
+          const icons = TAB_ICONS[route.name as keyof BottomTabParamList] ?? {
+            default: "·",
+            active: "·",
+          };
+
           return (
             <TabItem
               key={route.key}
               label={label}
+              icons={icons}
               focused={focused}
               badgeCount={
                 route.name === "Friends" ? incomingRequestCount : undefined

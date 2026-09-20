@@ -629,6 +629,13 @@ export interface Workout {
 export type RootStackParamList = {
   MainTabs: undefined;
   /**
+   * Was a fifth bottom tab; now pushed from Today's header, so the tab bar
+   * keeps room for Insights. No params: the list is the whole screen, and
+   * every editor it opens (BatchEditor, and RecipeScan/RecipeConfirm under
+   * that) is already a sibling on this stack rather than nested inside it.
+   */
+  Batches: undefined;
+  /**
    * Time-first add (D-today-stream): the caller has already picked WHEN, via
    * a single time picker on Today, not WHICH SECTION. meal_type no longer
    * arrives here — AddIngredientScreen derives its own default from
@@ -768,11 +775,16 @@ export type RootStackParamList = {
   };
 };
 
+/**
+ * The bottom tabs, in the order they appear. TabBar's icon map is typed
+ * against this (Record<keyof BottomTabParamList, ...>), so adding a tab
+ * here without giving it an icon is a compile error rather than a route
+ * that silently renders the "·" placeholder.
+ */
 export type BottomTabParamList = {
   Today: undefined;
   History: undefined;
   Friends: undefined;
-  Batches: undefined;
   Settings: undefined;
 };
 

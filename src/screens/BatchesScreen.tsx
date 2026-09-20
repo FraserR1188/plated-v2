@@ -27,6 +27,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { DateTimeField } from "../components/DateTimeField";
 import { useStore } from "../store/useStore";
 import { batchPortionCalories } from "../lib/compositions";
+import { batchLogAlert } from "../lib/batchLogMessage";
 import {
   dateKey,
   formatDayLabel,
@@ -91,18 +92,13 @@ export function BatchesScreen() {
       return;
     }
     // Native Alert as the confirmation — same "toast-style feedback" pattern
-    // CopyConfirmScreen already uses, not a custom toast component. Wording
-    // reflects what the trigger will actually decide (willBePlanned mirrors
-    // it — see draftsFromBatch), not just "logged" regardless of the time.
-    if (willBePlanned(chosenAt.toISOString())) {
-      Alert.alert(
-        "Planned",
-        `${batch.name} planned for ${formatTime(chosenAt.toISOString())}, ` +
-          `${formatDayLabel(dateKey(chosenAt)).toLowerCase()}.`,
-      );
-    } else {
-      Alert.alert("Logged", `${batch.name} added to today's log.`);
-    }
+    // CopyConfirmScreen already uses, not a custom toast component. The
+    // wording comes from batchLogAlert (PL-020): it mirrors what the
+    // trigger will decide via willBePlanned, AND names the day actually
+    // logged to. This used to say "today's log" for any non-future pick,
+    // so logging yesterday's dinner reported the wrong day.
+    const { title, body } = batchLogAlert(batch.name, chosenAt);
+    Alert.alert(title, body);
   };
 
   const handleDelete = (batch: MealCompositionWithItems) => {
@@ -119,18 +115,11 @@ export function BatchesScreen() {
     ]);
   };
 
+  // edges: bottom only. The native stack header owns the top inset now
+  // that this is a pushed screen — keeping "top" here would inset twice
+  // and reproduce PL-013 at the other end of the screen.
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Batches</Text>
-        <Pressable
-          style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.8 }]}
-          onPress={() => navigation.navigate("BatchEditor", {})}
-        >
-          <Text style={styles.addBtnText}>＋ New</Text>
-        </Pressable>
-      </View>
-
+    <SafeAreaView style={styles.safe} edges={["bottom"]}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
@@ -403,33 +392,11 @@ const styles = StyleSheet.create(
       flex: 1,
       backgroundColor: Colors.bg,
     },
-    header: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      paddingHorizontal: Spacing.md,
-      paddingTop: Spacing.sm,
-      paddingBottom: Spacing.md,
-    },
-    headerTitle: {
-      fontSize: Typography.lg,
-      fontWeight: Typography.bold,
-      color: Colors.text,
-      letterSpacing: -0.3,
-    },
-    addBtn: {
-      backgroundColor: Colors.green,
-      borderRadius: Radius.pill,
-      paddingHorizontal: Spacing.md,
-      paddingVertical: 8,
-    },
-    addBtnText: {
-      fontSize: Typography.sm,
-      fontWeight: Typography.bold,
-      color: Colors.bg,
-    },
+    // The screen's own header row is gone: the native stack header draws
+    // the title and "+ New" (see AppNavigator's Batches screen options).
     scroll: {
       paddingHorizontal: Spacing.md,
+      paddingTop: Spacing.md,
     },
 
     list: {

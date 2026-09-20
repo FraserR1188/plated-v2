@@ -694,6 +694,11 @@ function DayPage({
     setShowAddPicker(true);
   };
 
+  // Batches is a root-stack push now, not a tab — reached from this
+  // header. Local rather than a prop, same as the AddIngredient push
+  // below: it needs nothing from TodayScreen's state.
+  const onOpenBatches = () => navigation.navigate("Batches");
+
   const onAddTimePicked = (picked: Date) => {
     setShowAddPicker(false);
     // The page's OWN date, not today — this is what makes "plan for 19:00
@@ -806,8 +811,37 @@ function DayPage({
           onLayout={(e) => setHeaderHeight(e.nativeEvent.layout.height)}
         >
           <View style={styles.headerText}>
-            <Text style={styles.eyebrow}>{pageHeader.eyebrow}</Text>
-            <Text style={styles.anchor}>{pageHeader.anchor}</Text>
+            {/* The top line is the greeting on today, and the way BACK to
+                today on any other day. Putting the return control here
+                rather than in the icon row keeps the row to three fixed
+                buttons and leaves the anchor its width — with it in the
+                row, "Wednesday" no longer fitted at 360dp (PL-021). */}
+            {isPageToday ? (
+              <Text style={styles.eyebrow}>{pageHeader.eyebrow}</Text>
+            ) : (
+              <Pressable
+                onPress={onReturnToToday}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Return to today"
+                style={({ pressed }) => [
+                  styles.returnLink,
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                <Text style={styles.returnLinkText}>‹ Today</Text>
+              </Pressable>
+            )}
+            {/* At 360dp the left block is 208dp: the longest anchor
+                ("Wednesday") needs 123 and the longest date line
+                ("Wednesday 30 September" plus the dot) 184, so both fit at
+                the default font scale with the date the tighter of the
+                two. These shrink rather than wrap once the system font
+                scale passes ~1.14, same defensive floor as the tab
+                labels. */}
+            <Text style={styles.anchor} numberOfLines={1} adjustsFontSizeToFit>
+              {pageHeader.anchor}
+            </Text>
             <View style={styles.dateRow}>
               <View
                 style={[
@@ -815,44 +849,62 @@ function DayPage({
                   isPageToday ? styles.statusDotLive : styles.statusDotMuted,
                 ]}
               />
-              <Text style={styles.date}>{dateStr}</Text>
+              <Text
+                style={styles.date}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
+              >
+                {dateStr}
+              </Text>
             </View>
           </View>
 
+          {/* Three fixed 36dp buttons, no text chips: at 360dp this row
+              plus its gaps is 120dp, which leaves the left block 208dp —
+              enough for the longest anchor and the longest date line.
+              Every button is icon-only, so each carries its own
+              accessibilityLabel. */}
           <View style={styles.nav}>
-            {!isPageToday && (
-              <Pressable
-                onPress={onReturnToToday}
-                style={({ pressed }) => [
-                  styles.returnChip,
-                  pressed && { opacity: 0.7 },
-                ]}
-              >
-                <Text style={styles.returnChipText}>Return to today</Text>
-              </Pressable>
-            )}
             {hasBundles && !selecting && (
               <Pressable
                 onPress={onOpenBundles}
                 hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Bundles"
                 style={({ pressed }) => [
-                  styles.bundleBtn,
+                  styles.navBtn,
                   pressed && { opacity: 0.7 },
                 ]}
               >
-                <Text style={styles.bundleBtnText}>Bundles</Text>
+                <Text style={styles.navBtnGlyph}>▤</Text>
               </Pressable>
             )}
+            <Pressable
+              onPress={onOpenBatches}
+              hitSlop={8}
+              disabled={selecting}
+              accessibilityRole="button"
+              accessibilityLabel="Batches"
+              style={({ pressed }) => [
+                styles.navBtn,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Text style={styles.navBtnGlyph}>⊞</Text>
+            </Pressable>
             <Pressable
               onPress={onOpenCalendarJump}
               hitSlop={8}
               disabled={selecting}
+              accessibilityRole="button"
+              accessibilityLabel="Jump to a date"
               style={({ pressed }) => [
-                styles.calendarBtn,
+                styles.navBtn,
                 pressed && { opacity: 0.7 },
               ]}
             >
-              <Text style={styles.calendarBtnText}>📅</Text>
+              <Text style={styles.navBtnGlyph}>📅</Text>
             </Pressable>
           </View>
         </View>
@@ -2830,7 +2882,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  calendarBtn: {
+  // One shape for all three header actions. 36dp square is the tap target
+  // floor; the glyphs sit at 16 so the emoji calendar and the two text
+  // glyphs read at the same weight.
+  navBtn: {
     width: 36,
     height: 36,
     alignItems: "center",
@@ -2840,34 +2895,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  calendarBtnText: {
+  navBtnGlyph: {
     fontSize: 16,
-  },
-  bundleBtn: {
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.pill,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    paddingHorizontal: 12,
-    height: 36,
-    justifyContent: "center",
-  },
-  bundleBtnText: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.bold,
-    fontFamily: Fonts.sans.bold,
     color: Colors.textSub,
   },
-  returnChip: {
-    backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.pill,
-    borderWidth: 1,
-    borderColor: `${Colors.green}40`,
-    paddingHorizontal: 12,
-    height: 36,
-    justifyContent: "center",
+  // Sits in the eyebrow's place on an off-today page, so it costs no
+  // height and takes nothing from the icon row.
+  returnLink: {
+    alignSelf: "flex-start",
+    marginBottom: 2,
   },
-  returnChipText: {
+  returnLinkText: {
     fontSize: Typography.xs,
     fontWeight: Typography.bold,
     fontFamily: Fonts.sans.bold,

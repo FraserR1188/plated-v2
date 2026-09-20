@@ -26,13 +26,21 @@ export type WhoopScores = {
   /** 0-21, one decimal place. */
   strain: number | null;
   /**
-   * The timestamp behind the strain caption ("as of 14:05").
+   * The timestamp behind the strain caption ("as of 14:05"): when WHOOP
+   * last CALCULATED this, not when plated last pulled it. Decision, 2026-09-20
+   * — WHOOP's own calculation time is the honest "as of" for a score; our
+   * pull time says nothing about the number's freshness. This supersedes
+   * the earlier "strain shows last-synced time" default.
    *
-   * NOTE: this is `source_updated_at` on the view, which resolves to
-   * WHOOP's own `whoop_updated_at` — when WHOOP last changed the record —
-   * NOT our `synced_at`, which is when we last wrote the row. The resolved
-   * view does not expose `synced_at` at all. See the open question in the
-   * PR 4 record; the formatter below is independent of which one feeds it.
+   * CAVEAT, measured: the view's `source_updated_at` is
+   * `greatest(cycle, recovery, sleep)` — a freshness signal across all
+   * three joined records, not the cycle's own timestamp. On production it
+   * differs from the cycle's in 2 of 172 rows (1.2%), by up to 17.6 hours.
+   * So this is "when this WHOOP frame last changed", which is not quite
+   * "when strain was calculated". See the open question in the PR 4 record.
+   *
+   * NULL for a Health-Connect-sourced period: that arm of the view selects
+   * `null::timestamptz` for this column.
    */
   asOf: string | null;
 };

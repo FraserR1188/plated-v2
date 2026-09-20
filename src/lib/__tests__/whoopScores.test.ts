@@ -234,7 +234,8 @@ describe("getWhoopScoresForDate — failure", () => {
 });
 
 describe("the strain caption's timestamp", () => {
-  it("comes from the row, not from the connection", async () => {
+  it("comes from the row, not from whoop_connections.last_sync_at", async () => {
+    // Decision 2026-09-20: WHOOP's own calculation time, not our pull time.
     mockView({
       data: [row({ source_updated_at: "2026-09-19T13:05:00.000Z" })],
       error: null,

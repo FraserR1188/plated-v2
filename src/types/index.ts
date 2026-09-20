@@ -40,9 +40,23 @@ export type EntrySource =
 
 // ─── Food & Logging ──────────────────────────────────────────
 
+/** PL-028: which of the big four OFF had no key for. Lives here rather than
+ *  in lib/macros.ts because FoodProduct references it and types/ must not
+ *  depend on lib/. */
+export type MissingMacro = "cal" | "protein" | "carbs" | "fat";
+
 export interface FoodProduct {
   name: string;
   brand: string;
+  /**
+   * PL-028. Which of the big four Open Food Facts had NO KEY for, as
+   * opposed to a key whose value is 0. The numbers below are still
+   * non-nullable (see the note there), so without this there is nothing to
+   * tell a fabricated zero from a measured one — and a product OFF only
+   * PARTLY describes looks completely plausible. Populated by parseProduct;
+   * absent means "not from OFF" or "nothing missing".
+   */
+  missing_macros?: MissingMacro[];
   cal_per100: number;
   protein_per100: number;
   carbs_per100: number;

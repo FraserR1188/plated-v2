@@ -47,6 +47,7 @@ import {
   MealType,
   MEAL_TYPES,
   MEAL_LABELS,
+  MissingMacro,
 } from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
 import { reportError } from "../lib/reportError";
@@ -189,13 +190,31 @@ function isMacroCellMissing(
   product: FoodProduct,
   bigFourMissing: boolean,
 ): boolean {
-  if (m.bigFour) return bigFourMissing;
+  if (m.bigFour) {
+    // PL-028: blank the cells OFF actually had no key for, individually.
+    // The MacroMeta keys for the big four are exactly the MissingMacro
+    // names, so no mapping table can drift between them.
+    if (product.missing_macros?.length) {
+      return product.missing_macros.includes(m.key as MissingMacro);
+    }
+    // No per-nutrient information (a non-OFF product, or a pre-PL-028
+    // draft): fall back to the all-four detector, which is what this did
+    // before and still covers the "OFF knows nothing" case.
+    return bigFourMissing;
+  }
   return m.raw ? m.raw(product) == null : false;
 }
 
 function initMacroText(product: FoodProduct): Record<MacroKey, string> {
   const out = {} as Record<MacroKey, string>;
-  for (const m of MACRO_META) out[m.key] = String(m.get(product));
+  for (const m of MACRO_META) {
+    // PL-028: a fabricated zero must never be PRE-FILLED. A blank cell asks
+    // for the value; "0" answers the question on the user's behalf, wrongly,
+    // and is the single keystroke-free path to logging a lie.
+    const missing =
+      m.bigFour && product.missing_macros?.includes(m.key as MissingMacro);
+    out[m.key] = missing ? "" : String(m.get(product));
+  }
   return out;
 }
 

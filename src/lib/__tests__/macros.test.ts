@@ -3,6 +3,7 @@ import {
   roundSalt,
   computeServingTotals,
   hasUsableNutrition,
+  missingMacros,
   needsManualEntry,
   canSubmitProduct,
   numOrNull,
@@ -351,5 +352,113 @@ describe("canSaveCustomFood (CreateFoodScreen's Save gate — string-layer prese
 
   it("refuses while a save is already in flight", () => {
     expect(canSaveCustomFood("Granola", makeMacros(), true)).toBe(false);
+  });
+});
+
+// ============================================================
+// PL-028 — per-nutrient key detection.
+//
+// hasUsableNutrition fires only when ALL FOUR of the big four are zero. It
+// caught the chia/cucumber/bar case (OFF returned nothing at all) once the
+// 2026-08-15 gate shipped, but it is blind to the partial case: OFF holding
+// calories, protein and fat but no carbohydrates key stores carbs = 0 and
+// sails straight through, because not all four are zero.
+//
+// That zero is the same lie, and it is harder to spot afterwards because
+// the row looks plausible.
+// ============================================================
+
+describe("PL-028: missingMacros carries WHICH big-four keys OFF lacked", () => {
+  it("reports nothing when all four keys are present, including real zeros", () => {
+    // Water: every key present, every value legitimately 0. Nothing missing.
+    expect(
+      missingMacros({
+        "energy-kcal_100g": 0,
+        proteins_100g: 0,
+        carbohydrates_100g: 0,
+        fat_100g: 0,
+      }),
+    ).toEqual([]);
+  });
+
+  it("reports the ONE key that is absent while the others are present", () => {
+    // The case hasUsableNutrition cannot see.
+    expect(
+      missingMacros({
+        "energy-kcal_100g": 365,
+        proteins_100g: 23,
+        fat_100g: 11,
+      }),
+    ).toEqual(["carbs"]);
+  });
+
+  it("reports all four when the product has no nutriments at all", () => {
+    // Chia (5060731352170) and Brown onions (20699321): 0 of 8 keys.
+    expect(missingMacros({})).toEqual(["cal", "protein", "carbs", "fat"]);
+  });
+
+  it("treats an explicit null as absent, not as zero", () => {
+    expect(
+      missingMacros({
+        "energy-kcal_100g": null,
+        proteins_100g: 23,
+        carbohydrates_100g: 34,
+        fat_100g: 11,
+      }),
+    ).toEqual(["cal"]);
+  });
+
+  it("accepts the kJ fallback as a present calorie key", () => {
+    // parseProduct derives kcal from energy_100g when the kcal key is
+    // absent, so energy IS known — reporting it missing would send a
+    // complete product to manual entry.
+    expect(
+      missingMacros({
+        energy_100g: 1527,
+        proteins_100g: 23,
+        carbohydrates_100g: 34,
+        fat_100g: 11,
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("PL-028: needsManualEntry also fires on a partial product", () => {
+  it("demands confirmation when any big-four key was absent, even with three real values", () => {
+    expect(
+      needsManualEntry({
+        cal_per100: 365,
+        protein_per100: 23,
+        carbs_per100: 0, // fabricated by `?? 0`
+        fat_per100: 11,
+        missing_macros: ["carbs"],
+      }),
+    ).toBe(true);
+  });
+
+  it("still lets a complete product through", () => {
+    expect(
+      needsManualEntry({
+        cal_per100: 365,
+        protein_per100: 23,
+        carbs_per100: 34,
+        fat_per100: 11,
+        missing_macros: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("still exempts a human-typed custom food", () => {
+    // A custom food's big four were typed by a person at save time; that IS
+    // the confirmation this gate exists to demand.
+    expect(
+      needsManualEntry({
+        cal_per100: 0,
+        protein_per100: 0,
+        carbs_per100: 0,
+        fat_per100: 0,
+        source: "custom",
+      }),
+    ).toBe(false);
   });
 });

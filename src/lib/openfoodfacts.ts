@@ -1,4 +1,5 @@
 import { FoodProduct } from "../types";
+import { missingMacros } from "./macros";
 
 const BASE = "https://world.openfoodfacts.org";
 
@@ -246,6 +247,15 @@ function pickImages(p: any): {
 export function parseProduct(p: any): FoodProduct | null {
   const n = p.nutriments ?? {};
 
+  // PL-028. Record WHICH big-four keys OFF had no value for, BEFORE the
+  // `?? 0` coalescing below turns every one of them into an indistinguishable
+  // zero. The coalescing itself stays: cal_per100 and friends are
+  // non-nullable by design (see FoodProduct), and making them nullable is
+  // PL-011's schema question, not this fix. What changes is that the
+  // fabrication is now labelled, so ProductScreen can blank those fields and
+  // demand real values instead of presenting 0 as fact.
+  const missing = missingMacros(n);
+
   // Try kcal fields first; energy_100g is kJ and needs converting
   let cal = n["energy-kcal_100g"] ?? n["energy-kcal"] ?? null;
   if (cal == null && n["energy_100g"] != null) {
@@ -310,6 +320,7 @@ export function parseProduct(p: any): FoodProduct | null {
   return {
     name,
     brand: (p.brands ?? "").split(",")[0].trim(),
+    ...(missing.length > 0 ? { missing_macros: missing } : {}),
     cal_per100: Math.round(cal),
     protein_per100: parseFloat((n["proteins_100g"] ?? 0).toFixed(1)),
     carbs_per100: parseFloat((n["carbohydrates_100g"] ?? 0).toFixed(1)),

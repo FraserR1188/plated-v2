@@ -1,3 +1,4 @@
+import { MissingMacro } from "../types";
 // ============================================================
 // src/lib/macros.ts — pure macro-display helpers
 //
@@ -93,6 +94,38 @@ export type ServingTotals = {
   sugar: number;
 };
 
+/** The big four, as OFF names them, plus the kJ fallback parseProduct uses
+ *  when the kcal key is absent. */
+const BIG_FOUR_KEYS: ReadonlyArray<[MissingMacro, readonly string[]]> = [
+  ["cal", ["energy-kcal_100g", "energy-kcal", "energy_100g"]],
+  ["protein", ["proteins_100g"]],
+  ["carbs", ["carbohydrates_100g"]],
+  ["fat", ["fat_100g"]],
+];
+
+/**
+ * PL-028. WHICH of the big four Open Food Facts had no key for.
+ *
+ * `hasUsableNutrition` below fires only when all four values are zero. That
+ * catches a product OFF knows nothing about, but it is blind to the PARTIAL
+ * case: OFF holding calories, protein and fat but no carbohydrates key
+ * stores `carbs = 0` via `?? 0` and sails through, because not all four are
+ * zero. The fabricated zero is the same lie and harder to spot afterwards,
+ * because the row looks plausible.
+ *
+ * Keys on PRESENCE, not on value — that is the whole point. A present key
+ * with value 0 is a real measurement (water, black coffee) and must pass
+ * through untouched; an absent key is an absence of knowledge.
+ */
+export function missingMacros(
+  nutriments: Record<string, unknown> | null | undefined,
+): MissingMacro[] {
+  const n = nutriments ?? {};
+  return BIG_FOUR_KEYS.filter(
+    ([, keys]) => !keys.some((k) => n[k] != null),
+  ).map(([name]) => name);
+}
+
 /**
  * "No usable nutrition" detector (Phase 2). Energy + the big three
  * (protein/carbs/fat) are the only fields that can never legitimately be
@@ -145,8 +178,14 @@ export function needsManualEntry(product: {
   carbs_per100: number;
   fat_per100: number;
   source?: "off" | "custom";
+  /** PL-028: which big-four keys OFF had no value for. See missingMacros. */
+  missing_macros?: MissingMacro[];
 }): boolean {
   if (product.source === "custom") return false;
+  // PL-028: a product OFF only partly described needs the same confirmation
+  // as one it knows nothing about. Checked BEFORE the all-zero test, which
+  // cannot see a single fabricated zero among three real values.
+  if (product.missing_macros && product.missing_macros.length > 0) return true;
   return !hasUsableNutrition(product);
 }
 

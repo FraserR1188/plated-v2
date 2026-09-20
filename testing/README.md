@@ -49,7 +49,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 
 | Date | Tester | Build / version | Device | Issues raised | Still open | Doc |
 |---|---|---|---|---|---|---|
-| 2026-09-20 | self (dev pass) | master @ `2f8195f`; OTA Android `10b5ab16` + iOS `7f5a5b0b` | Pixel (default + 360dp + largest font), iOS | 6 | 6 | `testing/2026-09-20-internal.md` |
+| 2026-09-20 | self (dev pass) | master @ `2f8195f`; OTA Android `10b5ab16` + iOS `7f5a5b0b` | Pixel (default + 360dp + largest font), iOS | 9 | 9 | `testing/2026-09-20-internal.md` |
 | 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` | Pixel (Android) | 17 | 16 | `testing/2026-09-19-internal.md` |
 | 2026-08-25 | Ian | Not recorded (newest Android store build then: v6, `f48184c`) | Google Pixel 10, Android 17 | 4 | 4 | `testing/2026-08-25-ian.md` |
 
@@ -64,6 +64,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | PL-004 | Major | Android keyboard covers inputs on 13 surfaces | Fixed | 2026-09-19-internal | KeyboardScreen wrapper. Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK (Pixel, all 13 surfaces; iOS ProductScreen). Needs a tester |
 | PL-005 | Major | BundleApplyReview applies last-blurred grams | Fixed | 2026-09-19-internal | Commit-on-change (live text). Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK (150 g applied, twice). Needs a tester |
 | PL-006 | Major | BatchEditor Save can miss an uncommitted qty | Fixed | 2026-09-19-internal | Commit-on-change (live text). Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK; yield/portion clearing while typing accepted. Needs a tester |
+| PL-024 | Major | Clearing or mistyping a goal field silently saved the hard-coded default (0 too) | In progress | 2026-09-20-internal | Strict parsing in src/lib/goalInput.ts; per-field errors, Save disabled until valid. 0 valid for the seven macros, calories min 1. 16 tests, 6 sabotage runs. Rides the PL-023 OTA. Device pass owed |
 | PL-007 | Major | CSV export and last30Days use UTC dates | Logged | 2026-09-19-internal | Use dateKey |
 | PL-008 | Major | CSV exports NULL small four as 0.0 | Logged | 2026-09-19-internal | Empty cell for NULL |
 | PL-011 | Major | meal_entries big four can't represent unknown | Deferred | 2026-09-19-internal | Riskier schema change; separate decision |
@@ -79,6 +80,8 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | P-TF01a | Minor | No confirmation email after sign-up | Logged | 2026-08-25-ian | None is sent: Confirm email is off (mailer_autoconfirm true, measured 2026-09-19). 87e16cf fixed the false copy; 8eb2e5e's "Check your email" screen may still show. A new-account sign-up check decides. Blocker if Confirm email is turned on and mail doesn't arrive |
 | P-TF02b | Minor | Search "sometimes seems to need a space after the item name" | Logged | 2026-08-25-ian | Symptom of P-TF02a: queries are trimmed, so the space only re-fires the same search. Closes when P-TF02a does |
 | PL-019 | Minor | whoop-sync never closes/deletes dropped cycles; orphan open cycle, is_current returns 2 rows | Logged | 2026-09-20-internal | Contained by the 36h guard. Constraint: never select "today's cycle" via is_current — readiness query included |
+| PL-025 | Minor | Structural update-site test resolves variables by name file-wide | Logged | 2026-09-20-internal | A local named `patch` in useStore.ts makes updateEntry's spread look traceable and flips the test into its "delete me" branch. Needs a scope-aware resolver. Don't name a local `patch` there |
+| PL-026 | Minor | History adherence % ignores goalsState, so `error` reports adherence against defaults | Logged | 2026-09-20-internal | Show "–" unless loaded/absent. Constraint: Insights may only compute against goals when goalsState is `loaded` — `absent` means defaults, not the user's targets |
 | PL-020 | Minor | Batches "Logged" alert says "today's log" when a past day was picked | Fixed | 2026-09-20-internal | batchLogAlert names the picked day via dateKey. Master @ 2f8195f; OTA Android 10b5ab16 + iOS 7f5a5b0b. Combined device pass OK (Pixel + iOS). Needs a tester |
 | PL-021 | Minor | Today header overflows at 360dp, off-today pages with the Bundles chip | Fixed | 2026-09-20-internal | "Return to today" moved into the eyebrow; right row is the Bundles chip + calendar. Master @ 2f8195f; OTA Android 10b5ab16 + iOS 7f5a5b0b. Combined pass OK (Pixel default/360dp/largest font, iOS). Needs a tester |
 | PL-013 | Polish | RecipeConfirm doubles the bottom inset | Fixed | 2026-09-19-internal | SafeAreaView edge kept, footer inset dropped. Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK. Needs a tester |

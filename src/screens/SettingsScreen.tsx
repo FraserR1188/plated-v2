@@ -18,6 +18,11 @@ import { useStore } from "../store/useStore";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 import { exportCSV, last30Days } from "../lib/csv";
 import {
+  parseGoalField,
+  parseGoalValues,
+  GoalFieldKey,
+} from "../lib/goalInput";
+import {
   Colors,
   Spacing,
   Radius,
@@ -168,6 +173,16 @@ export function SettingsScreen() {
 
   /** PL-023: only a store that KNOWS the targets may be written from. */
   const goalsWritable = goalsState === "loaded" || goalsState === "absent";
+
+  // PL-024: what the user has actually typed, parsed strictly. No field is
+  // ever substituted with a default -- see src/lib/goalInput.ts for why
+  // `parseInt(x) || <default>` was three silent substitutions in one
+  // expression, and why PL-023 made the cleared-field one load-bearing.
+  const parsedGoals = parseGoalValues(values);
+  const fieldErrors: Partial<Record<GoalFieldKey, string>> =
+    "errors" in parsedGoals ? parsedGoals.errors : {};
+  const goalsValid = "goals" in parsedGoals;
+  const canSaveGoals = goalsWritable && goalsValid;
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -530,17 +545,13 @@ export function SettingsScreen() {
     // states, but the store refuses the write too — a screen is a bad place
     // for the only copy of a data-integrity rule.
     if (!goalsWritable) return;
+    // PL-024: same reasoning for the input. Nothing that did not parse
+    // reaches the write path, and no value is substituted for one that
+    // didn't — the old `|| <default>` turned a cleared field into a
+    // deliberate-looking write of the default.
+    if (!("goals" in parsedGoals)) return;
     setSaving(true);
-    const { error } = await saveGoals({
-      calories: parseInt(values.calories) || 2000,
-      protein: parseInt(values.protein) || 150,
-      carbs: parseInt(values.carbs) || 200,
-      fat: parseInt(values.fat) || 65,
-      satFat: parseInt(values.satFat) || 20,
-      salt: parseFloat(values.salt) || 6,
-      fibre: parseInt(values.fibre) || 30,
-      sugar: parseInt(values.sugar) || 30,
-    });
+    const { error } = await saveGoals(parsedGoals.goals);
     setSaving(false);
     if (error) {
       Alert.alert("Can't save that", error);
@@ -1131,26 +1142,39 @@ export function SettingsScreen() {
                   i < GOAL_FIELDS.length - 1 && styles.goalBorder,
                 ]}
               >
-                <View style={styles.goalLeft}>
-                  <View
-                    style={[styles.goalDot, { backgroundColor: field.color }]}
-                  />
-                  <Text style={styles.goalLabel}>{field.label}</Text>
+                <View style={styles.goalTop}>
+                  <View style={styles.goalLeft}>
+                    <View
+                      style={[styles.goalDot, { backgroundColor: field.color }]}
+                    />
+                    <Text style={styles.goalLabel}>{field.label}</Text>
+                  </View>
+                  <View style={styles.goalRight}>
+                    <TextInput
+                      style={[
+                        styles.goalInput,
+                        {
+                          borderColor: fieldErrors[field.key]
+                            ? Colors.danger
+                            : `${field.color}30`,
+                        },
+                      ]}
+                      value={values[field.key]}
+                      onChangeText={(v) => handleChange(field.key, v)}
+                      keyboardType="decimal-pad"
+                      selectTextOnFocus
+                      placeholderTextColor={Colors.textMuted}
+                    />
+                    <Text style={styles.goalUnit}>{field.unit}</Text>
+                  </View>
                 </View>
-                <View style={styles.goalRight}>
-                  <TextInput
-                    style={[
-                      styles.goalInput,
-                      { borderColor: `${field.color}30` },
-                    ]}
-                    value={values[field.key]}
-                    onChangeText={(v) => handleChange(field.key, v)}
-                    keyboardType="decimal-pad"
-                    selectTextOnFocus
-                    placeholderTextColor={Colors.textMuted}
-                  />
-                  <Text style={styles.goalUnit}>{field.unit}</Text>
-                </View>
+                {/* PL-024: say what's wrong with THIS field, next to it.
+                    The old code substituted a default here instead. */}
+                {fieldErrors[field.key] && (
+                  <Text style={styles.goalFieldError}>
+                    {fieldErrors[field.key]}
+                  </Text>
+                )}
               </View>
             ))}
 
@@ -1158,11 +1182,11 @@ export function SettingsScreen() {
               style={({ pressed }) => [
                 styles.saveBtn,
                 saved && styles.saveBtnSaved,
-                !goalsWritable && styles.saveBtnDisabled,
+                !canSaveGoals && styles.saveBtnDisabled,
                 pressed && { opacity: 0.85 },
               ]}
               onPress={handleSave}
-              disabled={saving || !goalsWritable}
+              disabled={saving || !canSaveGoals}
             >
               {saving ? (
                 <ActivityIndicator color={Colors.bg} />
@@ -1170,7 +1194,7 @@ export function SettingsScreen() {
                 <Text
                   style={[
                     styles.saveBtnText,
-                    !goalsWritable && styles.saveBtnTextDisabled,
+                    !canSaveGoals && styles.saveBtnTextDisabled,
                   ]}
                 >
                   {saved ? "✓  Goals saved" : "Save goals"}
@@ -1179,9 +1203,19 @@ export function SettingsScreen() {
             </Pressable>
 
             {/* PL-023: the store doesn't know the targets, so the numbers
-                above are placeholders. Say so, and offer the read again,
-                rather than letting a Save write them over a real row. */}
-            {!goalsWritable && (
+                above are placeholders and Save is disabled either way.
+                The two reasons read differently though — 'loading' is
+                momentary and self-resolving, so claiming it failed would be
+                untrue and would offer a Retry for something already in
+                flight. Only 'error' gets the failure copy and the button. */}
+            {goalsState === "loading" && (
+              <View style={styles.goalLoadError}>
+                <Text style={styles.goalLoadingText}>
+                  Loading your targets…
+                </Text>
+              </View>
+            )}
+            {goalsState === "error" && (
               <View style={styles.goalLoadError}>
                 <Text style={styles.goalLoadErrorText}>
                   Couldn't load your targets
@@ -1695,10 +1729,18 @@ const styles = StyleSheet.create(
 
   // ── Goals ──────────────────────────────────────────────────
   goalRow: {
+    paddingVertical: 11,
+  },
+  goalTop: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: 11,
+  },
+  goalFieldError: {
+    fontSize: Typography.xs,
+    color: Colors.danger,
+    marginTop: 4,
+    textAlign: "right",
   },
   goalBorder: {
     borderBottomWidth: 1,
@@ -1759,6 +1801,12 @@ const styles = StyleSheet.create(
   goalLoadError: {
     marginTop: Spacing.sm,
     alignItems: "center",
+  },
+  goalLoadingText: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    textAlign: "center",
+    lineHeight: 17,
   },
   goalLoadErrorText: {
     fontSize: Typography.xs,

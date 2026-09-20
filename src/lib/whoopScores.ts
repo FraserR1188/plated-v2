@@ -32,12 +32,16 @@ export type WhoopScores = {
    * pull time says nothing about the number's freshness. This supersedes
    * the earlier "strain shows last-synced time" default.
    *
-   * CAVEAT, measured: the view's `source_updated_at` is
-   * `greatest(cycle, recovery, sleep)` — a freshness signal across all
-   * three joined records, not the cycle's own timestamp. On production it
-   * differs from the cycle's in 2 of 172 rows (1.2%), by up to 17.6 hours.
-   * So this is "when this WHOOP frame last changed", which is not quite
-   * "when strain was calculated". See the open question in the PR 4 record.
+   * CAVEAT: the view's `source_updated_at` is `greatest(cycle, recovery,
+   * sleep)` — a freshness signal across all three joined records, not the
+   * cycle's own timestamp. So it means "when this WHOOP frame last
+   * changed", which is not quite "when strain was calculated".
+   *
+   * Measured on production: 116 WHOOP rows, ZERO divergence — the two
+   * coincide on all current data, and neither recovery nor sleep is ever
+   * newer than its cycle. The concern is structural, not observed, and
+   * nothing enforces it. `strain_updated_at` (PR 6) is the column that is
+   * right by construction.
    *
    * NULL for a Health-Connect-sourced period: that arm of the view selects
    * `null::timestamptz` for this column.

@@ -17,10 +17,12 @@
 // NO STRAIN CAPTION YET. The timestamp the design asked for
 // (`source_updated_at`) is a whole-FRAME signal — greatest(cycle,
 // recovery, sleep) — so it can carry the sleep scoring time under a
-// strain number, measured at 1.2% of production rows and up to 17.6 hours
-// out. Decision (Robbie, 2026-09-20): ship the panel without the caption,
-// then add `strain_updated_at` to the view in PR 6 and wire it. The
-// formatter already exists and is tested in src/lib/whoopScores.ts.
+// strain number. Measured on production: 116 WHOOP rows, ZERO divergence,
+// so the two coincide on all current data; the concern is structural and
+// nothing enforces it. Decision (Robbie, 2026-09-20): ship the panel
+// without the caption, then add `strain_updated_at` to the view in PR 6
+// and wire it. The formatter already exists and is tested in
+// src/lib/whoopScores.ts.
 // ============================================================
 
 import React from "react";

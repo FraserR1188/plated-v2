@@ -641,13 +641,11 @@ export function FriendsScreen() {
 
   const isSearching = query.trim().length >= 2;
 
+  // edges: no "top". Pushed from the Settings row now, so the native stack
+  // header owns the top inset and supplies the "Friends" title — insetting
+  // here as well would double it (PL-013).
   return (
-    <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
-      {/* ── Header ── */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Friends</Text>
-      </View>
-
+    <SafeAreaView style={styles.root} edges={["left", "right"]}>
       {/* ── Search bar ── */}
       <View style={styles.searchRow}>
         <View style={styles.searchBox}>
@@ -779,21 +777,12 @@ const styles = StyleSheet.create(
   },
   flex: { flex: 1 },
 
-  // Header
-  header: {
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.sm,
-    paddingBottom: Spacing.sm,
-  },
-  title: {
-    fontSize: Typography.xl,
-    fontWeight: Typography.bold,
-    color: Colors.text,
-  },
+  // No header styles: the native stack header draws the title.
 
   // Search
   searchRow: {
     paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.sm,
     paddingBottom: Spacing.sm,
   },
   searchBox: {

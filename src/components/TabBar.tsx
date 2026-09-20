@@ -4,13 +4,16 @@
 // Custom bottom tab bar — green pill active indicator,
 // dark surface background, safe-area aware.
 // No hardcoded tab count — each tabItem is flex:1, so it divides evenly at
-// 3, 4 or 5 tabs. Batches left the bar when it became a pushed screen off
-// Today's header; the slot it freed is what Insights now occupies, so the
-// count is unchanged at 5. At 5 and 360dp each tab gets ~70dp, of which
-// ~42dp is label room after the pill's padding — the widest label in use
-// ("Settings") measures ~41dp, so labels fit without shrinking, and
-// numberOfLines/adjustsFontSizeToFit remain as the defensive floor for a
-// larger system font scale.
+// 3, 4 or 5 tabs. Five today: Insights took the slot Friends gave up when
+// it moved to a row in Settings, and Batches kept its own. At 5 and 360dp
+// each tab gets ~70dp, of which ~42dp is label room after the pill's
+// padding — the widest label in use ("Settings") measures ~41dp, so labels
+// fit without shrinking, and numberOfLines/adjustsFontSizeToFit remain as
+// the defensive floor for a larger system font scale.
+//
+// SOCIAL_ENABLED no longer changes what the BAR shows: it hides a row
+// inside Settings, so the count stays 5 either way and Insights stays
+// centred. It still gates the request-count fetch below.
 // ============================================================
 
 import React, { useEffect, useRef } from "react";
@@ -25,15 +28,10 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BottomTabBarProps } from "@react-navigation/bottom-tabs";
-import {
-  Colors,
-  Radius,
-  Spacing,
-  Typography,
-  Fonts,
-  Overlay,
-} from "../theme/tokens";
+import { Colors, Radius, Spacing, Typography, Fonts } from "../theme/tokens";
 import { useStore } from "../store/useStore";
+import { CountBadge } from "./CountBadge";
+import { SOCIAL_ENABLED } from "../lib/flags";
 import { BottomTabParamList } from "../types";
 
 // Tab icon map — emoji/unicode placeholders.
@@ -51,18 +49,9 @@ const TAB_ICONS: Record<
   Today: { default: "⊕", active: "⊕" },
   History: { default: "◫", active: "◫" },
   Insights: { default: "◈", active: "◈" },
-  Friends: { default: "◎", active: "◎" },
+  Batches: { default: "⊞", active: "⊞" },
   Settings: { default: "⊙", active: "⊙" },
 };
-
-// The accept gate is live: migration 20260819110000_friendship_accept_gate.sql
-// converted follows into a mutual friendship (pending/accepted), and
-// meal_entries_select_follower now requires status = 'accepted' in both
-// directions — verified a pending row grants 0 cross-user meal_entries rows.
-// The client (social.ts, FriendsScreen) is written against that policy set.
-// Flip back to false, rather than deleting this flag, if a regression needs
-// the tab hidden again without a redeploy.
-const SOCIAL_ENABLED = true;
 
 // ─── Single tab item ─────────────────────────────────────────
 
@@ -131,13 +120,7 @@ function TabItem({
           >
             {focused ? icons.active : icons.default}
           </Text>
-          {!!badgeCount && badgeCount > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText} numberOfLines={1}>
-                {badgeCount > 9 ? "9+" : badgeCount}
-              </Text>
-            </View>
-          )}
+          <CountBadge count={badgeCount} style={styles.badgePosition} />
         </View>
         <Text
           style={[
@@ -166,8 +149,9 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
 
   // Refresh on mount and on app foreground. No polling — there is no push
   // infrastructure, so this badge is deliberately eventually-consistent
-  // within a session. Skipped entirely while the tab is hidden: no point
-  // spending a request on a count nobody can see.
+  // within a session. Skipped entirely when social is off: no point
+  // spending a request on a count nobody can see. The count badges the
+  // SETTINGS tab now, because that is where the Friends row lives.
   useEffect(() => {
     if (!SOCIAL_ENABLED) return;
 
@@ -188,8 +172,6 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
     >
       <View style={styles.inner}>
         {state.routes.map((route, index) => {
-          if (route.name === "Friends" && !SOCIAL_ENABLED) return null;
-
           const { options } = descriptors[route.key];
           const label =
             typeof options.tabBarLabel === "string"
@@ -230,8 +212,11 @@ export function TabBar({ state, descriptors, navigation }: BottomTabBarProps) {
               label={label}
               icons={icons}
               focused={focused}
+              // Friends is a row inside Settings now, so its pending
+              // count rides the Settings tab — the same store value the
+              // row itself shows.
               badgeCount={
-                route.name === "Friends" ? incomingRequestCount : undefined
+                route.name === "Settings" ? incomingRequestCount : undefined
               }
               onPress={onPress}
               onLongPress={onLongPress}
@@ -285,25 +270,12 @@ const styles = StyleSheet.create({
     fontSize: 20,
     lineHeight: 24,
   },
-  badge: {
+  // Where the badge sits. How it looks lives in CountBadge, shared with
+  // the Friends row in Settings.
+  badgePosition: {
     position: "absolute",
     top: -4,
     right: -8,
-    minWidth: 15,
-    height: 15,
-    borderRadius: 8,
-    paddingHorizontal: 3,
-    backgroundColor: Colors.danger,
-    borderWidth: 1,
-    borderColor: Colors.surface,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  badgeText: {
-    fontSize: 9,
-    fontWeight: Typography.bold,
-    fontFamily: Fonts.sans.bold,
-    color: Overlay.white,
   },
   tabLabel: {
     fontSize: Typography.xs,

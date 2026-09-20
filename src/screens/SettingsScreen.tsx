@@ -52,6 +52,8 @@ import {
 } from "../lib/healthConnect";
 import { syncHealthConnect } from "../lib/healthConnectSync";
 import { reportError } from "../lib/reportError";
+import { SOCIAL_ENABLED } from "../lib/flags";
+import { CountBadge } from "../components/CountBadge";
 
 import { supabase } from "../lib/supabase";
 
@@ -118,6 +120,10 @@ export function SettingsScreen() {
     deleteIngredient,
     reset, // ← ADD
   } = useStore();
+  // Same value the Settings TAB badges itself with (TabBar fetches it on
+  // mount and on every foreground); FriendsScreen refreshes it as
+  // requests are accepted or declined, so both clear together.
+  const incomingRequestCount = useStore((s) => s.incomingRequestCount);
 
   // ── Goal state ────────────────────────────────────────────
   const [values, setValues] = useState<Record<string, string>>({
@@ -728,6 +734,37 @@ export function SettingsScreen() {
               </>
             )}
           </View>
+
+          {/* ── Friends ────────────────────────────────── */}
+          {/* Was a bottom tab. The badge is the same store count the
+              Settings tab itself now carries, so the two cannot disagree,
+              and both disappear with SOCIAL_ENABLED. */}
+          {SOCIAL_ENABLED && (
+            <View style={styles.card}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.libRow,
+                  pressed && { backgroundColor: Colors.surface2 },
+                ]}
+                onPress={() => navigation.navigate("Friends")}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  incomingRequestCount > 0
+                    ? `Friends, ${incomingRequestCount} pending request${incomingRequestCount === 1 ? "" : "s"}`
+                    : "Friends"
+                }
+              >
+                <View style={styles.libBody}>
+                  <Text style={styles.libName}>Friends</Text>
+                </View>
+                <CountBadge
+                  count={incomingRequestCount}
+                  style={{ marginRight: Spacing.sm }}
+                />
+                <Text style={styles.libChevron}>›</Text>
+              </Pressable>
+            </View>
+          )}
 
           {/* ── WHOOP ──────────────────────────────────── */}
           <SectionLabel title="Whoop" />

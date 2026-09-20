@@ -115,11 +115,22 @@ export function BatchesScreen() {
     ]);
   };
 
-  // edges: bottom only. The native stack header owns the top inset now
-  // that this is a pushed screen — keeping "top" here would inset twice
-  // and reproduce PL-013 at the other end of the screen.
+  // A tab again, so there is no native header: this screen owns its top
+  // inset and draws its own title row.
   return (
-    <SafeAreaView style={styles.safe} edges={["bottom"]}>
+    <SafeAreaView style={styles.safe} edges={["top", "bottom"]}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Batches</Text>
+        <Pressable
+          style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.8 }]}
+          onPress={() => navigation.navigate("BatchEditor", {})}
+          accessibilityRole="button"
+          accessibilityLabel="New batch"
+        >
+          <Text style={styles.addBtnText}>＋ New</Text>
+        </Pressable>
+      </View>
+
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
@@ -392,11 +403,33 @@ const styles = StyleSheet.create(
       flex: 1,
       backgroundColor: Colors.bg,
     },
-    // The screen's own header row is gone: the native stack header draws
-    // the title and "+ New" (see AppNavigator's Batches screen options).
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: Spacing.md,
+      paddingTop: Spacing.sm,
+      paddingBottom: Spacing.md,
+    },
+    headerTitle: {
+      fontSize: Typography.lg,
+      fontWeight: Typography.bold,
+      color: Colors.text,
+      letterSpacing: -0.3,
+    },
+    addBtn: {
+      backgroundColor: Colors.green,
+      borderRadius: Radius.pill,
+      paddingHorizontal: Spacing.md,
+      paddingVertical: 8,
+    },
+    addBtnText: {
+      fontSize: Typography.sm,
+      fontWeight: Typography.bold,
+      color: Colors.bg,
+    },
     scroll: {
       paddingHorizontal: Spacing.md,
-      paddingTop: Spacing.md,
     },
 
     list: {

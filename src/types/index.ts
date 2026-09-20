@@ -626,15 +626,27 @@ export interface Workout {
 
 // ─── Navigation ──────────────────────────────────────────────
 
+// Type-only, erased at runtime: this file's no-lib-imports rule is about
+// runtime dependencies, and a nested-navigator param type has to come
+// from the library that defines the shape.
+import type { NavigatorScreenParams } from "@react-navigation/native";
+
 export type RootStackParamList = {
-  MainTabs: undefined;
   /**
-   * Was a fifth bottom tab; now pushed from Today's header, so the tab bar
-   * keeps room for Insights. No params: the list is the whole screen, and
-   * every editor it opens (BatchEditor, and RecipeScan/RecipeConfirm under
-   * that) is already a sibling on this stack rather than nested inside it.
+   * Nested params so a screen deeper in the stack can say WHICH TAB to
+   * land on — CopyConfirm pops back here asking for Today after a
+   * friend-copy (see lib/copyDestination.ts). Still `| undefined`: every
+   * other reference to MainTabs passes nothing and must stay valid.
    */
-  Batches: undefined;
+  MainTabs: NavigatorScreenParams<BottomTabParamList> | undefined;
+  /**
+   * Pushed from the Friends row in Settings, not a tab: the row carries
+   * the pending-request badge and the feature flag, and the bottom bar is
+   * spent on the five daily surfaces. No params — the list is the whole
+   * screen, and ConnectedUserLog/CopyConfirm under it are already siblings
+   * on this stack.
+   */
+  Friends: undefined;
   /**
    * Time-first add (D-today-stream): the caller has already picked WHEN, via
    * a single time picker on Today, not WHICH SECTION. meal_type no longer
@@ -786,7 +798,7 @@ export type BottomTabParamList = {
   History: undefined;
   /** Centre slot. Stub until the readiness query exists — see InsightsScreen. */
   Insights: undefined;
-  Friends: undefined;
+  Batches: undefined;
   Settings: undefined;
 };
 

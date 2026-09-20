@@ -8,10 +8,10 @@
 //       ├── Today    → TodayScreen
 //       ├── History  → HistoryScreen
 //       ├── Insights → InsightsScreen   ← centre slot, stub for now
-//       ├── Friends  → FriendsScreen
+//       ├── Batches  → BatchesScreen
 //       └── Settings → SettingsScreen
-//   ├── Batches        (push, native header)  ← was a 5th tab; opened from
-//   │                                            Today's header instead
+//   ├── Friends        (push, native header)  ← was a tab; opened from the
+//   │                                            Friends row in Settings
 //   ├── AddIngredient  (modal)
 //   ├── Scanner        (full-screen modal)
 //   ├── Product        (modal)
@@ -20,11 +20,12 @@
 //   ├── CopyConfirm       (push)
 //   └── BundleApplyReview (push — apply-time quantity review)
 //
-// Batches sits on the ROOT stack, not inside a tab: every editor it opens
-// is already a sibling here, so pushing it changed no other route's
-// behaviour (BatchEditor's goBack, RecipeConfirm's pop(2), the picker's
-// Scanner round-trip all stay relative, and no popToTop is reachable from
-// that flow).
+// Friends sits on the ROOT stack, not inside a tab: ConnectedUserLog and
+// CopyConfirm are already siblings here, so their pushes and native-header
+// backs are unchanged. The one call that CARED was CopyConfirm's exit —
+// popToTop() used to land on whichever tab was active, which was Friends
+// and is now Settings. It pops to Today on the copied day instead; see
+// src/lib/copyDestination.ts.
 // ============================================================
 
 import React, { useRef } from "react";
@@ -108,9 +109,9 @@ function MainTabs() {
         options={{ tabBarLabel: "Insights" }}
       />
       <Tab.Screen
-        name="Friends"
-        component={FriendsScreen}
-        options={{ tabBarLabel: "Friends" }}
+        name="Batches"
+        component={BatchesScreen}
+        options={{ tabBarLabel: "Batches" }}
       />
       <Tab.Screen
         name="Settings"
@@ -200,27 +201,13 @@ export function AppNavigator() {
           }}
         />
 
-        {/* Batches — a pushed screen since the tab was retired, with the
-            native header rather than one of its own: it is now reached
-            from Today, so it needs the platform back affordance, and
-            "+ New" is the one action its old in-screen header carried. */}
+        {/* Friends — pushed from the Settings row, with the native header
+            so it has the platform back affordance. Its own sub-flow
+            (ConnectedUserLog, CopyConfirm) are siblings below. */}
         <Stack.Screen
-          name="Batches"
-          component={BatchesScreen}
-          options={({ navigation }) => ({
-            title: "Batches",
-            headerRight: () => (
-              <Pressable
-                onPress={() => navigation.navigate("BatchEditor", {})}
-                hitSlop={8}
-                accessibilityRole="button"
-                accessibilityLabel="New batch"
-                style={({ pressed }) => pressed && { opacity: 0.7 }}
-              >
-                <Text style={headerStyles.action}>＋ New</Text>
-              </Pressable>
-            ),
-          })}
+          name="Friends"
+          component={FriendsScreen}
+          options={{ title: "Friends" }}
         />
         <Stack.Screen
           name="BatchEditor"

@@ -694,11 +694,6 @@ function DayPage({
     setShowAddPicker(true);
   };
 
-  // Batches is a root-stack push now, not a tab — reached from this
-  // header. Local rather than a prop, same as the AddIngredient push
-  // below: it needs nothing from TodayScreen's state.
-  const onOpenBatches = () => navigation.navigate("Batches");
-
   const onAddTimePicked = (picked: Date) => {
     setShowAddPicker(false);
     // The page's OWN date, not today — this is what makes "plan for 19:00
@@ -860,39 +855,25 @@ function DayPage({
             </View>
           </View>
 
-          {/* Three fixed 36dp buttons, no text chips: at 360dp this row
-              plus its gaps is 120dp, which leaves the left block 208dp —
-              enough for the longest anchor and the longest date line.
-              Every button is icon-only, so each carries its own
-              accessibilityLabel. */}
+          {/* Bundles keeps its LABEL — an icon for it read as nothing in
+              review, and Batches has a tab again so it is not here at
+              all. Chip (65.6dp) + gap + the 36dp calendar is 107.6dp,
+              leaving 220.4dp at 360dp against a 183.6dp worst-case date
+              line. */}
           <View style={styles.nav}>
             {hasBundles && !selecting && (
               <Pressable
                 onPress={onOpenBundles}
                 hitSlop={8}
                 accessibilityRole="button"
-                accessibilityLabel="Bundles"
                 style={({ pressed }) => [
-                  styles.navBtn,
+                  styles.bundleBtn,
                   pressed && { opacity: 0.7 },
                 ]}
               >
-                <Text style={styles.navBtnGlyph}>▤</Text>
+                <Text style={styles.bundleBtnText}>Bundles</Text>
               </Pressable>
             )}
-            <Pressable
-              onPress={onOpenBatches}
-              hitSlop={8}
-              disabled={selecting}
-              accessibilityRole="button"
-              accessibilityLabel="Batches"
-              style={({ pressed }) => [
-                styles.navBtn,
-                pressed && { opacity: 0.7 },
-              ]}
-            >
-              <Text style={styles.navBtnGlyph}>⊞</Text>
-            </Pressable>
             <Pressable
               onPress={onOpenCalendarJump}
               hitSlop={8}
@@ -2882,9 +2863,24 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
   },
-  // One shape for all three header actions. 36dp square is the tap target
-  // floor; the glyphs sit at 16 so the emoji calendar and the two text
-  // glyphs read at the same weight.
+  bundleBtn: {
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    height: 36,
+    justifyContent: "center",
+  },
+  bundleBtnText: {
+    fontSize: Typography.xs,
+    fontWeight: Typography.bold,
+    fontFamily: Fonts.sans.bold,
+    color: Colors.textSub,
+  },
+  // The calendar is the one action that stays iconic — a date picker is
+  // what a calendar glyph actually means. 36dp square is the tap target
+  // floor.
   navBtn: {
     width: 36,
     height: 36,

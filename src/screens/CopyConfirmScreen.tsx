@@ -47,7 +47,9 @@ import {
   initialCopyMealType,
 } from "../lib/social";
 import { dateKey, TimeOfDay } from "../lib/time";
+import { goToCopiedDay } from "../lib/copyDestination";
 import { parseGrams } from "../lib/macros";
+import { useStore } from "../store/useStore";
 import { CopyTargetPicker } from "../components/CopyTargetPicker";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 import { EntryDraft, MealType, RootStackParamList } from "../types";
@@ -70,6 +72,7 @@ function sumDrafts(drafts: EntryDraft[]) {
 export function CopyConfirmScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<Route>();
+  const setViewedDate = useStore((s) => s.setViewedDate);
   const { payload } = route.params;
 
   const [confirming, setConfirming] = useState(false);
@@ -158,15 +161,13 @@ export function CopyConfirmScreen() {
     try {
       // Same payload, target and targetGrams the preview was built from.
       await copyEntriesToMyLog(payload, target, targetGrams);
-      // Go back two screens to Today tab — or just pop to Today
-      navigation.popToTop();
-      // Small toast-style feedback (native Alert as fallback — replace
-      // with a toast library like react-native-toast-message if preferred)
-      Alert.alert(
-        "Copied!",
-        `${itemCount} item${itemCount !== 1 ? "s" : ""} added to your log.`,
-        [{ text: "OK" }],
-      );
+
+      // Land on Today, showing the day the copy went to, and unwind the
+      // whole Friends flow on the way — see src/lib/copyDestination.ts for
+      // why this is popTo rather than navigate. No success Alert: the
+      // copied food is now on screen, which is the same way TodayScreen's
+      // own copy flows report themselves. Failures still alert, below.
+      goToCopiedDay(navigation, setViewedDate, dayKey);
     } catch {
       Alert.alert("Error", "Could not copy entries. Please try again.");
       setConfirming(false);

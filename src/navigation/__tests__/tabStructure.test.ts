@@ -113,11 +113,13 @@ function typeMembers(sourceFile: ts.SourceFile, name: string): string[] {
   return members;
 }
 
+// Friends left the bar for a Settings row (the header icons for Batches
+// and Bundles didn't read as anything), and Batches came back to it.
 const EXPECTED_TABS = [
   "Today",
   "History",
   "Insights",
-  "Friends",
+  "Batches",
   "Settings",
 ];
 
@@ -131,9 +133,9 @@ describe("bottom tabs", () => {
   // its own assertion: the order test above would still pass if a sixth
   // tab were added or Insights were moved one place along.
   //
-  // One thing this cannot see: TabBar hides Friends when SOCIAL_ENABLED is
-  // false (TabBar.tsx), which leaves four tabs rendered and puts Insights
-  // off-centre. That flag is currently true.
+  // Now unconditional: SOCIAL_ENABLED used to hide the Friends TAB, which
+  // left four rendered and pushed Insights off-centre. The flag now only
+  // hides a row inside Settings, so the bar is five either way.
   it("puts Insights in the centre slot", () => {
     const tabs = screenNames(navigator.sourceFile, "Tab");
     expect(tabs.length % 2).toBe(1);
@@ -170,14 +172,68 @@ describe("bottom tabs", () => {
 });
 
 describe("Batches", () => {
-  it("is a root-stack screen, not a tab", () => {
-    expect(screenNames(navigator.sourceFile, "Stack")).toContain("Batches");
-    expect(screenNames(navigator.sourceFile, "Tab")).not.toContain("Batches");
+  it("is a tab, not a root-stack screen", () => {
+    expect(screenNames(navigator.sourceFile, "Tab")).toContain("Batches");
+    expect(screenNames(navigator.sourceFile, "Stack")).not.toContain("Batches");
   });
 
-  it("is reachable: RootStackParamList declares it", () => {
-    expect(typeMembers(types.sourceFile, "RootStackParamList")).toContain(
+  it("is not left behind in RootStackParamList", () => {
+    expect(typeMembers(types.sourceFile, "RootStackParamList")).not.toContain(
       "Batches",
     );
+  });
+});
+
+describe("Friends", () => {
+  const settings = parse("screens/SettingsScreen.tsx");
+
+  it("is a root-stack screen, not a tab", () => {
+    expect(screenNames(navigator.sourceFile, "Stack")).toContain("Friends");
+    expect(screenNames(navigator.sourceFile, "Tab")).not.toContain("Friends");
+  });
+
+  it("is reachable: RootStackParamList declares it and Settings navigates there", () => {
+    expect(typeMembers(types.sourceFile, "RootStackParamList")).toContain(
+      "Friends",
+    );
+    expect(settings.text).toMatch(/navigate\(\s*["']Friends["']\s*\)/);
+  });
+
+  // The row is a social surface, so it answers to the same flag the tab
+  // used to. The flag moved out of TabBar (a component Settings cannot
+  // sensibly import) into lib/flags.
+  it("is gated on SOCIAL_ENABLED, now shared from lib/flags", () => {
+    expect(settings.text).toMatch(
+      /import \{[^}]*SOCIAL_ENABLED[^}]*\} from "\.\.\/lib\/flags"/,
+    );
+    expect(settings.text).toMatch(/SOCIAL_ENABLED &&/);
+    expect(tabBar.text).toMatch(
+      /import \{[^}]*SOCIAL_ENABLED[^}]*\} from "\.\.\/lib\/flags"/,
+    );
+    expect(tabBar.text).not.toMatch(/const SOCIAL_ENABLED\s*=/);
+  });
+});
+
+describe("the pending-requests badge", () => {
+  const settings = parse("screens/SettingsScreen.tsx");
+
+  // Same store value in both places, so they cannot drift apart.
+  it("counts from the store in both places", () => {
+    expect(tabBar.text).toMatch(/incomingRequestCount/);
+    expect(settings.text).toMatch(/incomingRequestCount/);
+  });
+
+  it("rides the Settings tab now that Friends has no tab of its own", () => {
+    expect(tabBar.text).toMatch(/route\.name === "Settings"/);
+    expect(tabBar.text).not.toMatch(/route\.name === "Friends"/);
+  });
+
+  // One component, so the tab and the row render an identical badge
+  // rather than two lookalikes that drift.
+  it("is the shared CountBadge in both places", () => {
+    for (const f of [tabBar, settings]) {
+      expect(f.text).toMatch(/<CountBadge/);
+      expect(f.text).toMatch(/from "(\.\.\/components)?\.?\/?CountBadge"/);
+    }
   });
 });

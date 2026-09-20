@@ -50,7 +50,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | Date | Tester | Build / version | Device | Issues raised | Still open | Doc |
 |---|---|---|---|---|---|---|
 | 2026-09-20 | self (dev pass) | master @ `5f347c3`; OTA Android `faa10722` + iOS `75060c2b` | Pixel (default + 360dp + largest font), iOS | 10 | 10 | `testing/2026-09-20-internal.md` |
-| 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` | Pixel (Android) | 17 | 16 | `testing/2026-09-19-internal.md` |
+| 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` (fixes since shipped to `5ab80ea`) | Pixel (Android) | 17 | 16 | `testing/2026-09-19-internal.md` |
 | 2026-08-25 | Ian | Not recorded (newest Android store build then: v6, `f48184c`) | Google Pixel 10, Android 17 | 4 | 4 | `testing/2026-08-25-ian.md` |
 
 ## Open issues across all sessions
@@ -65,8 +65,8 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | PL-005 | Major | BundleApplyReview applies last-blurred grams | Fixed | 2026-09-19-internal | Commit-on-change (live text). Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK (150 g applied, twice). Needs a tester |
 | PL-006 | Major | BatchEditor Save can miss an uncommitted qty | Fixed | 2026-09-19-internal | Commit-on-change (live text). Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK; yield/portion clearing while typing accepted. Needs a tester |
 | PL-024 | Major | Clearing or mistyping a goal field silently saved the hard-coded default (0 too) | Fixed | 2026-09-20-internal | Strict parsing in src/lib/goalInput.ts; per-field errors, Save disabled until valid. 0 valid for the seven macros, calories min 1. 16 tests, 6 sabotage runs. Master @ 5f347c3; OTA Android faa10722 + iOS 75060c2b. Pixel pass OK; iOS owed. Needs a tester |
-| PL-007 | Major | CSV export and last30Days use UTC dates | Fixed | 2026-09-19-internal | dateKey for the date column, filename and last30Days bounds; calendar arithmetic, not fixed ms. Window is now exactly 30 local days (was 31). Suite pinned to Europe/London. 14 tests, 4 sabotage runs. Not published. Device pass owed |
-| PL-008 | Major | CSV exports NULL small four as 0.0 | Fixed | 2026-09-19-internal | optionalCell: empty for NULL, 0.0 for a measured zero. Header and column order pinned by test. Not published. Device pass owed |
+| PL-007 | Major | CSV export and last30Days use UTC dates | Fixed | 2026-09-19-internal | dateKey for the date column, filename and last30Days bounds; calendar arithmetic, not fixed ms. Window is now exactly 30 local days (was 31). Suite pinned to Europe/London. 14 tests, 4 sabotage runs. Master @ 5ab80ea; OTA Android 875be285 + iOS b3285525. Pixel pass OK; iOS owed. Needs a tester |
+| PL-008 | Major | CSV exports NULL small four as 0.0 | Fixed | 2026-09-19-internal | optionalCell: empty for NULL, 0.0 for a measured zero. Header and column order pinned by test. Master @ 5ab80ea; OTA Android 875be285 + iOS b3285525. Pixel pass OK; iOS owed. Needs a tester |
 | PL-011 | Major | meal_entries big four can't represent unknown | Deferred | 2026-09-19-internal | Riskier schema change; separate decision |
 | P-TF01b | Major | Never asked for calorie or macro targets | Logged | 2026-08-25-ian | No onboarding; new accounts run on DEFAULT_GOALS (2000 kcal) until set in Settings. No fix found |
 | P-TF02a | Major | Food search kept erroring; worked after numerous retries | Logged | 2026-08-25-ian | Probable fix, unconfirmed: e958f4d (OFF User-Agent + timeout), Android v8+ and iOS build 3. Symptom not tied to it |

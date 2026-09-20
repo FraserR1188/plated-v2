@@ -49,7 +49,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 
 | Date | Tester | Build / version | Device | Issues raised | Still open | Doc |
 |---|---|---|---|---|---|---|
-| 2026-09-20 | self (dev pass) | master @ `3fb3373`; three OTAs — Android `faa10722`/`875be285`/`7c0b4336`, iOS `75060c2b`/`b3285525`/`6f4454b1` | Pixel (default + 360dp + largest font); iOS owed | 11 | 11 | `testing/2026-09-20-internal.md` |
+| 2026-09-20 | self (dev pass) | master @ `5d03ebf`; three OTAs — Android `faa10722`/`875be285`/`7c0b4336`/`63f5a117`, iOS `75060c2b`/`b3285525`/`6f4454b1`/`3930c7e2` | Pixel (default + 360dp + largest font); iOS owed | 11 | 11 | `testing/2026-09-20-internal.md` |
 | 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` (fixes since shipped to `5ab80ea`) | Pixel (Android) | 17 | 16 | `testing/2026-09-19-internal.md` |
 | 2026-08-25 | Ian | Not recorded (newest Android store build then: v6, `f48184c`) | Google Pixel 10, Android 17 | 4 | 4 | `testing/2026-08-25-ian.md` |
 

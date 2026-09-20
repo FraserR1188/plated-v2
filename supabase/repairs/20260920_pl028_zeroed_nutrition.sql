@@ -20,6 +20,12 @@ begin;
 --
 -- salt stays NULL for chia throughout: it was never known, and writing 0
 -- there is the exact defect this repair exists to undo.
+-- 
+-- NOTE, added after the fact: the backup table this creates was moved out
+-- of `public` the same day and now lives at `maintenance.pl028_repair_backup`
+-- with 40 rows. This file is left as it ran -- see PL-031 and
+-- 20260920_pl028_backup_out_of_public.sql for why `public` was the wrong
+-- place for it.
 -- ============================================================================
 
 

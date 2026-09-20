@@ -23,23 +23,41 @@ Every repair in here was, and every future one must be:
 5. **Followed by an independent post-commit readback**, run outside the repair
    transaction.
 
-## A backup table in `public` is a published API endpoint
+## Repair artefacts never go in `public`
 
-Supabase's default privileges grant `anon` and `authenticated` full DML on new
-tables in `public`, and PostgREST exposes them. A backup table created without
-thinking about this is world-readable and world-truncatable by anyone holding
-the shipped anon key — including the rollback path for the repair itself.
+**Not "in `public` with RLS". Not in `public` at all.**
 
-**Enable RLS and revoke the app-role grants in the same script that creates
-it**, or put it outside `public`. See `20260920_pl028_secure_backup.sql`,
-which is the retrofit of exactly that mistake.
+On a Supabase project, `public` is a published API surface:
+
+- **PostgREST serves it**, so a table there is addressable at
+  `/rest/v1/<table>` as soon as it exists.
+- **Default privileges grant `anon` and `authenticated` full DML** on new
+  tables in it — `SELECT, INSERT, UPDATE, DELETE, TRUNCATE`.
+- **`create table` does not enable RLS.**
+
+So a backup table created in `public` is world-readable and
+world-**truncatable** by anyone holding the shipped anon key, from the moment
+the `create table` returns. The rollback path for a data repair is deletable
+by an anonymous client while the repair is still being verified. There is no
+safe window to lock it down in afterwards, because the exposure starts first.
+
+**Put them in `maintenance`**, which is not in this project's exposed schema
+list, with RLS on and no app-role grants. PostgREST then returns `PGRST106
+Invalid schema` for the whole schema, so a later grant mistake on the table
+cannot re-expose it — the table is not merely denied, it is not addressable.
+
+This is written from having got it wrong: see **PL-031** in
+`testing/2026-09-20-internal.md`, and the two scripts below that are the
+retrofit.
 
 ## Files
 
 | File | What it did |
 |---|---|
 | `20260920_pl028_zeroed_nutrition.sql` | PL-028. Repaired 35 `meal_entries`, 3 `saved_ingredients` and 2 `meal_composition_items` whose nutrition had been stored as fabricated zeros. Backup: `public.pl028_repair_backup`, 41 rows |
-| `20260920_pl028_secure_backup.sql` | Locked down that backup table after the readback found it exposed to `anon` and `authenticated` |
+| `20260920_pl028_secure_backup.sql` | PL-031, step 1. Locked down that backup table after the readback found it exposed to `anon` and `authenticated` |
+| `20260920_pl028_backup_out_of_public.sql` | PL-031, step 2. Deleted a third user's row, then moved the table to `maintenance` so PostgREST cannot serve it at all. 40 rows |
 
-**`public.pl028_repair_backup` must not be dropped.** It is the only record of
-the pre-repair values. See the PL-028 entry in `testing/2026-09-20-internal.md`.
+**`maintenance.pl028_repair_backup` must not be dropped.** It is the only
+record of the pre-repair values — 40 rows, taken 2026-09-20 16:04 UTC. See the
+PL-028 entry in `testing/2026-09-20-internal.md`.

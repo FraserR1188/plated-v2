@@ -14,20 +14,20 @@
 // render for all of them on purpose — see getWhoopScoresForDate, which
 // collapses them there rather than here.
 //
-// NO STRAIN CAPTION YET. The timestamp the design asked for
-// (`source_updated_at`) is a whole-FRAME signal — greatest(cycle,
-// recovery, sleep) — so it can carry the sleep scoring time under a
-// strain number. Measured on production: 116 WHOOP rows, ZERO divergence,
-// so the two coincide on all current data; the concern is structural and
-// nothing enforces it. Decision (Robbie, 2026-09-20): ship the panel
-// without the caption, then add `strain_updated_at` to the view in PR 6
-// and wire it. The formatter already exists and is tested in
-// src/lib/whoopScores.ts.
+// THE STRAIN CAPTION reads `strain_updated_at` — the cycle's own
+// timestamp, added to the view in PR 6 — and never `source_updated_at`,
+// which is greatest(cycle, recovery, sleep) and would put the SLEEP
+// scoring time under a strain number.
+//
+// It renders only when there IS a strain value. A caption under a dash
+// would claim the dash is fresh, which is nonsense, and the caption is
+// absent for Health-Connect-only days (no cycle, so no calculation time)
+// and for future days (nothing calculated yet).
 // ============================================================
 
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
-import { WhoopScores } from "../lib/whoopScores";
+import { WhoopScores, formatStrainCaption } from "../lib/whoopScores";
 import { Colors, Spacing, Typography, Fonts } from "../theme/tokens";
 
 /** 82dp at 360dp width, per the design. Fixed, never content-derived:
@@ -74,6 +74,9 @@ export function WhoopScoresPanel({ scores }: { scores: WhoopScores }) {
   // Strain is 0-21 to one decimal place, so toFixed(1) rather than the
   // integer percentages above — 12 and 12.3 are different readings.
   const strain = scores.strain == null ? DASH : scores.strain.toFixed(1);
+  // Null whenever there is no strain to caption, no timestamp, or the
+  // timestamp doesn't parse — the formatter owns all three.
+  const caption = formatStrainCaption(scores.asOf);
 
   return (
     <View style={styles.column}>
@@ -83,6 +86,11 @@ export function WhoopScoresPanel({ scores }: { scores: WhoopScores }) {
       <Score label="Recovery" value={pct(scores.recovery)} unit="%" />
       <Score label="Sleep" value={pct(scores.sleep)} unit="%" />
       <Score label="Strain" value={strain} />
+      {caption && (
+        <Text style={styles.caption} numberOfLines={1} adjustsFontSizeToFit>
+          {caption}
+        </Text>
+      )}
     </View>
   );
 }
@@ -120,5 +128,10 @@ const styles = StyleSheet.create({
   unit: {
     fontSize: Typography.xs,
     color: Colors.textMuted,
+  },
+  caption: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    textAlign: "center",
   },
 });

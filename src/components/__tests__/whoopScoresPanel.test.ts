@@ -72,13 +72,19 @@ describe("the panel's layout contract", () => {
     expect(panel).toContain("Fonts.mono.semibold");
   });
 
-  it("ships WITHOUT the strain caption for now", () => {
-    // Deferred deliberately: source_updated_at is a whole-frame signal
-    // (greatest of cycle/recovery/sleep) and would show the sleep scoring
-    // time under a strain number. PR 6 adds strain_updated_at.
-    expect(panel).not.toContain("formatStrainCaption");
-    expect(panel).not.toContain("as of");
-    expect(strip(panel)).not.toContain("asOf");
+  it("renders the strain caption through the shared formatter", () => {
+    // The day-aware branch ("as of 14:05" vs "as of Fri 14:05") lives in
+    // lib and is tested for real there; the panel must not grow its own.
+    expect(panel).toContain("formatStrainCaption(scores.asOf)");
+    expect(strip(panel)).not.toMatch(/toLocaleTimeString|getHours\(/);
+  });
+
+  it("shows the caption only when there is a strain value", () => {
+    // A timestamp under a dash claims the dash is fresh. The guard is the
+    // caption being null, which getWhoopScoresForDate already guarantees
+    // by nulling asOf alongside a missing strain -- this pins the render
+    // side of it too.
+    expect(panel.replace(/\s+/g, " ")).toContain("{caption && (");
   });
 });
 

@@ -27,24 +27,23 @@ export type WhoopScores = {
   strain: number | null;
   /**
    * The timestamp behind the strain caption ("as of 14:05"): when WHOOP
-   * last CALCULATED this, not when plated last pulled it. Decision, 2026-09-20
-   * — WHOOP's own calculation time is the honest "as of" for a score; our
-   * pull time says nothing about the number's freshness. This supersedes
-   * the earlier "strain shows last-synced time" default.
+   * last CALCULATED this day's strain, not when plated last pulled it.
+   * Decision, 2026-09-20 — WHOOP's own calculation time is the honest "as
+   * of" for a score; our pull time says nothing about the number's
+   * freshness. This supersedes the earlier "strain shows last-synced time"
+   * default, and `whoop_connections.last_sync_at` is not used for it.
    *
-   * CAVEAT: the view's `source_updated_at` is `greatest(cycle, recovery,
-   * sleep)` — a freshness signal across all three joined records, not the
-   * cycle's own timestamp. So it means "when this WHOOP frame last
-   * changed", which is not quite "when strain was calculated".
-   *
-   * Measured on production: 116 WHOOP rows, ZERO divergence — the two
-   * coincide on all current data, and neither recovery nor sleep is ever
-   * newer than its cycle. The concern is structural, not observed, and
-   * nothing enforces it. `strain_updated_at` (PR 6) is the column that is
-   * right by construction.
+   * Reads `strain_updated_at` (PR 6), which is the CYCLE's own
+   * `whoop_updated_at` — strain lives on the cycle. Deliberately NOT
+   * `source_updated_at`, which is `greatest(cycle, recovery, sleep)`: a
+   * whole-FRAME signal that would show the sleep scoring time under a
+   * strain number. The two coincide on all current production data (116
+   * rows, zero divergence), so this is right by construction rather than
+   * by WHOOP's current behaviour, which nothing enforces.
    *
    * NULL for a Health-Connect-sourced period: that arm of the view selects
-   * `null::timestamptz` for this column.
+   * `null::timestamptz`, because there is no cycle and so no strain
+   * calculation.
    */
   asOf: string | null;
 };
@@ -99,7 +98,7 @@ export async function getWhoopScoresForDate(
       .select(
         "local_date, recovery_score, recovery_score_state, " +
           "sleep_performance, sleep_score_state, " +
-          "strain, strain_score_state, source_updated_at, period_start",
+          "strain, strain_score_state, strain_updated_at, period_start",
       )
       .eq("local_date", date)
       // PL-019: a user can hold more than one row for a date (a dropped
@@ -141,7 +140,7 @@ export async function getWhoopScoresForDate(
     strain: strain == null ? null : Math.round(strain * 10) / 10,
     // Only meaningful alongside a strain value: a caption reading "as of
     // 14:05" under a "–" says the dash is fresh, which is nonsense.
-    asOf: strain == null ? null : ((row.source_updated_at as string) ?? null),
+    asOf: strain == null ? null : ((row.strain_updated_at as string) ?? null),
   };
 }
 

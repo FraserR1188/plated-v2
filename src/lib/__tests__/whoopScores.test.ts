@@ -9,7 +9,12 @@ import {
 
 /** Wire supabase.from(...).select(...).eq(...).order(...).limit(...). */
 function mockView(result: { data: unknown; error: unknown }) {
-  const calls: { table?: string; eq?: [string, string]; order?: string } = {};
+  const calls: {
+    table?: string;
+    columns?: string;
+    eq?: [string, string];
+    order?: string;
+  } = {};
   const limit = vi.fn(async () => result);
   const order = vi.fn((col: string) => {
     calls.order = col;
@@ -19,7 +24,10 @@ function mockView(result: { data: unknown; error: unknown }) {
     calls.eq = [col, val];
     return { order };
   });
-  const select = vi.fn(() => ({ eq }));
+  const select = vi.fn((cols: string) => {
+    calls.columns = cols;
+    return { eq };
+  });
   (supabase.from as ReturnType<typeof vi.fn>).mockImplementation(
     (table: string) => {
       calls.table = table;
@@ -38,7 +46,7 @@ function row(over: Record<string, unknown> = {}) {
     sleep_score_state: "SCORED",
     strain: 12.34,
     strain_score_state: "SCORED",
-    source_updated_at: "2026-09-19T13:05:00.000Z",
+    strain_updated_at: "2026-09-19T13:05:00.000Z",
     period_start: "2026-09-19T05:00:00.000Z",
     ...over,
   };
@@ -61,6 +69,20 @@ describe("getWhoopScoresForDate — reading the right thing", () => {
 
     expect(calls.table).toBe("biometric_periods_resolved");
     expect(calls.eq).toEqual(["local_date", "2026-09-19"]);
+  });
+
+  it("selects strain_updated_at, NOT source_updated_at", async () => {
+    // A sabotage run found this gap: the mock hands back whatever fixture it
+    // is given regardless of the select list, so swapping the column here
+    // passed every other test. In production it would silently kill the
+    // caption -- row.strain_updated_at would be undefined, asOf null, and
+    // the caption would simply never appear. Nothing else would complain.
+    const calls = mockView({ data: [row()], error: null });
+
+    await getWhoopScoresForDate("2026-09-19", NOW);
+
+    expect(calls.columns).toContain("strain_updated_at");
+    expect(calls.columns).not.toContain("source_updated_at");
   });
 
   it("orders so a doubled date resolves to the same row every time", async () => {
@@ -234,16 +256,32 @@ describe("getWhoopScoresForDate — failure", () => {
 });
 
 describe("the strain caption's timestamp", () => {
-  it("comes from the row, not from whoop_connections.last_sync_at", async () => {
-    // Decision 2026-09-20: WHOOP's own calculation time, not our pull time.
+  it("comes from strain_updated_at, not source_updated_at", async () => {
+    // Decision 2026-09-20: WHOOP's own calculation time, not our pull time
+    // -- and the CYCLE's timestamp, not the whole frame's. A row carrying
+    // both must take the strain one; source_updated_at here is deliberately
+    // different so picking the wrong column cannot pass.
     mockView({
-      data: [row({ source_updated_at: "2026-09-19T13:05:00.000Z" })],
+      data: [
+        row({
+          strain_updated_at: "2026-09-19T13:05:00.000Z",
+          source_updated_at: "2026-09-20T07:45:00.000Z",
+        }),
+      ],
       error: null,
     });
 
     const s = await getWhoopScoresForDate("2026-09-19", NOW);
 
     expect(s.asOf).toBe("2026-09-19T13:05:00.000Z");
+  });
+
+  it("is null for a Health Connect frame, which has no cycle", async () => {
+    // That arm of the view selects null::timestamptz -- there is no cycle,
+    // so there is no strain calculation time.
+    mockView({ data: [row({ strain_updated_at: null })], error: null });
+
+    expect((await getWhoopScoresForDate("2026-09-19", NOW)).asOf).toBeNull();
   });
 
   it("is null when there is no strain to caption", async () => {

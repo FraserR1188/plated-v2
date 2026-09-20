@@ -24,6 +24,12 @@ import {
 } from "../lib/entries";
 import * as compositionApi from "../lib/compositions";
 import { reportError, noteBreadcrumb } from "../lib/reportError";
+import { getWhoopConnection } from "../lib/whoop";
+import {
+  readWhoopConnectionCache,
+  writeWhoopConnectionCache,
+  clearWhoopConnectionCache,
+} from "../lib/whoopConnectionCache";
 
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
@@ -251,6 +257,12 @@ interface AppState {
   goals: Goals;
   /** PL-023: whether `goals` is real, defaulted, or unknown. */
   goalsState: GoalsState;
+  /**
+   * Whether WHOOP is connected. Drives Today's LAYOUT (the scores column
+   * beside the ring), not just its content, which is why it is seeded from
+   * a local cache before any network read. `revoked` counts as false.
+   */
+  whoopConnected: boolean;
   loading: boolean;
 
   /**
@@ -281,6 +293,10 @@ interface AppState {
   reset: () => void;
   fetchEntries: () => Promise<void>;
   fetchGoals: () => Promise<void>;
+  /** Seed from cache, then reconcile against the connection row. */
+  loadWhoopConnection: () => Promise<void>;
+  /** Settings' connect/disconnect. Writes the store and the cache together. */
+  setWhoopConnected: (connected: boolean) => Promise<void>;
   fetchSavedIngredients: () => Promise<void>;
   fetchCompositions: () => Promise<void>;
   /** Unbounded, same caveat as fetchEntries — refetched on every screen focus. */
@@ -555,6 +571,7 @@ export const useStore = create<AppState>((set, get) => ({
   savedIngredients: [],
   goals: DEFAULT_GOALS,
   goalsState: "loading",
+  whoopConnected: false,
   loading: false,
   viewedDate: todayKey(),
   incomingRequestCount: 0,
@@ -566,7 +583,13 @@ export const useStore = create<AppState>((set, get) => ({
   setViewedDate: (date) => set({ viewedDate: date }),
 
   /** Wipe every trace of the signed-in user. Called on sign-out. */
-  reset: () =>
+  reset: () => {
+    // Fire-and-forget: reset() is synchronous by contract (callers rely on
+    // the state being gone on the next line), and a cache entry that
+    // outlives a sign-out would hand the next account the wrong first
+    // frame. The user-id check in readWhoopConnectionCache is the real
+    // guard; this is the tidy-up.
+    void clearWhoopConnectionCache();
     set({
       userId: null,
       entries: [],
@@ -575,13 +598,15 @@ export const useStore = create<AppState>((set, get) => ({
       savedIngredients: [],
       goals: DEFAULT_GOALS,
       goalsState: "loading",
+      whoopConnected: false,
       loading: false,
       viewedDate: todayKey(),
       incomingRequestCount: 0,
       batchDraft: EMPTY_BATCH_DRAFT,
       compositionApplyDraft: null,
       manualEntryResult: null,
-    }),
+    });
+  },
 
   // NOTE: still unbounded. ~2,200 rows/year today; planning pushed that up and
   // bundles push it up again, re-fetched on every screen focus.
@@ -655,6 +680,65 @@ export const useStore = create<AppState>((set, get) => ({
       ingestTransport: w.ingest_transport,
     }));
     set({ workouts });
+  },
+
+  /**
+   * Two steps, and the order is the point.
+   *
+   * 1. Seed from the local cache, so Today's first frame already has the
+   *    right layout for a returning WHOOP user. This resolves in about the
+   *    time a file read takes, against tens of milliseconds for the round
+   *    trip below — which itself cannot even start until the Supabase
+   *    session has been restored.
+   * 2. Reconcile against the real connection row, and correct the cache.
+   *
+   * A FAILED reconcile keeps the cached state. The panel stays, its values
+   * render as "–", and nothing moves. The alternative — treating a failed
+   * read as "not connected" — would collapse the column on every flaky
+   * launch, which is the jump this whole mechanism exists to prevent.
+   * Only a SUCCESSFUL read is allowed to change the layout.
+   */
+  loadWhoopConnection: async () => {
+    const { userId } = get();
+    if (!userId) return;
+
+    const cached = await readWhoopConnectionCache(userId);
+    if (cached !== null) set({ whoopConnected: cached });
+
+    let connection: Awaited<ReturnType<typeof getWhoopConnection>>;
+    try {
+      connection = await getWhoopConnection();
+    } catch (e) {
+      // PL-014: one report, from the one place that owns this failure.
+      reportError("loadWhoopConnection", e, {
+        fingerprint: ["load-whoop-connection"],
+      });
+      return; // cached state stands
+    }
+
+    // `revoked` means the connection existed and died. For the panel that
+    // is the same as absent — there is nothing to show — but Settings still
+    // distinguishes them, which is why this reads `status` rather than
+    // testing for null alone.
+    const connected = connection != null && connection.status !== "revoked";
+
+    // Re-read userId: a sign-out during the round trip must not write a
+    // cache entry for a user who is no longer signed in.
+    if (get().userId !== userId) return;
+
+    set({ whoopConnected: connected });
+    await writeWhoopConnectionCache(userId, connected);
+  },
+
+  /**
+   * Settings' connect and disconnect. The store and the cache move in one
+   * action so they cannot disagree — a disconnect that updated only the
+   * store would come back connected on the next cold start.
+   */
+  setWhoopConnected: async (connected) => {
+    const { userId } = get();
+    set({ whoopConnected: connected });
+    if (userId) await writeWhoopConnectionCache(userId, connected);
   },
 
   /**

@@ -89,3 +89,21 @@ vi.mock("expo-sharing", () => ({
   isAvailableAsync: vi.fn(async () => true),
   shareAsync: vi.fn(async () => undefined),
 }));
+
+// A real in-memory AsyncStorage rather than bare vi.fn()s: the WHOOP
+// connection cache is about what SURVIVES between launches, and a mock
+// that forgets everything makes "written then read back" untestable.
+// Tests reach for __store to seed or inspect it.
+const asyncStorageMem = new Map<string, string>();
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: vi.fn(async (k: string) => asyncStorageMem.get(k) ?? null),
+    setItem: vi.fn(async (k: string, v: string) => {
+      asyncStorageMem.set(k, v);
+    }),
+    removeItem: vi.fn(async (k: string) => {
+      asyncStorageMem.delete(k);
+    }),
+    __store: asyncStorageMem,
+  },
+}));

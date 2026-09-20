@@ -121,6 +121,7 @@ export function SettingsScreen() {
     goals,
     saveGoals,
     fetchGoals,
+    setWhoopConnected,
     getAllEntries,
     savedIngredients,
     deleteIngredient,
@@ -263,8 +264,14 @@ export function SettingsScreen() {
   const refreshWhoop = useCallback(async () => {
     const conn = await getWhoopConnection();
     setWhoop(conn);
+    // PR 4: the store (and its cache) move with this screen's local state,
+    // in one place. refreshWhoop is what connect AND disconnect both call,
+    // so they cannot end up disagreeing about whether WHOOP is connected —
+    // and a disconnect that updated only this screen would come back
+    // connected on the next cold start, from the cache.
+    await setWhoopConnected(conn != null && conn.status !== "revoked");
     setWhoopLoading(false);
-  }, []);
+  }, [setWhoopConnected]);
 
   useEffect(() => {
     refreshWhoop();

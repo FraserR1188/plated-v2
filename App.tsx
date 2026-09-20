@@ -127,6 +127,10 @@ function App() {
         fetchEntries();
         fetchGoals();
         fetchSavedIngredients();
+        // PR 4: seeds from the local cache first, so Today's first frame
+        // already has the right layout for a returning WHOOP user, then
+        // reconciles against the connection row.
+        void useStore.getState().loadWhoopConnection();
       } else {
         setUserId(null);
       }

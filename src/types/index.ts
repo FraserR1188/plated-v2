@@ -784,6 +784,8 @@ export type RootStackParamList = {
 export type BottomTabParamList = {
   Today: undefined;
   History: undefined;
+  /** Centre slot. Stub until the readiness query exists — see InsightsScreen. */
+  Insights: undefined;
   Friends: undefined;
   Settings: undefined;
 };

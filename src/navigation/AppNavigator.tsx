@@ -7,6 +7,7 @@
 //   └── MainTabs (bottom tab bar)
 //       ├── Today    → TodayScreen
 //       ├── History  → HistoryScreen
+//       ├── Insights → InsightsScreen   ← centre slot, stub for now
 //       ├── Friends  → FriendsScreen
 //       └── Settings → SettingsScreen
 //   ├── Batches        (push, native header)  ← was a 5th tab; opened from
@@ -43,6 +44,7 @@ import { AddIngredientScreen } from "../screens/AddIngredientScreen";
 import { ScannerScreen } from "../screens/ScannerScreen";
 import { ProductScreen } from "../screens/ProductScreen";
 import { FriendsScreen } from "../screens/FriendsScreen";
+import { InsightsScreen } from "../screens/InsightsScreen";
 import { BatchesScreen } from "../screens/BatchesScreen";
 import { BatchEditorScreen } from "../screens/BatchEditorScreen";
 import { BundleApplyReviewScreen } from "../screens/BundleApplyReviewScreen";
@@ -97,6 +99,13 @@ function MainTabs() {
         name="History"
         component={HistoryScreen}
         options={{ tabBarLabel: "History" }}
+      />
+      {/* Centre of five, deliberately: this is where the product's
+          differentiator lands once the readiness query exists. */}
+      <Tab.Screen
+        name="Insights"
+        component={InsightsScreen}
+        options={{ tabBarLabel: "Insights" }}
       />
       <Tab.Screen
         name="Friends"

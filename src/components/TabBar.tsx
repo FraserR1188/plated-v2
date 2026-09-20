@@ -50,6 +50,7 @@ const TAB_ICONS: Record<
 > = {
   Today: { default: "⊕", active: "⊕" },
   History: { default: "◫", active: "◫" },
+  Insights: { default: "◈", active: "◈" },
   Friends: { default: "◎", active: "◎" },
   Settings: { default: "⊙", active: "⊙" },
 };

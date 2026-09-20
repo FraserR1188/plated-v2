@@ -113,11 +113,31 @@ function typeMembers(sourceFile: ts.SourceFile, name: string): string[] {
   return members;
 }
 
-const EXPECTED_TABS = ["Today", "History", "Friends", "Settings"];
+const EXPECTED_TABS = [
+  "Today",
+  "History",
+  "Insights",
+  "Friends",
+  "Settings",
+];
 
 describe("bottom tabs", () => {
   it("registers exactly the expected tabs, in order", () => {
     expect(screenNames(navigator.sourceFile, "Tab")).toEqual(EXPECTED_TABS);
+  });
+
+  // Insights is meant to sit in the MIDDLE of the bar, which only holds
+  // while the count is odd and it is the median entry. Worth pinning as
+  // its own assertion: the order test above would still pass if a sixth
+  // tab were added or Insights were moved one place along.
+  //
+  // One thing this cannot see: TabBar hides Friends when SOCIAL_ENABLED is
+  // false (TabBar.tsx), which leaves four tabs rendered and puts Insights
+  // off-centre. That flag is currently true.
+  it("puts Insights in the centre slot", () => {
+    const tabs = screenNames(navigator.sourceFile, "Tab");
+    expect(tabs.length % 2).toBe(1);
+    expect(tabs[(tabs.length - 1) / 2]).toBe("Insights");
   });
 
   it("keeps BottomTabParamList in step with the tabs actually registered", () => {

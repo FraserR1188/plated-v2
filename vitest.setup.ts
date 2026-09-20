@@ -1,5 +1,19 @@
 import { vi } from "vitest";
 
+// PL-007. Pin the timezone for the whole suite.
+//
+// The date bugs this project keeps hitting are BST bugs: dateKey() and
+// toISOString().slice(0, 10) agree EXACTLY when local time is UTC, so a
+// test written to catch one is vacuous under UTC -- it passes against the
+// broken code. The dev machine is Europe/London and CI's ubuntu runner is
+// UTC, which is the worst arrangement: green locally, green in CI, and the
+// regression ships.
+//
+// Europe/London rather than a fixed offset, because the interesting cases
+// are the transitions (BST->GMT on 25 Oct 2026) and only a real zone has
+// them.
+process.env.TZ = "Europe/London";
+
 // __DEV__ is a React Native / Metro global, never defined under plain
 // Node/Vite. Every existing __DEV__ reference in this codebase (App.tsx,
 // SettingsScreen.tsx, instrument.ts) lives in a file no test actually
@@ -61,4 +75,17 @@ vi.mock("expo-linking", () => ({
 }));
 vi.mock("expo-web-browser", () => ({
   openAuthSessionAsync: vi.fn(async () => ({ type: "cancel" })),
+}));
+
+// csv.ts imports both at module scope for writing and sharing the export
+// file. The logic under test (buildCsv, last30Days) touches neither, but
+// the import has to resolve.
+vi.mock("expo-file-system/legacy", () => ({
+  documentDirectory: "file:///test/",
+  EncodingType: { UTF8: "utf8" },
+  writeAsStringAsync: vi.fn(async () => undefined),
+}));
+vi.mock("expo-sharing", () => ({
+  isAvailableAsync: vi.fn(async () => true),
+  shareAsync: vi.fn(async () => undefined),
 }));

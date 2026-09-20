@@ -23,7 +23,7 @@ import {
   DayBucket,
 } from "../lib/entries";
 import * as compositionApi from "../lib/compositions";
-import { reportError } from "../lib/reportError";
+import { reportError, noteBreadcrumb } from "../lib/reportError";
 
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
@@ -35,6 +35,23 @@ const DEFAULT_GOALS: Goals = {
   fibre: 30,
   sugar: 30,
 };
+
+/**
+ * PL-023. Whether the store actually KNOWS the user's targets.
+ *
+ *   loading — not read yet. Nothing may be written from this.
+ *   loaded  — a real row is in `goals`. Writable, as a partial update.
+ *   absent  — read succeeded WITH a session and there is no row (P-TF01b).
+ *             `goals` holds DEFAULT_GOALS. Writable, as a full insert.
+ *   error   — the read failed, or ran without a session. `goals` may hold
+ *             DEFAULT_GOALS for DISPLAY ONLY. Nothing may be written.
+ *
+ * The distinction exists because DEFAULT_GOALS is indistinguishable from a
+ * user whose targets happen to be the defaults, and Settings seeds its form
+ * from whatever is in `goals`. Without this, a failed read plus one edit
+ * persisted the defaults over the user's real row.
+ */
+export type GoalsState = "loading" | "loaded" | "absent" | "error";
 
 /**
  * Fields a caller is allowed to change on an existing entry.
@@ -232,6 +249,8 @@ interface AppState {
   compositions: MealCompositionWithItems[];
   savedIngredients: SavedIngredientScored[];
   goals: Goals;
+  /** PL-023: whether `goals` is real, defaulted, or unknown. */
+  goalsState: GoalsState;
   loading: boolean;
 
   /**
@@ -535,6 +554,7 @@ export const useStore = create<AppState>((set, get) => ({
   compositions: [],
   savedIngredients: [],
   goals: DEFAULT_GOALS,
+  goalsState: "loading",
   loading: false,
   viewedDate: todayKey(),
   incomingRequestCount: 0,
@@ -554,6 +574,7 @@ export const useStore = create<AppState>((set, get) => ({
       compositions: [],
       savedIngredients: [],
       goals: DEFAULT_GOALS,
+      goalsState: "loading",
       loading: false,
       viewedDate: todayKey(),
       incomingRequestCount: 0,
@@ -637,22 +658,48 @@ export const useStore = create<AppState>((set, get) => ({
   },
 
   /**
-   * PL-017: a user with no `goals` row is the NORMAL state of a new account,
-   * not a failure. Nothing in sign-up writes one (P-TF01b: there is no
-   * onboarding), so the row appears only when targets are set in Settings —
-   * and this runs on every auth event (App.tsx), so `.single()`'s PGRST116
-   * filed a Sentry error on every launch for those users and buried real
-   * failures in the `operation:fetchGoals` signal.
+   * PL-017 / PL-023. Two separate problems meet in this one read.
    *
-   * `.maybeSingle()` returns `{ data: null, error: null }` for zero rows, so
-   * "no targets set" and "the query failed" are finally distinguishable.
-   * No PGRST116 code check belongs alongside it: with maybeSingle this query
-   * can no longer produce that code, and a check for it would be dead code
-   * that swallows a real error if the query shape ever changes.
+   * PL-017: a user with no `goals` row is the NORMAL state of a new account,
+   * not a failure. Nothing in sign-up writes one (P-TF01b), and this runs on
+   * every auth event, so `.single()`'s PGRST116 filed a Sentry error on every
+   * launch for those users and buried real failures in the signal.
+   *
+   * PL-023: `.maybeSingle()` alone is not enough, because an empty result is
+   * only trustworthy if the read actually carried the user's session.
+   * supabase-js resolves the access token PER REQUEST and falls back to the
+   * ANON key when `getSession()` yields null (`SupabaseClient._getAccessToken`
+   * → `fetchWithAuth`). Measured on production: `anon` holds SELECT on
+   * `public.goals` and every SELECT policy is `(auth.uid() = user_id)` with
+   * `polroles` null — i.e. PUBLIC — so an anon read returns ZERO ROWS with
+   * HTTP 200. Indistinguishable from "no targets set", and the difference is
+   * a user's real targets.
+   *
+   * Hence the session gate: no session means no query and state `error`,
+   * never `absent`. With a session, an empty read is believed.
+   *
+   * The four states are what let the rest of the app tell "these are your
+   * targets" from "these are placeholders": `absent` and `loaded` are known
+   * good and may be written back; `loading` and `error` may not.
    */
   fetchGoals: async () => {
-    const { userId } = get();
-    if (!userId) return;
+    const { userId, goalsState } = get();
+    // No signed-in user: same convention as addEntry's `!user` exit — the
+    // caller is told nothing and Sentry isn't told either, because this is
+    // reached on ordinary sign-out races, not on failure.
+    if (!userId) {
+      set({ goalsState: "error" });
+      return;
+    }
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData?.session) {
+      // Not reported: a missing session is a lifecycle state, not a fault.
+      // What matters is that no query goes out under the anon key.
+      set({ goalsState: "error" });
+      return;
+    }
+
     const { data, error } = await supabase
       .from("goals")
       .select("*")
@@ -660,17 +707,23 @@ export const useStore = create<AppState>((set, get) => ({
       .maybeSingle();
 
     if (error) {
-      // A genuine failure. Keep whatever goals are already loaded rather
-      // than pretending the user has none.
       reportError("fetchGoals", error, { level: "error" });
+      // A failed read must never downgrade a known-good state. If targets
+      // were already loaded (or known absent), keep them and keep the state
+      // — that is precisely the PL-023 data-loss path, since Settings seeds
+      // its form from whatever is here.
+      if (goalsState === "loaded" || goalsState === "absent") return;
+      // Cold start: nothing known. Show the defaults, but say so, so no
+      // write path will accept them.
+      set({ goals: DEFAULT_GOALS, goalsState: "error" });
       return;
     }
 
     if (!data) {
-      // No targets set. Explicit rather than a fall-through, so a row
-      // deleted under a signed-in user drops back to the defaults instead
-      // of leaving stale targets on screen.
-      set({ goals: DEFAULT_GOALS });
+      // PL-017: normal, not an error. A breadcrumb rather than an event, so a
+      // LATER failure carries the fact that the store was on defaults.
+      noteBreadcrumb("fetchGoals", "goals: no row for user");
+      set({ goals: DEFAULT_GOALS, goalsState: "absent" });
       return;
     }
 
@@ -685,6 +738,7 @@ export const useStore = create<AppState>((set, get) => ({
         fibre: data.fibre,
         sugar: data.sugar,
       },
+      goalsState: "loaded",
     });
   },
 
@@ -1449,26 +1503,97 @@ export const useStore = create<AppState>((set, get) => ({
 
   // ─── Saved ingredients ─────────────────────────────────────
 
-  saveGoals: async (goals) => {
-    const { userId } = get();
+  /**
+   * PL-023. The old implementation upserted all eight columns from whatever
+   * the caller handed it, and SettingsScreen handed it a form seeded once at
+   * mount. So a store sitting on DEFAULT_GOALS after a failed read, plus one
+   * edit, rewrote seven values the user never saw — silently, with no undo
+   * and no history on the table to recover from.
+   *
+   * Three rules now:
+   *   1. Only `loaded` and `absent` may be written from. `loading` and
+   *      `error` mean the store does not know the user's targets, so nothing
+   *      it holds is safe to persist.
+   *   2. `loaded` → UPDATE only the columns that actually changed. A field
+   *      the user didn't touch is never written, so even a stale form cannot
+   *      overwrite a value it never loaded.
+   *   3. `absent` → INSERT the full row. Deliberately an insert and not an
+   *      upsert: if a row does exist after all, the unique violation is the
+   *      correct outcome, not an overwrite.
+   */
+  saveGoals: async (next) => {
+    const { userId, goals, goalsState } = get();
     if (!userId) return { error: null };
-    const { error } = await supabase.from("goals").upsert({
-      user_id: userId,
-      calories: goals.calories,
-      protein: goals.protein,
-      carbs: goals.carbs,
-      fat: goals.fat,
-      sat_fat: goals.satFat, // camelCase → snake_case
-      salt: goals.salt,
-      fibre: goals.fibre,
-      sugar: goals.sugar,
-      updated_at: new Date().toISOString(),
-    });
+
+    if (goalsState !== "loaded" && goalsState !== "absent") {
+      return {
+        error:
+          "Your targets haven't loaded yet, so they can't be saved. Try again once they appear.",
+      };
+    }
+
+    // camelCase → snake_case, mapped explicitly. Never spread the camelCase
+    // object into a Supabase write (CLAUDE.md).
+    const columns: Array<[keyof Goals, string]> = [
+      ["calories", "calories"],
+      ["protein", "protein"],
+      ["carbs", "carbs"],
+      ["fat", "fat"],
+      ["satFat", "sat_fat"],
+      ["salt", "salt"],
+      ["fibre", "fibre"],
+      ["sugar", "sugar"],
+    ];
+
+    if (goalsState === "absent") {
+      const row: Record<string, unknown> = { user_id: userId };
+      for (const [key, column] of columns) row[column] = next[key];
+      row.updated_at = new Date().toISOString();
+
+      const { error } = await supabase.from("goals").insert(row);
+      if (error) {
+        reportError("saveGoals", error, { level: "error" });
+        return { error: "Couldn't save your goals. Check your connection." };
+      }
+      set({ goals: next, goalsState: "loaded" });
+      return { error: null };
+    }
+
+    // loaded → changed columns only.
+    const changes: Record<string, unknown> = {};
+    for (const [key, column] of columns) {
+      if (next[key] !== goals[key]) changes[column] = next[key];
+    }
+
+    // Nothing changed: pressing Save without editing anything must not write.
+    if (Object.keys(changes).length === 0) return { error: null };
+
+    changes.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from("goals")
+      .update(changes)
+      .eq("user_id", userId)
+      .select("user_id");
+
     if (error) {
       reportError("saveGoals", error, { level: "error" });
       return { error: "Couldn't save your goals. Check your connection." };
     }
-    set({ goals });
+
+    // An UPDATE filtered out by RLS returns NO error — the USING clause just
+    // removes the row from the target set and the request "succeeds" with
+    // zero rows. Same trap as saveCompositionApplyQuantities.
+    if (!data || data.length === 0) {
+      reportError(
+        "saveGoals",
+        { message: "goals update matched zero rows", code: "" },
+        { level: "error" },
+      );
+      return { error: "Couldn't save your goals. Please try again." };
+    }
+
+    set({ goals: next });
     return { error: null };
   },
 

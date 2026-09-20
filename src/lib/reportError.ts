@@ -50,3 +50,26 @@ export function reportError(
     ...(extra ? { extra } : {}),
   });
 }
+
+/**
+ * A breadcrumb, NOT an event. For a state that is normal on its own but worth
+ * knowing about if something later fails — PL-017's "this user has no goals
+ * row" is the first case: reporting it as an error filed one Sentry event per
+ * launch for every account without targets, but a later failure is much easier
+ * to read if the trail says the store was running on defaults.
+ *
+ * Deliberately not `level: "error"`: a breadcrumb at error level still shows
+ * as a red trail entry and invites exactly the misreading this replaces.
+ */
+export function noteBreadcrumb(
+  operation: string,
+  message: string,
+  data?: Record<string, unknown>,
+): void {
+  Sentry.addBreadcrumb({
+    category: operation,
+    message,
+    level: "info",
+    ...(data ? { data } : {}),
+  });
+}

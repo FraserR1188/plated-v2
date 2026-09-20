@@ -353,7 +353,20 @@ function App() {
     runSyncs();
 
     const sub = AppState.addEventListener("change", (next) => {
-      if (next === "active") runSyncs();
+      if (next === "active") {
+        runSyncs();
+        // PL-023: a goals read that failed (or ran before a session was
+        // available) leaves the store on DEFAULT_GOALS with goalsState
+        // 'error', and Settings then refuses to save. Retry on foreground
+        // so the common case -- no signal at launch, signal a minute later
+        // -- fixes itself without the user finding the Retry button.
+        // Deliberately ONLY while in 'error': 'loaded' and 'absent' are
+        // known good and re-reading them every foreground would be an
+        // unbounded query for data that cannot have changed from here.
+        if (useStore.getState().goalsState === "error") {
+          void useStore.getState().fetchGoals();
+        }
+      }
     });
     return () => sub.remove();
   }, [session]);

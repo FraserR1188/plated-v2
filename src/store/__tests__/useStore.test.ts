@@ -638,6 +638,45 @@ function mockGoalsSelect(result: { data: unknown; error: unknown }) {
   return { maybeSingle, eq, select };
 }
 
+/** PL-023: goals UPDATE — .update(patch).eq(...).select("user_id").
+ *  Returns rows so a zero-row (RLS-filtered) update can be simulated. */
+function mockGoalsUpdate(rows: unknown[], error: unknown = null) {
+  const capture: { patch?: Record<string, unknown> } = {};
+  const select = vi.fn(async () => ({ data: rows, error }));
+  const eq = vi.fn(() => ({ select }));
+  const update = vi.fn((patch: Record<string, unknown>) => {
+    capture.patch = patch;
+    return { eq };
+  });
+  (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ update });
+  return capture;
+}
+
+/** PL-023: goals INSERT — .insert(row). */
+function mockGoalsInsert(error: unknown = null) {
+  const capture: { row?: Record<string, unknown> } = {};
+  const insert = vi.fn(async (row: Record<string, unknown>) => {
+    capture.row = row;
+    return { error };
+  });
+  (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ insert });
+  return capture;
+}
+
+function withSession() {
+  vi.mocked(supabase.auth.getSession).mockResolvedValue({
+    data: { session: { access_token: "t", user: { id: "test-user-id" } } },
+    error: null,
+  } as never);
+}
+
+function withoutSession() {
+  vi.mocked(supabase.auth.getSession).mockResolvedValue({
+    data: { session: null },
+    error: null,
+  } as never);
+}
+
 const goalsRow = {
   user_id: "test-user-id",
   calories: 2400,
@@ -650,105 +689,116 @@ const goalsRow = {
   sugar: 40,
 };
 
+const realGoals = {
+  calories: 2400,
+  protein: 180,
+  carbs: 240,
+  fat: 70,
+  satFat: 24,
+  salt: 5,
+  fibre: 35,
+  sugar: 40,
+};
+
+const DEFAULTS = {
+  calories: 2000,
+  protein: 150,
+  carbs: 200,
+  fat: 65,
+  satFat: 20,
+  salt: 6,
+  fibre: 30,
+  sugar: 30,
+};
+
 describe("useStore.fetchGoals", () => {
-  it("PL-017: a user with NO goals row is not an error — nothing is reported", async () => {
-    // This is the normal state of every account between sign-up and the
-    // first visit to Settings (P-TF01b: there is no onboarding, so no row
-    // is written until the user sets targets). fetchGoals runs on every
-    // auth event, so treating it as an error filed a Sentry event on every
-    // launch for those users and polluted the operation:fetchGoals signal.
+  it("PL-023: NO session means no query at all, and state 'error'", async () => {
+    // supabase-js resolves the access token per request and falls back to the
+    // ANON key when getSession() yields null (SupabaseClient._getAccessToken).
+    // An anon read of `goals` returns ZERO ROWS with HTTP 200 — measured: anon
+    // holds SELECT on public.goals and the policy (auth.uid() = user_id)
+    // applies to PUBLIC. So an ungated read is indistinguishable from "this
+    // user has no targets", which is what PL-023 turns into data loss.
     useStore.getState().setUserId("test-user-id");
+    withoutSession();
+    vi.mocked(supabase.from).mockClear();
+
+    await useStore.getState().fetchGoals();
+
+    expect(supabase.from).not.toHaveBeenCalled();
+    expect(useStore.getState().goalsState).toBe("error");
+  });
+
+  it("PL-023: with a session, an empty read is trustworthy — 'absent', not 'error'", async () => {
+    useStore.getState().setUserId("test-user-id");
+    withSession();
+    mockGoalsSelect({ data: null, error: null });
+
+    await useStore.getState().fetchGoals();
+
+    expect(useStore.getState().goalsState).toBe("absent");
+    expect(useStore.getState().goals).toEqual(DEFAULTS);
+  });
+
+  it("PL-017: 'absent' is not an error — nothing is reported, a breadcrumb is left", async () => {
+    // The normal state of every account between sign-up and the first visit
+    // to Settings (P-TF01b). fetchGoals runs on every auth event, so
+    // reporting it filed a Sentry error on every launch for those users.
+    useStore.getState().setUserId("test-user-id");
+    withSession();
     mockGoalsSelect({ data: null, error: null });
     vi.mocked(Sentry.captureException).mockClear();
+    vi.mocked(Sentry.addBreadcrumb).mockClear();
 
     await useStore.getState().fetchGoals();
 
     expect(Sentry.captureException).not.toHaveBeenCalled();
+    // Not an event, but a later error should carry "goals: no row" context.
+    expect(Sentry.addBreadcrumb).toHaveBeenCalledTimes(1);
+    const crumb = vi.mocked(Sentry.addBreadcrumb).mock.calls[0][0] as {
+      message?: string;
+      level?: string;
+    };
+    expect(crumb.message).toMatch(/no row/i);
+    expect(crumb.level).not.toBe("error");
   });
 
-  it("PL-017: a user with no goals row still gets the defaults", async () => {
-    // The behaviour P-TF01b describes must not change: no row means the
-    // app runs on DEFAULT_GOALS (2000 kcal), it does not mean blank or
-    // zeroed targets.
+  it("PL-023: a failure AFTER a good load keeps the loaded goals and their state", async () => {
+    // The data-loss path. If a later failed read dropped the store back to
+    // DEFAULT_GOALS, Settings would seed 2000 kcal over real targets and the
+    // next Save would persist them.
     useStore.getState().setUserId("test-user-id");
-    mockGoalsSelect({ data: null, error: null });
-
-    await useStore.getState().fetchGoals();
-
-    expect(useStore.getState().goals).toEqual({
-      calories: 2000,
-      protein: 150,
-      carbs: 200,
-      fat: 65,
-      satFat: 20,
-      salt: 6,
-      fibre: 30,
-      sugar: 30,
-    });
-  });
-
-  it("the no-row path is EXPLICIT: it resets loaded goals to the defaults, it does not leave them", async () => {
-    // Distinguishes an explicit no-row branch from "the error branch
-    // happened to leave state alone and reset() had put the defaults
-    // there". Reachable for real when a signed-in user's row is deleted
-    // and a later auth event refetches.
-    useStore.getState().setUserId("test-user-id");
-    useStore.setState({
-      goals: {
-        calories: 3000,
-        protein: 200,
-        carbs: 300,
-        fat: 90,
-        satFat: 30,
-        salt: 6,
-        fibre: 40,
-        sugar: 50,
-      },
-    });
-    mockGoalsSelect({ data: null, error: null });
-
-    await useStore.getState().fetchGoals();
-
-    expect(useStore.getState().goals.calories).toBe(2000);
-  });
-
-  it("maps a real row snake_case → camelCase, sat_fat included", async () => {
-    useStore.getState().setUserId("test-user-id");
+    withSession();
     mockGoalsSelect({ data: goalsRow, error: null });
-    // Cleared deliberately: without it this assertion is only true because
-    // the tests ABOVE happen not to report, which a sabotage run caught.
-    vi.mocked(Sentry.captureException).mockClear();
-
     await useStore.getState().fetchGoals();
+    expect(useStore.getState().goalsState).toBe("loaded");
 
-    expect(useStore.getState().goals).toEqual({
-      calories: 2400,
-      protein: 180,
-      carbs: 240,
-      fat: 70,
-      satFat: 24,
-      salt: 5,
-      fibre: 35,
-      sugar: 40,
+    mockGoalsSelect({
+      data: null,
+      error: { message: "TypeError: Network request failed", code: "" },
     });
-    expect(Sentry.captureException).not.toHaveBeenCalled();
-  });
-
-  it("a NULL sat_fat on a real row falls back to the default, not to 0", async () => {
-    useStore.getState().setUserId("test-user-id");
-    mockGoalsSelect({ data: { ...goalsRow, sat_fat: null }, error: null });
-
     await useStore.getState().fetchGoals();
 
-    expect(useStore.getState().goals.satFat).toBe(20);
-    expect(useStore.getState().goals.calories).toBe(2400);
+    expect(useStore.getState().goals).toEqual(realGoals);
+    expect(useStore.getState().goalsState).toBe("loaded");
   });
 
-  it("a GENUINE query failure is still reported once, and leaves goals unchanged", async () => {
-    // The fix narrows what counts as an error; it must not stop reporting
-    // real ones. A 500 or a network failure still reaches Sentry.
+  it("PL-023: a failure after 'absent' keeps 'absent' — it does not degrade to 'error'", async () => {
     useStore.getState().setUserId("test-user-id");
-    const before = useStore.getState().goals;
+    withSession();
+    mockGoalsSelect({ data: null, error: null });
+    await useStore.getState().fetchGoals();
+    expect(useStore.getState().goalsState).toBe("absent");
+
+    mockGoalsSelect({ data: null, error: { message: "boom", code: "" } });
+    await useStore.getState().fetchGoals();
+
+    expect(useStore.getState().goalsState).toBe("absent");
+  });
+
+  it("a failure on COLD START gives 'error', with the defaults for display only", async () => {
+    useStore.getState().setUserId("test-user-id");
+    withSession();
     mockGoalsSelect({
       data: null,
       error: { message: "TypeError: Network request failed", code: "" },
@@ -757,13 +807,40 @@ describe("useStore.fetchGoals", () => {
 
     await useStore.getState().fetchGoals();
 
+    expect(useStore.getState().goalsState).toBe("error");
+    expect(useStore.getState().goals).toEqual(DEFAULTS);
     expect(Sentry.captureException).toHaveBeenCalledTimes(1);
     const [, ctx] = vi.mocked(Sentry.captureException).mock.calls[0] as [
       unknown,
       { tags: { operation: string } },
     ];
     expect(ctx.tags.operation).toBe("fetchGoals");
-    expect(useStore.getState().goals).toEqual(before);
+  });
+
+  it("maps a real row snake_case → camelCase and sets 'loaded'", async () => {
+    useStore.getState().setUserId("test-user-id");
+    withSession();
+    mockGoalsSelect({ data: goalsRow, error: null });
+    // Cleared deliberately: without it this assertion is only true because
+    // the tests ABOVE happen not to report, which a sabotage run caught.
+    vi.mocked(Sentry.captureException).mockClear();
+
+    await useStore.getState().fetchGoals();
+
+    expect(useStore.getState().goals).toEqual(realGoals);
+    expect(useStore.getState().goalsState).toBe("loaded");
+    expect(Sentry.captureException).not.toHaveBeenCalled();
+  });
+
+  it("a NULL sat_fat on a real row falls back to the default, not to 0", async () => {
+    useStore.getState().setUserId("test-user-id");
+    withSession();
+    mockGoalsSelect({ data: { ...goalsRow, sat_fat: null }, error: null });
+
+    await useStore.getState().fetchGoals();
+
+    expect(useStore.getState().goals.satFat).toBe(20);
+    expect(useStore.getState().goals.calories).toBe(2400);
   });
 
   it("does not touch the network when there is no signed-in user", async () => {
@@ -776,26 +853,132 @@ describe("useStore.fetchGoals", () => {
     expect(supabase.from).not.toHaveBeenCalled();
     expect(Sentry.captureException).not.toHaveBeenCalled();
   });
+
+  it("reset() clears the state back to 'loading'", async () => {
+    useStore.getState().setUserId("test-user-id");
+    withSession();
+    mockGoalsSelect({ data: goalsRow, error: null });
+    await useStore.getState().fetchGoals();
+    expect(useStore.getState().goalsState).toBe("loaded");
+
+    useStore.getState().reset();
+
+    expect(useStore.getState().goalsState).toBe("loading");
+    expect(useStore.getState().goals).toEqual(DEFAULTS);
+  });
 });
 
 describe("useStore.saveGoals", () => {
-  it("on success, updates local goals and returns a null error", async () => {
+  it("PL-023: in 'loaded', writes ONLY the changed columns", async () => {
+    // The heart of PL-023. The old code upserted all eight columns from a
+    // form seeded once at mount, so one edit rewrote seven other values that
+    // may never have been loaded.
     useStore.getState().setUserId("test-user-id");
-    const upsert = vi.fn(async () => ({ error: null }));
-    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ upsert });
+    useStore.setState({ goals: realGoals, goalsState: "loaded" });
+    const capture = mockGoalsUpdate([{ user_id: "test-user-id" }]);
 
-    const newGoals = { ...useStore.getState().goals, calories: 2500 };
-    const result = await useStore.getState().saveGoals(newGoals);
+    const result = await useStore
+      .getState()
+      .saveGoals({ ...realGoals, calories: 2500 });
 
     expect(result.error).toBeNull();
-    expect(useStore.getState().goals).toEqual(newGoals);
+    const patch = capture.patch as Record<string, unknown>;
+    expect(patch.calories).toBe(2500);
+    // Every other macro column must be ABSENT, not merely equal.
+    for (const col of [
+      "protein",
+      "carbs",
+      "fat",
+      "sat_fat",
+      "salt",
+      "fibre",
+      "sugar",
+    ]) {
+      expect(patch).not.toHaveProperty(col);
+    }
+    expect(useStore.getState().goals.calories).toBe(2500);
+  });
+
+  it("PL-023: a no-op save writes nothing at all", async () => {
+    useStore.getState().setUserId("test-user-id");
+    useStore.setState({ goals: realGoals, goalsState: "loaded" });
+    vi.mocked(supabase.from).mockClear();
+
+    const result = await useStore.getState().saveGoals({ ...realGoals });
+
+    expect(result.error).toBeNull();
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("PL-023: in 'absent', INSERTs the full row and becomes 'loaded'", async () => {
+    useStore.getState().setUserId("test-user-id");
+    useStore.setState({ goals: DEFAULTS, goalsState: "absent" });
+    const capture = mockGoalsInsert();
+
+    const result = await useStore
+      .getState()
+      .saveGoals({ ...DEFAULTS, calories: 2200 });
+
+    expect(result.error).toBeNull();
+    const row = capture.row as Record<string, unknown>;
+    expect(row.user_id).toBe("test-user-id");
+    expect(row.calories).toBe(2200);
+    // snake_case, mapped explicitly — never a spread of the camelCase object.
+    expect(row.sat_fat).toBe(20);
+    expect(row).not.toHaveProperty("satFat");
+    expect(useStore.getState().goalsState).toBe("loaded");
+  });
+
+  it("PL-023: refuses to write in 'loading' — no query, non-null error", async () => {
+    useStore.getState().setUserId("test-user-id");
+    useStore.setState({ goals: DEFAULTS, goalsState: "loading" });
+    vi.mocked(supabase.from).mockClear();
+
+    const result = await useStore
+      .getState()
+      .saveGoals({ ...DEFAULTS, calories: 2500 });
+
+    expect(result.error).toEqual(expect.any(String));
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("PL-023: refuses to write in 'error' — no query, non-null error", async () => {
+    // The exact data-loss sequence: a failed read leaves the defaults on
+    // screen, the user "corrects" one field, and the old code wrote all
+    // eight over their real row.
+    useStore.getState().setUserId("test-user-id");
+    useStore.setState({ goals: DEFAULTS, goalsState: "error" });
+    vi.mocked(supabase.from).mockClear();
+
+    const result = await useStore
+      .getState()
+      .saveGoals({ ...DEFAULTS, calories: 2500 });
+
+    expect(result.error).toEqual(expect.any(String));
+    expect(supabase.from).not.toHaveBeenCalled();
+  });
+
+  it("PL-023: a zero-row UPDATE is a failure, not silent success", async () => {
+    // Same lesson as saveCompositionApplyQuantities: an RLS-filtered UPDATE
+    // returns no Postgrest error, just an empty row set.
+    useStore.getState().setUserId("test-user-id");
+    useStore.setState({ goals: realGoals, goalsState: "loaded" });
+    mockGoalsUpdate([]);
+
+    const result = await useStore
+      .getState()
+      .saveGoals({ ...realGoals, calories: 2500 });
+
+    expect(result.error).toEqual(expect.any(String));
+    // The cache must not show the edit as saved when nothing was.
+    expect(useStore.getState().goals.calories).toBe(2400);
   });
 
   it("on failure, leaves local goals UNCHANGED and returns a non-null error", async () => {
     useStore.getState().setUserId("test-user-id");
+    useStore.setState({ goals: realGoals, goalsState: "loaded" });
     const before = useStore.getState().goals;
-    const upsert = vi.fn(async () => ({ error: pgError }));
-    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({ upsert });
+    mockGoalsUpdate([], pgError);
 
     const result = await useStore
       .getState()

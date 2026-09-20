@@ -57,7 +57,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 
 | ID | Severity | Summary | Status | Raised in | Fix / note |
 |---|---|---|---|---|---|
-| PL-023 | Blocker | A failed goals read makes Settings persist the defaults over real targets | Logged | 2026-09-20-internal | Form seeds once from the store (SettingsScreen.tsx:129-138), Save sends all eight fields, saveGoals is a full-row upsert. Any failed fetchGoals → user edits one field → real targets overwritten. Not introduced by PL-017; PL-017 widens the window |
+| PL-023 | Blocker | A failed goals read makes Settings persist the defaults over real targets | In progress | 2026-09-20-internal | Fixed locally: goalsState loading/loaded/absent/error, session gate on the read, changed-columns-only UPDATE, insert on absent, Settings re-syncs + Save disabled unless writable, foreground retry. 17 tests, 9 sabotage runs. Not published — its own OTA ahead of Part 2. Device pass owed |
 | PL-003 | Blocker | addEntry swallows insert errors; log silently lost | Fixed | 2026-09-19-internal | Master @ 5abcbcb; OTA Android 6219ac78 + iOS 939f4f9d. Device pass OK. Needs a tester log |
 | PL-001 | Major | Friend copy drops sat_fat to NULL | Fixed | 2026-09-19-internal | Rerouted via CopyConfirm → applyEntries; guards A + C. Post-copy destination changed 2026-09-20 — now lands on Today on the copied day (OTA Android 10b5ab16 + iOS 7f5a5b0b). Needs a tester copy |
 | PL-002 | Major | saved_ingredients coerces unknown small four to 0 | Fixed | 2026-09-19-internal | Migration 20260919120000 + guard B+. Existing zeros not backfilled |

@@ -115,6 +115,7 @@ export function SettingsScreen() {
   const {
     goals,
     saveGoals,
+    fetchGoals,
     getAllEntries,
     savedIngredients,
     deleteIngredient,
@@ -126,6 +127,18 @@ export function SettingsScreen() {
   const incomingRequestCount = useStore((s) => s.incomingRequestCount);
 
   // ── Goal state ────────────────────────────────────────────
+  //
+  // PL-023. `values` used to be seeded ONCE, in this useState initialiser,
+  // and never followed `goals` again. Combined with a Save that wrote all
+  // eight columns, that meant a store sitting on DEFAULT_GOALS after a
+  // failed read could be saved straight over the user's real row.
+  //
+  // Two things fix it here. The store now says whether it actually knows
+  // the targets (`goalsState`), and this form re-syncs from `goals` when
+  // they arrive — but never over something the user is in the middle of
+  // typing, which is what `dirty` guards.
+  const goalsState = useStore((s) => s.goalsState);
+  const [dirty, setDirty] = useState(false);
   const [values, setValues] = useState<Record<string, string>>({
     calories: String(goals.calories),
     protein: String(goals.protein),
@@ -136,6 +149,25 @@ export function SettingsScreen() {
     fibre: String(goals.fibre),
     sugar: String(goals.sugar),
   });
+
+  useEffect(() => {
+    // Unsaved edits win. A late-arriving read must not wipe what someone is
+    // typing; they'll see the real values if they leave and come back.
+    if (dirty) return;
+    setValues({
+      calories: String(goals.calories),
+      protein: String(goals.protein),
+      carbs: String(goals.carbs),
+      fat: String(goals.fat),
+      satFat: String(goals.satFat),
+      salt: String(goals.salt),
+      fibre: String(goals.fibre),
+      sugar: String(goals.sugar),
+    });
+  }, [goals, dirty]);
+
+  /** PL-023: only a store that KNOWS the targets may be written from. */
+  const goalsWritable = goalsState === "loaded" || goalsState === "absent";
   const [saving, setSaving] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -489,10 +521,15 @@ export function SettingsScreen() {
   // ── Goal handlers ─────────────────────────────────────────
   const handleChange = (key: string, val: string) => {
     setValues((prev) => ({ ...prev, [key]: val }));
+    setDirty(true);
     setSaved(false);
   };
 
   const handleSave = async () => {
+    // PL-023: belt and braces. The button is already disabled in these
+    // states, but the store refuses the write too — a screen is a bad place
+    // for the only copy of a data-integrity rule.
+    if (!goalsWritable) return;
     setSaving(true);
     const { error } = await saveGoals({
       calories: parseInt(values.calories) || 2000,
@@ -509,6 +546,7 @@ export function SettingsScreen() {
       Alert.alert("Can't save that", error);
       return;
     }
+    setDirty(false);
     setSaved(true);
   };
 
@@ -1120,19 +1158,45 @@ export function SettingsScreen() {
               style={({ pressed }) => [
                 styles.saveBtn,
                 saved && styles.saveBtnSaved,
+                !goalsWritable && styles.saveBtnDisabled,
                 pressed && { opacity: 0.85 },
               ]}
               onPress={handleSave}
-              disabled={saving}
+              disabled={saving || !goalsWritable}
             >
               {saving ? (
                 <ActivityIndicator color={Colors.bg} />
               ) : (
-                <Text style={styles.saveBtnText}>
+                <Text
+                  style={[
+                    styles.saveBtnText,
+                    !goalsWritable && styles.saveBtnTextDisabled,
+                  ]}
+                >
                   {saved ? "✓  Goals saved" : "Save goals"}
                 </Text>
               )}
             </Pressable>
+
+            {/* PL-023: the store doesn't know the targets, so the numbers
+                above are placeholders. Say so, and offer the read again,
+                rather than letting a Save write them over a real row. */}
+            {!goalsWritable && (
+              <View style={styles.goalLoadError}>
+                <Text style={styles.goalLoadErrorText}>
+                  Couldn't load your targets
+                </Text>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.goalRetryBtn,
+                    pressed && { opacity: 0.85 },
+                  ]}
+                  onPress={() => fetchGoals()}
+                >
+                  <Text style={styles.goalRetryBtnText}>Retry</Text>
+                </Pressable>
+              </View>
+            )}
           </View>
 
           {/* ── Account ────────────────────────────────── */}
@@ -1685,6 +1749,35 @@ const styles = StyleSheet.create(
     paddingVertical: 13,
     alignItems: "center",
     marginTop: Spacing.md,
+  },
+  saveBtnDisabled: {
+    backgroundColor: Colors.surface2,
+  },
+  saveBtnTextDisabled: {
+    color: Colors.textMuted,
+  },
+  goalLoadError: {
+    marginTop: Spacing.sm,
+    alignItems: "center",
+  },
+  goalLoadErrorText: {
+    fontSize: Typography.xs,
+    color: Colors.danger,
+    textAlign: "center",
+    lineHeight: 17,
+  },
+  goalRetryBtn: {
+    marginTop: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 8,
+    borderRadius: Radius.pill,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface2,
+  },
+  goalRetryBtnText: {
+    fontSize: Typography.xs,
+    color: Colors.text,
   },
   saveBtnSaved: {
     backgroundColor: Colors.surface2,

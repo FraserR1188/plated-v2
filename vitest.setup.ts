@@ -22,6 +22,14 @@ vi.mock("./src/lib/supabase", () => ({
   supabase: {
     auth: {
       getUser: vi.fn(async () => ({ data: { user: { id: "test-user-id" } } })),
+      // PL-023: fetchGoals gates on a real session before it queries, because
+      // supabase-js silently falls back to the ANON key when getSession()
+      // yields null, and an anon read of `goals` returns zero rows with no
+      // error (RLS `auth.uid() = user_id`, policy applies to PUBLIC).
+      getSession: vi.fn(async () => ({
+        data: { session: { access_token: "test-token", user: { id: "test-user-id" } } },
+        error: null,
+      })),
     },
     from: vi.fn(),
     rpc: vi.fn(async () => ({ data: null, error: null })),

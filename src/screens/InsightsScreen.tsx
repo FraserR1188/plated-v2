@@ -30,7 +30,14 @@ export function InsightsScreen() {
         <View style={styles.badge}>
           <Text style={styles.badgeGlyph}>◈</Text>
         </View>
-        <Text style={styles.title}>Insights unlock after 31 days of tracking</Text>
+        {/* Grouped so the eyebrow sits tight to its heading rather than
+            taking the centre stack's full 8dp gap. */}
+        <View style={styles.heading}>
+          <Text style={styles.eyebrow}>Coming soon</Text>
+          <Text style={styles.title}>
+            Insights will unlock after 31 days of tracking
+          </Text>
+        </View>
         <Text style={styles.body}>
           We need about a month of your meals to find patterns worth showing
           you.
@@ -67,6 +74,17 @@ const styles = StyleSheet.create(
     badgeGlyph: {
       fontSize: 24,
       color: Colors.green,
+    },
+    heading: {
+      alignItems: "center",
+      gap: 2,
+    },
+    // Same eyebrow treatment as Today's header line: xs, medium, muted.
+    eyebrow: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.medium,
+      color: Colors.textMuted,
+      textAlign: "center",
     },
     title: {
       fontSize: Typography.md,

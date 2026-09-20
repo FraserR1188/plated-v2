@@ -49,7 +49,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 
 | Date | Tester | Build / version | Device | Issues raised | Still open | Doc |
 |---|---|---|---|---|---|---|
-| 2026-09-20 | self (dev pass) | master @ `2f8195f`; OTA Android `10b5ab16` + iOS `7f5a5b0b` | Pixel (default + 360dp + largest font), iOS | 9 | 9 | `testing/2026-09-20-internal.md` |
+| 2026-09-20 | self (dev pass) | master @ `2f8195f`; OTA Android `10b5ab16` + iOS `7f5a5b0b` | Pixel (default + 360dp + largest font), iOS | 10 | 10 | `testing/2026-09-20-internal.md` |
 | 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` | Pixel (Android) | 17 | 16 | `testing/2026-09-19-internal.md` |
 | 2026-08-25 | Ian | Not recorded (newest Android store build then: v6, `f48184c`) | Google Pixel 10, Android 17 | 4 | 4 | `testing/2026-08-25-ian.md` |
 
@@ -57,14 +57,14 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 
 | ID | Severity | Summary | Status | Raised in | Fix / note |
 |---|---|---|---|---|---|
-| PL-023 | Blocker | A failed goals read makes Settings persist the defaults over real targets | In progress | 2026-09-20-internal | Fixed locally: goalsState loading/loaded/absent/error, session gate on the read, changed-columns-only UPDATE, insert on absent, Settings re-syncs + Save disabled unless writable, foreground retry. 17 tests, 9 sabotage runs. Not published — its own OTA ahead of Part 2. Device pass owed |
+| PL-023 | Blocker | A failed goals read makes Settings persist the defaults over real targets | Fixed | 2026-09-20-internal | goalsState loading/loaded/absent/error, session gate on the read, changed-columns-only UPDATE, insert on absent, Settings re-syncs + Save disabled unless writable, foreground retry. 17 tests, 9 sabotage runs. Pixel pass OK (single-column write confirmed in SQL); iOS owed. Needs a tester |
 | PL-003 | Blocker | addEntry swallows insert errors; log silently lost | Fixed | 2026-09-19-internal | Master @ 5abcbcb; OTA Android 6219ac78 + iOS 939f4f9d. Device pass OK. Needs a tester log |
 | PL-001 | Major | Friend copy drops sat_fat to NULL | Fixed | 2026-09-19-internal | Rerouted via CopyConfirm → applyEntries; guards A + C. Post-copy destination changed 2026-09-20 — now lands on Today on the copied day (OTA Android 10b5ab16 + iOS 7f5a5b0b). Needs a tester copy |
 | PL-002 | Major | saved_ingredients coerces unknown small four to 0 | Fixed | 2026-09-19-internal | Migration 20260919120000 + guard B+. Existing zeros not backfilled |
 | PL-004 | Major | Android keyboard covers inputs on 13 surfaces | Fixed | 2026-09-19-internal | KeyboardScreen wrapper. Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK (Pixel, all 13 surfaces; iOS ProductScreen). Needs a tester |
 | PL-005 | Major | BundleApplyReview applies last-blurred grams | Fixed | 2026-09-19-internal | Commit-on-change (live text). Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK (150 g applied, twice). Needs a tester |
 | PL-006 | Major | BatchEditor Save can miss an uncommitted qty | Fixed | 2026-09-19-internal | Commit-on-change (live text). Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK; yield/portion clearing while typing accepted. Needs a tester |
-| PL-024 | Major | Clearing or mistyping a goal field silently saved the hard-coded default (0 too) | In progress | 2026-09-20-internal | Strict parsing in src/lib/goalInput.ts; per-field errors, Save disabled until valid. 0 valid for the seven macros, calories min 1. 16 tests, 6 sabotage runs. Rides the PL-023 OTA. Device pass owed |
+| PL-024 | Major | Clearing or mistyping a goal field silently saved the hard-coded default (0 too) | Fixed | 2026-09-20-internal | Strict parsing in src/lib/goalInput.ts; per-field errors, Save disabled until valid. 0 valid for the seven macros, calories min 1. 16 tests, 6 sabotage runs. Pixel pass OK; iOS owed. Needs a tester |
 | PL-007 | Major | CSV export and last30Days use UTC dates | Logged | 2026-09-19-internal | Use dateKey |
 | PL-008 | Major | CSV exports NULL small four as 0.0 | Logged | 2026-09-19-internal | Empty cell for NULL |
 | PL-011 | Major | meal_entries big four can't represent unknown | Deferred | 2026-09-19-internal | Riskier schema change; separate decision |
@@ -82,6 +82,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | PL-019 | Minor | whoop-sync never closes/deletes dropped cycles; orphan open cycle, is_current returns 2 rows | Logged | 2026-09-20-internal | Contained by the 36h guard. Constraint: never select "today's cycle" via is_current — readiness query included |
 | PL-025 | Minor | Structural update-site test resolves variables by name file-wide | Logged | 2026-09-20-internal | A local named `patch` in useStore.ts makes updateEntry's spread look traceable and flips the test into its "delete me" branch. Needs a scope-aware resolver. Don't name a local `patch` there |
 | PL-026 | Minor | History adherence % ignores goalsState, so `error` reports adherence against defaults | Logged | 2026-09-20-internal | Show "–" unless loaded/absent. Constraint: Insights may only compute against goals when goalsState is `loaded` — `absent` means defaults, not the user's targets |
+| PL-027 | Minor | Today shows the default 2,000 kcal ring and macro targets as the user's own while goals are in `error` | Logged | 2026-09-20-internal | Display only; PL-023 already blocks the write. Show "–" or a hint in `error` only — `absent` keeps the defaults. Do it with PL-026 in one pass |
 | PL-020 | Minor | Batches "Logged" alert says "today's log" when a past day was picked | Fixed | 2026-09-20-internal | batchLogAlert names the picked day via dateKey. Master @ 2f8195f; OTA Android 10b5ab16 + iOS 7f5a5b0b. Combined device pass OK (Pixel + iOS). Needs a tester |
 | PL-021 | Minor | Today header overflows at 360dp, off-today pages with the Bundles chip | Fixed | 2026-09-20-internal | "Return to today" moved into the eyebrow; right row is the Bundles chip + calendar. Master @ 2f8195f; OTA Android 10b5ab16 + iOS 7f5a5b0b. Combined pass OK (Pixel default/360dp/largest font, iOS). Needs a tester |
 | PL-013 | Polish | RecipeConfirm doubles the bottom inset | Fixed | 2026-09-19-internal | SafeAreaView edge kept, footer inset dropped. Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK. Needs a tester |

@@ -49,7 +49,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 
 | Date | Tester | Build / version | Device | Issues raised | Still open | Doc |
 |---|---|---|---|---|---|---|
-| 2026-09-20 | self (dev pass) | master @ `2f8195f`; OTA Android `10b5ab16` + iOS `7f5a5b0b` | Pixel (default + 360dp + largest font), iOS | 5 | 5 | `testing/2026-09-20-internal.md` |
+| 2026-09-20 | self (dev pass) | master @ `2f8195f`; OTA Android `10b5ab16` + iOS `7f5a5b0b` | Pixel (default + 360dp + largest font), iOS | 6 | 6 | `testing/2026-09-20-internal.md` |
 | 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` | Pixel (Android) | 17 | 16 | `testing/2026-09-19-internal.md` |
 | 2026-08-25 | Ian | Not recorded (newest Android store build then: v6, `f48184c`) | Google Pixel 10, Android 17 | 4 | 4 | `testing/2026-08-25-ian.md` |
 
@@ -57,6 +57,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 
 | ID | Severity | Summary | Status | Raised in | Fix / note |
 |---|---|---|---|---|---|
+| PL-023 | Blocker | A failed goals read makes Settings persist the defaults over real targets | Logged | 2026-09-20-internal | Form seeds once from the store (SettingsScreen.tsx:129-138), Save sends all eight fields, saveGoals is a full-row upsert. Any failed fetchGoals → user edits one field → real targets overwritten. Not introduced by PL-017; PL-017 widens the window |
 | PL-003 | Blocker | addEntry swallows insert errors; log silently lost | Fixed | 2026-09-19-internal | Master @ 5abcbcb; OTA Android 6219ac78 + iOS 939f4f9d. Device pass OK. Needs a tester log |
 | PL-001 | Major | Friend copy drops sat_fat to NULL | Fixed | 2026-09-19-internal | Rerouted via CopyConfirm → applyEntries; guards A + C. Post-copy destination changed 2026-09-20 — now lands on Today on the copied day (OTA Android 10b5ab16 + iOS 7f5a5b0b). Needs a tester copy |
 | PL-002 | Major | saved_ingredients coerces unknown small four to 0 | Fixed | 2026-09-19-internal | Migration 20260919120000 + guard B+. Existing zeros not backfilled |
@@ -74,7 +75,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | PL-012 | Minor | Tesco Gold Coffee library row saved all-zero | Deferred | 2026-09-19-internal | Check the OFF source first |
 | PL-015 | Minor | Clearing an AI macro cell on ProductScreen stores 0, not NULL | Logged | 2026-09-19-internal | Hard to reach: the AI fills all eight |
 | PL-016 | Minor | Food search failures never reach Sentry | Logged | 2026-09-19-internal | No searchFood caller reports; P-TF02a can't be confirmed or ruled out if it recurs |
-| PL-017 | Minor | Users without targets report fetchGoals errors to Sentry | Fixed | 2026-09-19-internal | `.maybeSingle()` + explicit no-row path; no row still means DEFAULT_GOALS (P-TF01b unchanged). Not yet published — rides the next OTA. Sentry count still owed: no credentials on the dev machine |
+| PL-017 | Minor | Users without targets report fetchGoals errors to Sentry | In progress | 2026-09-19-internal | `.maybeSingle()` + explicit no-row path committed (`cc904e4`); no row still means DEFAULT_GOALS (P-TF01b unchanged). Held at In progress pending the device pass and the PL-023 decision on the no-row branch. Not yet published. Sentry count still owed: no credentials on the dev machine |
 | P-TF01a | Minor | No confirmation email after sign-up | Logged | 2026-08-25-ian | None is sent: Confirm email is off (mailer_autoconfirm true, measured 2026-09-19). 87e16cf fixed the false copy; 8eb2e5e's "Check your email" screen may still show. A new-account sign-up check decides. Blocker if Confirm email is turned on and mail doesn't arrive |
 | P-TF02b | Minor | Search "sometimes seems to need a space after the item name" | Logged | 2026-08-25-ian | Symptom of P-TF02a: queries are trimmed, so the space only re-fires the same search. Closes when P-TF02a does |
 | PL-019 | Minor | whoop-sync never closes/deletes dropped cycles; orphan open cycle, is_current returns 2 rows | Logged | 2026-09-20-internal | Contained by the 36h guard. Constraint: never select "today's cycle" via is_current — readiness query included |

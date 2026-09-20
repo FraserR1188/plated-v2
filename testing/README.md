@@ -68,7 +68,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | PL-011 | Major | meal_entries big four can't represent unknown | Deferred | 2026-09-19-internal | Riskier schema change; separate decision |
 | P-TF01b | Major | Never asked for calorie or macro targets | Logged | 2026-08-25-ian | No onboarding; new accounts run on DEFAULT_GOALS (2000 kcal) until set in Settings. No fix found |
 | P-TF02a | Major | Food search kept erroring; worked after numerous retries | Logged | 2026-08-25-ian | Probable fix, unconfirmed: e958f4d (OFF User-Agent + timeout), Android v8+ and iOS build 3. Symptom not tied to it |
-| PL-018 | Major | Today/workouts don't refetch when a foreground sync resolves | Fixed | 2026-09-20-internal | syncRefetch.ts watches each sync; refetches only when it wrote. Device pass OK 2026-09-20. Not yet published; needs a tester |
+| PL-018 | Major | Today/workouts don't refetch when a foreground sync resolves | Fixed | 2026-09-20-internal | syncRefetch.ts watches each sync; refetches only when it wrote. Device pass OK 2026-09-20, Pixel + iOS. Not yet published; needs a tester |
 | PL-010 | Minor | buildEditPatch snaps edits to the rounding grid | Deferred | 2026-09-19-internal | Bounded drift, not urgent |
 | PL-014 | Minor | Copy-a-day failures double-report to Sentry | Logged | 2026-09-19-internal | Audit applyEntries callers |
 | PL-012 | Minor | Tesco Gold Coffee library row saved all-zero | Deferred | 2026-09-19-internal | Check the OFF source first |
@@ -78,8 +78,8 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | P-TF01a | Minor | No confirmation email after sign-up | Logged | 2026-08-25-ian | None is sent: Confirm email is off (mailer_autoconfirm true, measured 2026-09-19). 87e16cf fixed the false copy; 8eb2e5e's "Check your email" screen may still show. A new-account sign-up check decides. Blocker if Confirm email is turned on and mail doesn't arrive |
 | P-TF02b | Minor | Search "sometimes seems to need a space after the item name" | Logged | 2026-08-25-ian | Symptom of P-TF02a: queries are trimmed, so the space only re-fires the same search. Closes when P-TF02a does |
 | PL-019 | Minor | whoop-sync never closes/deletes dropped cycles; orphan open cycle, is_current returns 2 rows | Logged | 2026-09-20-internal | Contained by the 36h guard. Constraint: never select "today's cycle" via is_current — readiness query included |
-| PL-020 | Minor | Batches "Logged" alert says "today's log" when a past day was picked | Fixed | 2026-09-20-internal | batchLogAlert names the picked day via dateKey. Device pass OK 2026-09-20. Not yet published; needs a tester |
-| PL-021 | Minor | Today header overflows at 360dp, off-today pages with the Bundles chip | Fixed | 2026-09-20-internal | Three 36dp icons; "Return to today" moved into the eyebrow. Device pass OK 2026-09-20 at both densities. Not yet published; needs a tester |
+| PL-020 | Minor | Batches "Logged" alert says "today's log" when a past day was picked | Fixed | 2026-09-20-internal | batchLogAlert names the picked day via dateKey. Combined device pass OK 2026-09-20 (Pixel + iOS). Not yet published; needs a tester |
+| PL-021 | Minor | Today header overflows at 360dp, off-today pages with the Bundles chip | Fixed | 2026-09-20-internal | "Return to today" moved into the eyebrow; right row is the Bundles chip + calendar. Combined pass OK 2026-09-20 (Pixel default/360dp/largest font, iOS). Not yet published; needs a tester |
 | PL-013 | Polish | RecipeConfirm doubles the bottom inset | Fixed | 2026-09-19-internal | SafeAreaView edge kept, footer inset dropped. Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK. Needs a tester |
 | PL-022 | Polish | whoop_data.sql:125-127 describes an upsert gate that doesn't exist | Logged | 2026-09-20-internal | Sync upserts blindly (whoop-sync/index.ts:290-297); comment-only drift |
 

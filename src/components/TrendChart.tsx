@@ -8,8 +8,15 @@
 //                      across, because a straight line between Monday and
 //                      Wednesday is a drawn claim about Tuesday.
 //   incomplete       → hollow point. The value is an undercount.
-//   soFar            → hollow point. Today isn't finished.
+//   soFar            → hollow point, reached by a DASHED leg. A solid line
+//                      dropping into a low point reads as a collapse
+//                      rather than as a day that is only half over.
 //   goal === null    → no goal line at all (PL-026).
+//   y-axis           → always anchored at zero, per nutrient.
+//
+// The geometry is in lib/trends.ts too, so "nothing falls off the canvas"
+// is asserted against real numbers rather than eyeballed. The device pass
+// found today's hollow point cut in half by the right-hand edge.
 //
 // react-native-svg is already a dependency (CalorieRing uses it), so this
 // adds nothing to the runtime fingerprint and ships by OTA.
@@ -18,7 +25,17 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import Svg, { Circle, Line, Path, Text as SvgText } from "react-native-svg";
-import { TrendPoint, TrendSeries, buildPathSegments } from "../lib/trends";
+import {
+  POINT_EXTENT,
+  POINT_RADIUS,
+  POINT_STROKE,
+  TrendPoint,
+  TrendRange,
+  TrendSeries,
+  buildChartScale,
+  buildPathSegments,
+  xAxisLabels,
+} from "../lib/trends";
 import {
   Colors,
   Fonts,
@@ -34,7 +51,7 @@ import {
  *  environment, and theme/tokens.ts pulls in React Navigation.
  *
  *  Calories has no macro colour of its own in the app-wide language, so it
- *  takes the energy accent -- the same green the calorie ring uses. */
+ *  takes the energy accent — the same green the calorie ring uses. */
 const NUTRIENT_COLOR: Record<string, string> = {
   calories: Colors.green,
   protein: MacroColor.protein,
@@ -46,59 +63,71 @@ const NUTRIENT_COLOR: Record<string, string> = {
   sugar: MacroColor.sugar,
 };
 
-const CHART_HEIGHT = 96;
-const PAD_TOP = 10;
-const PAD_BOTTOM = 16;
-const PAD_LEFT = 2;
-const PAD_RIGHT = 2;
-const DOT_R = 3;
+const CHART_HEIGHT = 108;
+const AXIS_FONT = 9;
 
 interface Props {
   series: TrendSeries;
+  range: TrendRange;
   /** Measured by the parent; the chart is width-driven, never fixed. */
   width: number;
 }
 
-/** Rounds for display only. The underlying value is never rounded — see
- *  PL-028, where rounding to display precision on a WRITE was a defect. */
-function formatValue(value: number, unit: "kcal" | "g"): string {
-  if (unit === "kcal") return String(Math.round(value));
-  return value >= 10 ? String(Math.round(value)) : value.toFixed(1);
+/** Thousands separator, by hand rather than toLocaleString: the device's
+ *  locale must not decide what a chart axis says. */
+function withThousands(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
-export function TrendChart({ series, width }: Props) {
+/** Rounds for display only. The underlying value is never rounded — see
+ *  PL-028, where rounding to display precision on a WRITE was the defect. */
+function formatValue(value: number, unit: "kcal" | "g"): string {
+  if (unit === "kcal") return withThousands(Math.round(value));
+  return value >= 10 ? withThousands(Math.round(value)) : value.toFixed(1);
+}
+
+const isHollow = (p: TrendPoint) => p.incomplete || p.soFar;
+
+/** "19 Sep" — for the headline when the most recent value isn't today's. */
+function shortDay(key: string): string {
+  const MONTH = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+  ];
+  const [, m, d] = key.split("-").map(Number);
+  return `${d} ${MONTH[m - 1]}`;
+}
+
+export function TrendChart({ series, range, width }: Props) {
   const color = NUTRIENT_COLOR[series.nutrient] ?? Colors.green;
   const values = series.points
     .map((p) => p.value)
     .filter((v): v is number => v != null);
 
-  const plotW = Math.max(width - PAD_LEFT - PAD_RIGHT, 1);
-  const plotH = CHART_HEIGHT - PAD_TOP - PAD_BOTTOM;
+  // Its own scale, anchored at zero. The goal is included so the target
+  // line is always on the canvas rather than off the top of it.
+  const max = Math.max(
+    ...values,
+    0,
+    ...(series.goal != null ? [series.goal] : []),
+  );
+  const scale = buildChartScale({
+    width,
+    height: CHART_HEIGHT,
+    pointCount: series.points.length,
+    max,
+  });
 
-  // Its OWN y-scale, per the small-multiples decision: each nutrient is
-  // read against itself, not against calories. Includes the goal so the
-  // line is always on the canvas, and 0 so the height of a bar-like line
-  // is proportional to the value rather than to a zoomed window.
-  const candidates = [...values, 0, ...(series.goal != null ? [series.goal] : [])];
-  const rawMax = Math.max(...candidates);
-  const max = rawMax > 0 ? rawMax : 1;
-
-  const x = (i: number) =>
-    PAD_LEFT +
-    (series.points.length === 1
-      ? plotW / 2
-      : (i / (series.points.length - 1)) * plotW);
-  const y = (v: number) => PAD_TOP + plotH - (v / max) * plotH;
-
-  // Broken at every gap. The logic is in lib/trends.ts, not inlined here,
-  // because a structural test cannot tell a line that breaks from one that
-  // runs straight through -- a sabotage run proved it by removing the break
-  // and leaving every matched token in place. buildPathSegments is checked
-  // against real input instead.
-  const segments = buildPathSegments(series.points, x, y);
+  const segments = buildPathSegments(series.points, scale.x, scale.y);
+  const axis = xAxisLabels(
+    series.points.map((p) => p.date),
+    range,
+  );
 
   const latest = [...series.points].reverse().find((p) => p.value != null);
   const hasAnyData = values.length > 0;
+  const scaleTop = max > 0 ? max : 1;
+  const lastIndex = series.points.length - 1;
 
   return (
     <View style={styles.card}>
@@ -110,50 +139,95 @@ export function TrendChart({ series, width }: Props) {
           </Text>
         </View>
         {latest?.value != null && (
-          <Text style={[styles.latest, { color }]} numberOfLines={1}>
-            {formatValue(latest.value, series.meta.unit)}
-            <Text style={styles.unit}> {series.meta.unit}</Text>
-          </Text>
+          <View style={styles.latestWrap}>
+            <Text style={[styles.latest, { color }]} numberOfLines={1}>
+              {formatValue(latest.value, series.meta.unit)}
+              <Text style={styles.unit}> {series.meta.unit}</Text>
+            </Text>
+            {/* Say WHICH day the headline number is. Without this it reads
+                as a total for the whole window, which it is not. */}
+            <Text style={styles.latestNote} numberOfLines={1}>
+              {latest.soFar ? "today so far" : shortDay(latest.date)}
+            </Text>
+          </View>
         )}
       </View>
 
       {hasAnyData ? (
         <Svg width={width} height={CHART_HEIGHT}>
-          {/* Goal line — dashed, behind the data. Absent unless goals are
-              loaded AND a target is set; see PL-026. */}
+          {/* ── y-axis: the top of the scale, and zero ── */}
+          <SvgText
+            x={scale.plotLeft - POINT_EXTENT - 4}
+            y={scale.plotTop + AXIS_FONT / 2}
+            fill={Colors.textDim}
+            fontSize={AXIS_FONT}
+            fontFamily={Fonts.mono.regular}
+            textAnchor="end"
+          >
+            {formatValue(scaleTop, series.meta.unit)}
+          </SvgText>
+          <SvgText
+            x={scale.plotLeft - POINT_EXTENT - 4}
+            y={scale.plotBottom + AXIS_FONT / 3}
+            fill={Colors.textDim}
+            fontSize={AXIS_FONT}
+            fontFamily={Fonts.mono.regular}
+            textAnchor="end"
+          >
+            0
+          </SvgText>
+
+          {/* The baseline, so zero is a place on the chart rather than a
+              label floating beside nothing. */}
+          <Line
+            x1={scale.plotLeft}
+            y1={scale.plotBottom}
+            x2={scale.plotRight}
+            y2={scale.plotBottom}
+            stroke={Colors.border}
+            strokeWidth={1}
+          />
+
+          {/* ── Goal line — dashed, behind the data, and LABELLED. Absent
+                 unless goals are loaded and a target is set; see PL-026. */}
           {series.goal != null && (
             <>
               <Line
-                x1={PAD_LEFT}
-                y1={y(series.goal)}
-                x2={PAD_LEFT + plotW}
-                y2={y(series.goal)}
+                x1={scale.plotLeft}
+                y1={scale.y(series.goal)}
+                x2={scale.plotRight}
+                y2={scale.y(series.goal)}
                 stroke={Colors.textDim}
                 strokeWidth={1}
                 strokeDasharray="3 4"
               />
+              {/* Left-aligned, not right: today's point sits at the right
+                  edge, and a label there would land on top of it. */}
               <SvgText
-                x={PAD_LEFT + plotW}
-                y={Math.max(y(series.goal) - 3, 8)}
+                x={scale.plotLeft + 2}
+                y={Math.max(scale.y(series.goal) - 3, AXIS_FONT)}
                 fill={Colors.textDim}
-                fontSize={9}
+                fontSize={AXIS_FONT}
                 fontFamily={Fonts.mono.regular}
-                textAnchor="end"
+                textAnchor="start"
               >
-                {formatValue(series.goal, series.meta.unit)}
+                {`goal ${formatValue(series.goal, series.meta.unit)}`}
               </SvgText>
             </>
           )}
 
-          {segments.map((d, i) => (
+          {segments.map((segment, i) => (
             <Path
               key={i}
-              d={d}
+              d={segment.d}
               stroke={color}
               strokeWidth={2}
               fill="none"
               strokeLinecap="round"
               strokeLinejoin="round"
+              // The leg into today: the day isn't over, so the line isn't
+              // solid either.
+              strokeDasharray={segment.dashed ? "4 3" : undefined}
             />
           ))}
 
@@ -161,23 +235,40 @@ export function TrendChart({ series, width }: Props) {
             p.value == null ? null : (
               <Circle
                 key={p.date}
-                cx={x(i)}
-                cy={y(p.value)}
-                r={DOT_R}
+                cx={scale.x(i)}
+                cy={scale.y(p.value)}
+                r={POINT_RADIUS}
                 // Hollow = "this number is not the whole story". Filled =
                 // a complete, finished day.
                 fill={isHollow(p) ? Colors.bg : color}
                 stroke={color}
-                strokeWidth={isHollow(p) ? 1.5 : 0}
+                strokeWidth={isHollow(p) ? POINT_STROKE : 0}
               />
             ),
           )}
+
+          {/* ── x-axis dates ── */}
+          {axis.map(({ index, label }) => (
+            <SvgText
+              key={`${index}-${label}`}
+              x={scale.x(index)}
+              y={CHART_HEIGHT - 3}
+              fill={Colors.textDim}
+              fontSize={AXIS_FONT}
+              fontFamily={Fonts.mono.regular}
+              // Centred under its point, except at the two ends, where
+              // centring would push the label past the edge of the canvas.
+              textAnchor={
+                index === 0 ? "start" : index === lastIndex ? "end" : "middle"
+              }
+            >
+              {label}
+            </SvgText>
+          ))}
         </Svg>
       ) : (
         <View style={[styles.empty, { height: CHART_HEIGHT }]}>
-          <Text style={styles.emptyText}>
-            Nothing logged in this window
-          </Text>
+          <Text style={styles.emptyText}>Nothing logged in this window</Text>
         </View>
       )}
 
@@ -185,8 +276,6 @@ export function TrendChart({ series, width }: Props) {
     </View>
   );
 }
-
-const isHollow = (p: TrendPoint) => p.incomplete || p.soFar;
 
 /** Says why any hollow points are hollow. Only states what is true of THIS
  *  chart — an unconditional legend would explain a notation that isn't on
@@ -198,17 +287,16 @@ function Caption({ series }: { series: TrendSeries }) {
     (p) => p.value == null && !p.unlogged,
   ).length;
   const unlogged = series.points.filter((p) => p.unlogged).length;
+  const noun = series.meta.label.toLowerCase();
 
   const parts: string[] = [];
   if (incomplete > 0) {
     parts.push(
-      `${incomplete} day${incomplete === 1 ? "" : "s"} missing some ${series.meta.label.toLowerCase()}`,
+      `${incomplete} day${incomplete === 1 ? "" : "s"} missing some ${noun}`,
     );
   }
   if (unknownDays > 0) {
-    parts.push(
-      `${unknownDays} with no ${series.meta.label.toLowerCase()} data at all`,
-    );
+    parts.push(`${unknownDays} with no ${noun} data at all`);
   }
   if (unlogged > 0) {
     parts.push(`${unlogged} not logged`);
@@ -234,7 +322,7 @@ const styles = StyleSheet.create(
     },
     head: {
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-start",
       justifyContent: "space-between",
       marginBottom: Spacing.xs,
       gap: Spacing.sm,
@@ -244,6 +332,7 @@ const styles = StyleSheet.create(
       alignItems: "center",
       gap: 6,
       flexShrink: 1,
+      paddingTop: 2,
     },
     swatch: {
       width: 8,
@@ -256,6 +345,10 @@ const styles = StyleSheet.create(
       color: Colors.text,
       flexShrink: 1,
     },
+    latestWrap: {
+      alignItems: "flex-end",
+      flexShrink: 0,
+    },
     latest: {
       fontSize: Typography.md,
       fontFamily: Fonts.mono.semibold,
@@ -264,6 +357,11 @@ const styles = StyleSheet.create(
       fontSize: Typography.xs,
       fontFamily: Fonts.mono.regular,
       color: Colors.textDim,
+    },
+    latestNote: {
+      fontSize: Typography.xs,
+      color: Colors.textDim,
+      marginTop: -1,
     },
     empty: {
       alignItems: "center",

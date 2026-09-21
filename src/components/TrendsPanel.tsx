@@ -7,7 +7,7 @@
 // (lib/trendsPrefs.ts) and cleared by the store's reset() on sign-out.
 // ============================================================
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -25,6 +25,7 @@ import {
   TrendNutrient,
   TrendRange,
   buildTrendSeries,
+  capMessageFor,
   toggleNutrient,
 } from "../lib/trends";
 import { readTrendsPrefs, writeTrendsPrefs } from "../lib/trendsPrefs";
@@ -46,7 +47,18 @@ export function TrendsPanel() {
   const [nutrients, setNutrients] = useState<TrendNutrient[]>(DEFAULT_NUTRIENTS);
   const [range, setRange] = useState<TrendRange>(7);
   const [width, setWidth] = useState(0);
-  const [hitCap, setHitCap] = useState(false);
+  const [capMessage, setCapMessage] = useState<string | null>(null);
+
+  // The message clears itself: it answers a tap, and an explanation that
+  // outlives the thing it explains becomes furniture.
+  const capTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!capMessage) return;
+    capTimer.current = setTimeout(() => setCapMessage(null), 2600);
+    return () => {
+      if (capTimer.current) clearTimeout(capTimer.current);
+    };
+  }, [capMessage]);
 
   // Seed from the remembered preference, once per user. A failed or absent
   // read leaves the defaults in place, which is always a valid answer.
@@ -77,10 +89,14 @@ export function TrendsPanel() {
     // toggleNutrient returns the SAME array when it refuses — either the cap
     // was hit or this is the last one standing. Identity is the signal.
     if (next === nutrients) {
-      setHitCap(!nutrients.includes(nutrient));
+      // Tapping a fourth chip used to do nothing at all, which reads as a
+      // broken button rather than as a rule. Say so, briefly. The wording
+      // and the choice between the two refusals live in lib/trends.ts,
+      // where they are tested against toggleNutrient itself.
+      setCapMessage(capMessageFor(nutrients, nutrient));
       return;
     }
-    setHitCap(false);
+    setCapMessage(null);
     setNutrients(next);
     persist({ nutrients: next });
   };
@@ -135,6 +151,12 @@ export function TrendsPanel() {
       </View>
 
       {/* ── Nutrient picker ──────────────────────────────── */}
+      <View style={styles.pickerHead}>
+        <Text style={styles.pickerHint}>{`Pick up to ${MAX_SELECTED}`}</Text>
+        <Text style={styles.pickerCount}>
+          {`${nutrients.length}/${MAX_SELECTED}`}
+        </Text>
+      </View>
       <View style={styles.chips}>
         {TREND_NUTRIENTS.map((n) => {
           const on = nutrients.includes(n.key);
@@ -154,9 +176,9 @@ export function TrendsPanel() {
         })}
       </View>
 
-      {hitCap && (
-        <Text style={styles.capHint}>
-          {`Up to ${MAX_SELECTED} at a time — deselect one first.`}
+      {capMessage && (
+        <Text style={styles.capHint} accessibilityLiveRegion="polite">
+          {capMessage}
         </Text>
       )}
 
@@ -164,7 +186,12 @@ export function TrendsPanel() {
       <View onLayout={onLayout} style={styles.charts}>
         {width > 0 &&
           series.map((s) => (
-            <TrendChart key={s.nutrient} series={s} width={width} />
+            <TrendChart
+              key={s.nutrient}
+              series={s}
+              range={range}
+              width={width}
+            />
           ))}
       </View>
 
@@ -212,6 +239,20 @@ const styles = StyleSheet.create(
     },
     rangeTextOn: {
       color: Colors.text,
+    },
+    pickerHead: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 6,
+    },
+    pickerHint: {
+      fontSize: Typography.xs,
+      color: Colors.textDim,
+    },
+    pickerCount: {
+      fontSize: Typography.xs,
+      color: Colors.textDim,
     },
     chips: {
       flexDirection: "row",

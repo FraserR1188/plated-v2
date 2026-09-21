@@ -19,10 +19,15 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_NUTRIENTS,
+  POINT_EXTENT,
+  buildChartScale,
   buildPathSegments,
+  capMessageFor,
+  xAxisLabels,
   MAX_SELECTED,
   NULLABLE_NUTRIENTS,
   RANGE_DAYS,
+  TREND_NUTRIENTS,
   buildTrendSeries,
   toggleNutrient,
   trendWindowDates,
@@ -551,6 +556,33 @@ describe("buildPathSegments", () => {
     soFar: false,
   });
 
+  // The segment arriving at today is DASHED: today is a partial day, and a
+  // solid line into a low point reads as a collapse rather than as a day
+  // that is only half over. Device pass feedback, 2026-09-20.
+  it("splits the leg into a so-far point into its own dashed segment", () => {
+    const pts = [pt("a", 30), pt("b", 40), { ...pt("today", 12), soFar: true }];
+    const segs = buildPathSegments(pts, x, y);
+    expect(segs).toHaveLength(2);
+    expect(segs[0]).toEqual({ d: "M0 70 L10 60", dashed: false });
+    expect(segs[1]).toEqual({ d: "M10 60 L20 88", dashed: true });
+  });
+
+  it("does not dash anything when the last point is a finished day", () => {
+    const segs = buildPathSegments([pt("a", 30), pt("b", 40)], x, y);
+    expect(segs.every((s) => !s.dashed)).toBe(true);
+  });
+
+  it("emits no dashed leg when today is the only point after a gap", () => {
+    // Nothing to join it to. The dot is still drawn; a dash from nowhere
+    // would be a line to a day we have no value for.
+    const segs = buildPathSegments(
+      [pt("a", 30), pt("g", null), { ...pt("today", 12), soFar: true }],
+      x,
+      y,
+    );
+    expect(segs).toEqual([]);
+  });
+
   it("makes one segment from an unbroken run", () => {
     const segs = buildPathSegments(
       [pt("a", 10), pt("b", 20), pt("c", 30)],
@@ -558,7 +590,7 @@ describe("buildPathSegments", () => {
       y,
     );
     expect(segs).toHaveLength(1);
-    expect(segs[0]).toBe("M0 90 L10 80 L20 70");
+    expect(segs[0].d).toBe("M0 90 L10 80 L20 70");
   });
 
   // THE test. Two runs either side of a gap, and no ink between them.
@@ -569,12 +601,12 @@ describe("buildPathSegments", () => {
       y,
     );
     expect(segs).toHaveLength(2);
-    expect(segs[0]).toBe("M0 90 L10 80");
-    expect(segs[1]).toBe("M30 60 L40 50");
+    expect(segs[0].d).toBe("M0 90 L10 80");
+    expect(segs[1].d).toBe("M30 60 L40 50");
 
     // The gap sits at x=20. No segment may contain a coordinate there, and
     // no segment may span it: the first ends at 10, the second starts at 30.
-    expect(segs.join(" ")).not.toContain("20 ");
+    expect(segs.map((s) => s.d).join(" ")).not.toContain("20 ");
   });
 
   it("breaks at several gaps", () => {
@@ -584,8 +616,8 @@ describe("buildPathSegments", () => {
       y,
     );
     expect(segs).toHaveLength(2); // the lone first point makes no path
-    expect(segs[0]).toBe("M20 70 L30 60");
-    expect(segs[1]).toBe("M50 40 L60 30");
+    expect(segs[0].d).toBe("M20 70 L30 60");
+    expect(segs[1].d).toBe("M50 40 L60 30");
   });
 
   it("produces no segment for a single isolated point", () => {
@@ -610,12 +642,182 @@ describe("buildPathSegments", () => {
       x,
       y,
     );
-    expect(segs).toEqual(["M10 80 L20 70"]);
+    expect(segs).toEqual([{ d: "M10 80 L20 70", dashed: false }]);
   });
 
   it("treats a real zero as a point, not a gap", () => {
     const segs = buildPathSegments([pt("a", 0), pt("b", 10)], x, y);
-    expect(segs).toEqual(["M0 100 L10 90"]);
+    expect(segs).toEqual([{ d: "M0 100 L10 90", dashed: false }]);
+  });
+});
+
+describe("capMessageFor", () => {
+  // A tap that does nothing reads as a broken button rather than a rule.
+  it("explains a refused fourth selection", () => {
+    const msg = capMessageFor(["calories", "protein", "carbs"], "fibre");
+    expect(msg).toContain("3 already");
+  });
+
+  it("explains a refused attempt to deselect the last one", () => {
+    expect(capMessageFor(["calories"], "calories")).toBe("Keep at least one.");
+  });
+
+  it("says nothing when the toggle succeeds", () => {
+    expect(capMessageFor(["calories"], "protein")).toBeNull();
+    expect(capMessageFor(["calories", "protein"], "calories")).toBeNull();
+  });
+
+  // The correspondence, stated as a property over every combination: a
+  // message exists EXACTLY when toggleNutrient refuses. This is what stops
+  // the rule and the explanation of the rule drifting apart.
+  it("produces a message precisely when toggleNutrient refuses", () => {
+    const all = TREND_NUTRIENTS.map((n) => n.key);
+    const selections: (typeof all)[] = [];
+    for (const a of all) {
+      selections.push([a]);
+      for (const b of all) {
+        if (b === a) continue;
+        selections.push([a, b]);
+        for (const c of all) {
+          if (c === a || c === b) continue;
+          selections.push([a, b, c]);
+        }
+      }
+    }
+    for (const selected of selections) {
+      for (const nutrient of all) {
+        const refused = toggleNutrient(selected, nutrient) === selected;
+        const message = capMessageFor(selected, nutrient);
+        expect(message == null).toBe(!refused);
+      }
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Geometry: nothing drawn may fall off the canvas
+// ────────────────────────────────────────────────────────────
+
+describe("buildChartScale", () => {
+  // Device pass, 2026-09-20: today's hollow point sat on the right-hand
+  // edge and was cut in half. The padding has to leave room for the POINT,
+  // not just for the line -- a hollow dot is wider than its centre by the
+  // radius plus half its stroke, and it is the LAST point in the window,
+  // which is always the one at the edge.
+  const WIDTH = 320;
+  const HEIGHT = 96;
+
+  it("keeps the first and last points fully inside the canvas", () => {
+    const s = buildChartScale({ width: WIDTH, height: HEIGHT, pointCount: 7, max: 2500 });
+    expect(s.x(0) - POINT_EXTENT).toBeGreaterThanOrEqual(0);
+    expect(s.x(6) + POINT_EXTENT).toBeLessThanOrEqual(WIDTH);
+  });
+
+  it("keeps a value at the very top of the scale fully inside the canvas", () => {
+    const s = buildChartScale({ width: WIDTH, height: HEIGHT, pointCount: 7, max: 2500 });
+    expect(s.y(2500) - POINT_EXTENT).toBeGreaterThanOrEqual(0);
+  });
+
+  it("keeps a zero fully inside the canvas, above the axis labels", () => {
+    const s = buildChartScale({ width: WIDTH, height: HEIGHT, pointCount: 7, max: 2500 });
+    expect(s.y(0) + POINT_EXTENT).toBeLessThanOrEqual(HEIGHT);
+  });
+
+  it("holds at 360dp with 14 points", () => {
+    const s = buildChartScale({ width: 360 - 32, height: HEIGHT, pointCount: 14, max: 180 });
+    expect(s.x(0) - POINT_EXTENT).toBeGreaterThanOrEqual(0);
+    expect(s.x(13) + POINT_EXTENT).toBeLessThanOrEqual(360 - 32);
+  });
+
+  it("centres a lone point rather than pinning it to the left edge", () => {
+    const s = buildChartScale({ width: WIDTH, height: HEIGHT, pointCount: 1, max: 100 });
+    expect(s.x(0)).toBeGreaterThan(WIDTH / 4);
+    expect(s.x(0)).toBeLessThan((WIDTH * 3) / 4);
+  });
+
+  // ── The y-axis floor ──────────────────────────────────────────────────
+  //
+  // A min-based scale is the classic chart lie: 2,400 and 2,450 kcal become
+  // a dramatic climb because the axis starts at 2,395. Every nutrient here
+  // is read against zero, so the height of a point is proportional to what
+  // was eaten.
+  it("always puts zero at the bottom of the scale", () => {
+    const s = buildChartScale({ width: WIDTH, height: HEIGHT, pointCount: 7, max: 2500 });
+    expect(s.y(0)).toBe(s.plotBottom);
+  });
+
+  it("does not zoom in on a narrow range", () => {
+    // Two values 2% apart must render 2% apart, not fill the chart.
+    const s = buildChartScale({ width: WIDTH, height: HEIGHT, pointCount: 7, max: 2450 });
+    const span = s.plotBottom - s.plotTop;
+    const gap = s.y(2400) - s.y(2450);
+    expect(gap / span).toBeLessThan(0.05);
+  });
+
+  it("survives an all-zero series without dividing by zero", () => {
+    const s = buildChartScale({ width: WIDTH, height: HEIGHT, pointCount: 7, max: 0 });
+    expect(Number.isFinite(s.y(0))).toBe(true);
+    expect(s.y(0)).toBe(s.plotBottom);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// x-axis labels
+// ────────────────────────────────────────────────────────────
+
+describe("xAxisLabels", () => {
+  const week = trendWindowDates(7, noonLocal(2026, 9, 20));
+  const fortnight = trendWindowDates(14, noonLocal(2026, 9, 20));
+
+  it("labels every day over 7", () => {
+    const labels = xAxisLabels(week, 7);
+    expect(labels).toHaveLength(7);
+    expect(labels.map((l) => l.index)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  });
+
+  it("uses a short weekday over 7 days", () => {
+    // A fixed table, not toLocaleDateString: the device's locale must not
+    // decide whether a test passes, and 2026-09-20 is a Sunday.
+    const labels = xAxisLabels(week, 7);
+    expect(labels[6].label).toBe("Sun");
+    expect(labels[0].label).toBe("Mon");
+  });
+
+  it("thins to first, last and about every third day over 14", () => {
+    const labels = xAxisLabels(fortnight, 14);
+    expect(labels.length).toBeLessThanOrEqual(6);
+    expect(labels[0].index).toBe(0);
+    expect(labels[labels.length - 1].index).toBe(13);
+  });
+
+  it("uses d/M over 14 days, where a weekday would repeat twice", () => {
+    const labels = xAxisLabels(fortnight, 14);
+    expect(labels[0].label).toBe("7/9");
+    expect(labels[labels.length - 1].label).toBe("20/9");
+  });
+
+  it("never places two labels adjacent over 14 days", () => {
+    // The overlap guard, stated as a property rather than as pixels: at
+    // 360dp with the largest font a d/M label is about a fifth of the
+    // width, so neighbouring labels would collide.
+    const labels = xAxisLabels(fortnight, 14);
+    const gaps = labels.slice(1).map((l, i) => l.index - labels[i].index);
+    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(2);
+  });
+
+  it("never emits a duplicate index", () => {
+    for (const [dates, range] of [[week, 7], [fortnight, 14]] as const) {
+      const idx = xAxisLabels(dates, range).map((l) => l.index);
+      expect(new Set(idx).size).toBe(idx.length);
+    }
+  });
+
+  it("reads the local calendar day, not a UTC one", () => {
+    // parseDateKey, never new Date("2026-09-20") -- a bare date string is
+    // parsed as UTC midnight and lands on the 19th west of Greenwich.
+    // 2026-10-25 is the BST->GMT Sunday; it must still read as Sunday.
+    const labels = xAxisLabels(trendWindowDates(7, new Date(2026, 9, 25, 23, 30)), 7);
+    expect(labels[6].label).toBe("Sun");
   });
 });
 

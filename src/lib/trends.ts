@@ -28,7 +28,7 @@
 import { MealEntry, Goals } from "../types";
 import { GoalsState } from "../store/useStore";
 import { DayBucket, getDaySummary } from "./entries";
-import { dateKey } from "./time";
+import { dateKey, parseDateKey } from "./time";
 
 /** The eight tracked nutrients, keyed as DayBucket and Goals key them. */
 export type TrendNutrient = keyof Omit<DayBucket, "count">;
@@ -198,6 +198,156 @@ function hasUnknownRow(
 }
 
 /**
+ * Why a toggle was refused, or null when it was not.
+ *
+ * Pairs with toggleNutrient and is defined to agree with it exactly: a
+ * message exists precisely when toggleNutrient returns its input unchanged.
+ * A test asserts that correspondence over every combination, so the rule
+ * and the explanation of the rule cannot drift.
+ *
+ * It exists because a tap that does nothing reads as a broken button
+ * rather than as a rule -- device pass feedback, 2026-09-20. The text is
+ * here rather than in the component so it can be checked against real
+ * input; a source-text assertion could not tell a live call from a dead
+ * one, which a sabotage run demonstrated.
+ */
+export function capMessageFor(
+  selected: TrendNutrient[],
+  nutrient: TrendNutrient,
+): string | null {
+  if (toggleNutrient(selected, nutrient) !== selected) return null;
+  return selected.includes(nutrient)
+    ? "Keep at least one."
+    : `That's ${MAX_SELECTED} already — tap one to swap it out.`;
+}
+
+// ── Chart geometry ─────────────────────────────────────────────────────────
+//
+// Here, not in the component, so "nothing falls off the canvas" can be
+// asserted against real numbers. The device pass found today's hollow point
+// cut in half by the right-hand edge: the padding had been sized for the
+// LINE, and a hollow dot is wider than its centre by its radius plus half
+// its stroke -- and it is always the last point in the window, which is
+// always the one at the edge.
+
+export const POINT_RADIUS = 3;
+export const POINT_STROKE = 1.5;
+
+/** How far a drawn point extends beyond its centre, in any direction. */
+export const POINT_EXTENT = POINT_RADIUS + POINT_STROKE / 2;
+
+/** Gutter for the y-axis labels (0 and the top of the scale). */
+export const Y_LABEL_WIDTH = 26;
+
+/** Strip under the plot for the x-axis date labels. */
+export const X_LABEL_HEIGHT = 14;
+
+export interface ChartScaleInput {
+  width: number;
+  height: number;
+  pointCount: number;
+  /** The top of the scale. The bottom is ALWAYS zero -- see below. */
+  max: number;
+}
+
+export interface ChartScale {
+  x: (index: number) => number;
+  y: (value: number) => number;
+  plotLeft: number;
+  plotRight: number;
+  plotTop: number;
+  plotBottom: number;
+}
+
+/**
+ * The scale for one chart.
+ *
+ * THE Y-AXIS ALWAYS STARTS AT ZERO. A min-based scale is the classic chart
+ * lie: 2,400 and 2,450 kcal become a dramatic climb because the axis starts
+ * at 2,395. Anchored at zero, the height of a point is proportional to what
+ * was actually eaten, and a 2% difference looks like 2%.
+ *
+ * Each nutrient still gets its own MAX, which is the small-multiples
+ * decision -- protein is read against protein, not against calories.
+ */
+export function buildChartScale({
+  width,
+  height,
+  pointCount,
+  max,
+}: ChartScaleInput): ChartScale {
+  const plotLeft = Y_LABEL_WIDTH + POINT_EXTENT;
+  const plotRight = Math.max(width - POINT_EXTENT, plotLeft + 1);
+  const plotTop = POINT_EXTENT;
+  const plotBottom = Math.max(
+    height - X_LABEL_HEIGHT - POINT_EXTENT,
+    plotTop + 1,
+  );
+
+  const span = plotRight - plotLeft;
+  const rise = plotBottom - plotTop;
+  // An all-zero series has max 0; dividing by it would put every point at
+  // NaN and draw nothing at all, with no clue as to why.
+  const top = max > 0 ? max : 1;
+
+  return {
+    x: (index) =>
+      pointCount <= 1
+        ? plotLeft + span / 2
+        : plotLeft + (index / (pointCount - 1)) * span,
+    y: (value) => plotBottom - (value / top) * rise,
+    plotLeft,
+    plotRight,
+    plotTop,
+    plotBottom,
+  };
+}
+
+// ── x-axis labels ──────────────────────────────────────────────────────────
+
+/** A fixed table rather than toLocaleDateString: the device's locale must
+ *  not decide what a chart axis says, or whether a test passes. */
+const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+export interface AxisLabel {
+  /** Index into the series' points, so the caller can reuse the x scale. */
+  index: number;
+  label: string;
+}
+
+/**
+ * Which days to label, and how.
+ *
+ * Over 7 days every day is labelled with a short weekday, which is how
+ * people actually think about a week. Over 14 a weekday would appear twice
+ * and mean two different days, so it switches to d/M and thins out: the
+ * first, the last, and roughly every third in between, never two adjacent.
+ * At 360dp with the largest system font a d/M label is about a fifth of the
+ * chart width, so neighbouring labels would collide.
+ */
+export function xAxisLabels(dates: string[], range: TrendRange): AxisLabel[] {
+  const format = (key: string) => {
+    const d = parseDateKey(key); // never new Date("2026-09-20") -- that is UTC
+    return range === 7
+      ? WEEKDAY[d.getDay()]
+      : `${d.getDate()}/${d.getMonth() + 1}`;
+  };
+
+  if (range === 7) {
+    return dates.map((key, index) => ({ index, label: format(key) }));
+  }
+
+  const last = dates.length - 1;
+  const indices: number[] = [];
+  // Stop two short of the end so the final label never lands next to the
+  // one before it -- the gap that would actually overlap.
+  for (let i = 0; i <= last - 2; i += 3) indices.push(i);
+  if (indices[indices.length - 1] !== last) indices.push(last);
+
+  return indices.map((index) => ({ index, label: format(dates[index]) }));
+}
+
+/**
  * The SVG path segments for a series, broken at every gap.
  *
  * Pure, and here rather than in the chart component, because a source-text
@@ -210,29 +360,57 @@ function hasUnknownRow(
  * A straight line from Monday to Wednesday is a DRAWN CLAIM about Tuesday.
  * If Tuesday has no value, no ink may cross it.
  *
+ * THE LEG INTO TODAY IS DASHED and returned as its own segment. Today is a
+ * partial day, and a solid line dropping into a low point reads as a
+ * collapse rather than as a day that is only half over -- device pass
+ * feedback, 2026-09-20.
+ *
  * A run of one point produces no segment: a path needs two points. The dot
  * is still drawn by the caller, so an isolated day is visible as a point
  * with no line, which is the truth about it.
  */
+export interface PathSegment {
+  d: string;
+  /** Rendered dashed: this leg arrives at a day that has not finished. */
+  dashed: boolean;
+}
+
 export function buildPathSegments(
   points: TrendPoint[],
   x: (index: number) => number,
   y: (value: number) => number,
-): string[] {
-  const segments: string[] = [];
+): PathSegment[] {
+  const segments: PathSegment[] = [];
   let current: string[] = [];
+  let previous: { i: number; value: number } | null = null;
 
   const flush = () => {
-    if (current.length > 1) segments.push(current.join(" "));
+    if (current.length > 1) segments.push({ d: current.join(" "), dashed: false });
     current = [];
   };
 
   points.forEach((p, i) => {
     if (p.value == null) {
       flush();
+      previous = null;
       return;
     }
+
+    if (p.soFar && previous) {
+      // Close the solid run at the previous day, then join to today with a
+      // segment of its own so it can be dashed. The two share a coordinate,
+      // so the line still reads as continuous.
+      flush();
+      segments.push({
+        d: `M${x(previous.i)} ${y(previous.value)} L${x(i)} ${y(p.value)}`,
+        dashed: true,
+      });
+      previous = { i, value: p.value };
+      return;
+    }
+
     current.push(`${current.length === 0 ? "M" : "L"}${x(i)} ${y(p.value)}`);
+    previous = { i, value: p.value };
   });
   flush();
 

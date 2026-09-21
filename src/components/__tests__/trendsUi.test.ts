@@ -110,8 +110,51 @@ describe("TrendChart", () => {
     expect(code).not.toContain("DEFAULT_GOALS");
   });
 
-  it("gives each nutrient its own y-scale, anchored at zero", () => {
-    expect(code).toMatch(/const candidates = \[\.\.\.values, 0/);
+  // The zero-anchored scale moved into lib/trends.ts' buildChartScale when
+  // the device pass found points clipped at the edges -- same reasoning as
+  // the path builder: "nothing falls off the canvas" and "the axis starts
+  // at zero" are behavioural, and a regex cannot check either. They are
+  // asserted against real numbers in lib/__tests__/trends.test.ts; all this
+  // file checks is that the chart delegates instead of keeping its own.
+  it("delegates the scale to the tested builder and keeps no second copy", () => {
+    expect(code).toMatch(/const scale = buildChartScale\(/);
+    expect(code).not.toMatch(/Math\.min\(\.\.\.values/);
+    expect(code).not.toMatch(/const plotH =/);
+    expect(code).not.toMatch(/const PAD_LEFT/);
+  });
+
+  it("sizes the point padding from the point itself, not a guess", () => {
+    // The clipping bug: the padding had been sized for the LINE, and a
+    // hollow dot is wider than its centre by its radius plus half its
+    // stroke. Both now come from the same constants the geometry uses.
+    expect(code).toContain("POINT_EXTENT");
+    expect(code).toMatch(/r=\{POINT_RADIUS\}/);
+    expect(code).toMatch(/strokeWidth=\{isHollow\(p\) \? POINT_STROKE : 0\}/);
+  });
+
+  it("dashes the leg into today rather than drawing it solid", () => {
+    expect(code).toMatch(/strokeDasharray=\{segment\.dashed \?/);
+  });
+
+  it("labels the goal line rather than showing a bare number", () => {
+    expect(code).toMatch(/`goal \$\{formatValue\(series\.goal/);
+  });
+
+  it("says which day the headline number belongs to", () => {
+    expect(code).toMatch(/latest\.soFar \? "today so far" : shortDay\(latest\.date\)/);
+  });
+
+  it("draws both y-axis bounds and the x-axis dates", () => {
+    expect(code).toMatch(/formatValue\(scaleTop, series\.meta\.unit\)/);
+    expect(code).toMatch(/axis\.map\(/);
+    expect(code).toContain("xAxisLabels");
+  });
+
+  it("formats numbers without asking the device's locale", () => {
+    // A chart axis that says 2,800 in one place and 2.800 in another is a
+    // different number, not a different style.
+    expect(code).not.toContain("toLocaleString");
+    expect(code).not.toContain("toLocaleDateString");
   });
 
   it("rounds only for display", () => {
@@ -160,4 +203,38 @@ describe("TrendsPanel", () => {
   it("cancels the preference read if the user changes mid-flight", () => {
     expect(code).toMatch(/cancelled/);
   });
+
+  it("shows the cap as a standing hint, not only after a failed tap", () => {
+    expect(code).toMatch(/`Pick up to \$\{MAX_SELECTED\}`/);
+    expect(code).toMatch(/`\$\{nutrients\.length\}\/\$\{MAX_SELECTED\}`/);
+  });
+
+  // A sabotage that made the call dead (`void 0 && setCapMessage(...)`)
+  // still matched a regex for `setCapMessage(` -- the same blind spot as
+  // the path builder. The MESSAGE is now decided by capMessageFor in
+  // lib/trends.ts and tested there against toggleNutrient over every
+  // combination; what this file can honestly assert is that the panel
+  // holds no wording of its own to drift. That the call is actually wired
+  // is a device check, not something source text can prove.
+  it("delegates the refusal wording rather than holding its own", () => {
+    expect(code).toContain("capMessageFor(nutrients, nutrient)");
+    expect(code).not.toContain("Keep at least one");
+    expect(code).not.toContain("already");
+  });
+
+  it("announces the message to screen readers", () => {
+    expect(code).toMatch(/accessibilityLiveRegion="polite"/);
+  });
+
+  it("clears that message on a timer, and clears the timer on unmount", () => {
+    expect(code).toMatch(/setTimeout\(\(\) => setCapMessage\(null\)/);
+    expect(code).toMatch(/clearTimeout\(capTimer\.current\)/);
+  });
+
+  it("tells each chart which range it is drawing", () => {
+    // xAxisLabels formats differently at 7 and 14 days; a chart that had to
+    // infer the range from the point count would be a second definition.
+    expect(code).toMatch(/range=\{range\}/);
+  });
+
 });

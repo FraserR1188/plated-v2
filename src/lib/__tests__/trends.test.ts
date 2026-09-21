@@ -23,7 +23,10 @@ import {
   buildChartScale,
   buildPathSegments,
   capMessageFor,
+  formatNutrientValue,
+  goalCaption,
   xAxisLabels,
+  xAxisLabelBounds,
   MAX_SELECTED,
   NULLABLE_NUTRIENTS,
   RANGE_DAYS,
@@ -758,6 +761,141 @@ describe("buildChartScale", () => {
     const s = buildChartScale({ width: WIDTH, height: HEIGHT, pointCount: 7, max: 0 });
     expect(Number.isFinite(s.y(0))).toBe(true);
     expect(s.y(0)).toBe(s.plotBottom);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Nothing drawn may leave the CARD, not merely the plot
+// ────────────────────────────────────────────────────────────
+
+describe("everything drawn fits inside the measured width", () => {
+  // Second device pass, 2026-09-20: today's point was still past the card's
+  // right edge and the "Mon" label touched it. The padding was right; the
+  // SVG was WIDER THAN ITS CARD, because the width handed to it was the
+  // container's, and the card adds its own padding and border inside that.
+  //
+  // The component now measures the plot area itself. This is the invariant
+  // that measurement has to satisfy, stated once for every width the phone
+  // sizes this to -- points AND labels, within [0, width].
+  const CHAR_W = 5.4; // 9px JetBrains Mono, which is monospaced by design
+
+  const widths = [280, 296, 320, 328, 360, 412];
+
+  it.each(widths)("keeps every point inside a %ipx plot", (width) => {
+    for (const count of [7, 14]) {
+      const scale = buildChartScale({ width, height: 108, pointCount: count, max: 2500 });
+      for (let i = 0; i < count; i++) {
+        expect(scale.x(i) - POINT_EXTENT).toBeGreaterThanOrEqual(0);
+        expect(scale.x(i) + POINT_EXTENT).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
+  it.each(widths)("keeps every x-axis label inside a %ipx plot", (width) => {
+    for (const range of [7, 14] as const) {
+      const dates = trendWindowDates(range, noonLocal(2026, 9, 20));
+      const scale = buildChartScale({ width, height: 108, pointCount: range, max: 2500 });
+      const bounds = xAxisLabelBounds(
+        xAxisLabels(dates, range),
+        scale,
+        range,
+        CHAR_W,
+      );
+      for (const b of bounds) {
+        expect(b.left).toBeGreaterThanOrEqual(0);
+        expect(b.right).toBeLessThanOrEqual(width);
+      }
+    }
+  });
+
+  it.each(widths)("never overlaps two x-axis labels at %ipx", (width) => {
+    for (const range of [7, 14] as const) {
+      const dates = trendWindowDates(range, noonLocal(2026, 9, 20));
+      const scale = buildChartScale({ width, height: 108, pointCount: range, max: 2500 });
+      const bounds = xAxisLabelBounds(
+        xAxisLabels(dates, range),
+        scale,
+        range,
+        CHAR_W,
+      );
+      for (let i = 1; i < bounds.length; i++) {
+        expect(bounds[i].left).toBeGreaterThanOrEqual(bounds[i - 1].right);
+      }
+    }
+  });
+
+  it("anchors the end labels inward so they cannot hang off the edge", () => {
+    const scale = buildChartScale({ width: 320, height: 108, pointCount: 7, max: 100 });
+    const dates = trendWindowDates(7, noonLocal(2026, 9, 20));
+    const bounds = xAxisLabelBounds(xAxisLabels(dates, 7), scale, 7, CHAR_W);
+    expect(bounds[0].anchor).toBe("start");
+    expect(bounds[bounds.length - 1].anchor).toBe("end");
+    expect(bounds[1].anchor).toBe("middle");
+  });
+
+  it("leaves room on the left when a gutter is asked for", () => {
+    // The y-axis labels live OUTSIDE the svg now, but the parameter stays
+    // so the plot can be inset without the component doing its own maths.
+    const scale = buildChartScale({
+      width: 320, height: 108, pointCount: 7, max: 100, leftGutter: 30,
+    });
+    expect(scale.plotLeft).toBeGreaterThanOrEqual(30);
+  });
+
+  it("defaults to no left gutter", () => {
+    const scale = buildChartScale({ width: 320, height: 108, pointCount: 7, max: 100 });
+    expect(scale.plotLeft).toBe(POINT_EXTENT);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// The goal, now in the card header
+// ────────────────────────────────────────────────────────────
+
+describe("goalCaption", () => {
+  // Moved out of the plot entirely (Robbie, 2026-09-20). Inside, it
+  // collided with the y-axis top label whenever the goal WAS the top of
+  // the scale -- "2,800" directly over "goal 2,800". In the header it is
+  // read once, next to the thing it is a goal for.
+  it("reads 'goal 2,800' for calories, with a thousands separator", () => {
+    expect(goalCaption(2800, "kcal")).toBe("goal 2,800");
+  });
+
+  it("carries the unit where it helps", () => {
+    expect(goalCaption(20, "g")).toBe("goal 20 g");
+  });
+
+  it("keeps one decimal on a small gram target", () => {
+    expect(goalCaption(2.5, "g")).toBe("goal 2.5 g");
+  });
+
+  it("is null when there is no goal, so the header shows nothing", () => {
+    expect(goalCaption(null, "kcal")).toBeNull();
+    expect(goalCaption(0, "kcal")).toBeNull();
+  });
+});
+
+describe("formatNutrientValue", () => {
+  // Pure and here rather than in the component so the locale cannot get a
+  // vote. A chart that says 2,800 in one place and 2.800 in another is
+  // showing a different number, not a different style.
+  it("separates thousands without asking the device", () => {
+    expect(formatNutrientValue(2800, "kcal")).toBe("2,800");
+    expect(formatNutrientValue(1225, "kcal")).toBe("1,225");
+  });
+
+  it("rounds calories to whole numbers", () => {
+    expect(formatNutrientValue(1224.6, "kcal")).toBe("1,225");
+  });
+
+  it("keeps one decimal under 10 g and rounds above it", () => {
+    expect(formatNutrientValue(4.04, "g")).toBe("4.0");
+    expect(formatNutrientValue(43.7, "g")).toBe("44");
+  });
+
+  it("renders a real zero as zero", () => {
+    expect(formatNutrientValue(0, "g")).toBe("0.0");
+    expect(formatNutrientValue(0, "kcal")).toBe("0");
   });
 });
 

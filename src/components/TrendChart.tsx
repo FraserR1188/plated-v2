@@ -11,19 +11,22 @@
 //   soFar            → hollow point, reached by a DASHED leg. A solid line
 //                      dropping into a low point reads as a collapse
 //                      rather than as a day that is only half over.
-//   goal === null    → no goal line at all (PL-026).
+//   goal === null    → no goal line, and no goal in the header (PL-026).
 //   y-axis           → always anchored at zero, per nutrient.
 //
-// The geometry is in lib/trends.ts too, so "nothing falls off the canvas"
-// is asserted against real numbers rather than eyeballed. The device pass
-// found today's hollow point cut in half by the right-hand edge.
+// LAYOUT IS MEASURED, NEVER ASSUMED. The first device pass found points
+// clipped at the edges; the second found the whole svg wider than its own
+// card, because the width came from the container and the card adds its
+// padding and border inside that. The plot now measures itself with
+// onLayout, and the y-axis labels are real <Text> in a column the layout
+// engine sizes — a fixed gutter had clipped "2,800" to ",800".
 //
 // react-native-svg is already a dependency (CalorieRing uses it), so this
 // adds nothing to the runtime fingerprint and ships by OTA.
 // ============================================================
 
-import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import React, { useState } from "react";
+import { View, Text, StyleSheet, LayoutChangeEvent } from "react-native";
 import Svg, { Circle, Line, Path, Text as SvgText } from "react-native-svg";
 import {
   POINT_EXTENT,
@@ -32,8 +35,12 @@ import {
   TrendPoint,
   TrendRange,
   TrendSeries,
+  X_LABEL_HEIGHT,
   buildChartScale,
   buildPathSegments,
+  formatNutrientValue,
+  goalCaption,
+  xAxisLabelBounds,
   xAxisLabels,
 } from "../lib/trends";
 import {
@@ -66,24 +73,15 @@ const NUTRIENT_COLOR: Record<string, string> = {
 const CHART_HEIGHT = 108;
 const AXIS_FONT = 9;
 
+/** JetBrains Mono's advance width is 0.6em, and it is monospaced — which is
+ *  the whole reason the label bounds can be computed instead of measured.
+ *  Svg text does not respond to the system font scale, so this stays true
+ *  at the largest Dynamic Type setting. */
+const AXIS_CHAR_W = AXIS_FONT * 0.6;
+
 interface Props {
   series: TrendSeries;
   range: TrendRange;
-  /** Measured by the parent; the chart is width-driven, never fixed. */
-  width: number;
-}
-
-/** Thousands separator, by hand rather than toLocaleString: the device's
- *  locale must not decide what a chart axis says. */
-function withThousands(n: number): string {
-  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
-
-/** Rounds for display only. The underlying value is never rounded — see
- *  PL-028, where rounding to display precision on a WRITE was the defect. */
-function formatValue(value: number, unit: "kcal" | "g"): string {
-  if (unit === "kcal") return withThousands(Math.round(value));
-  return value >= 10 ? withThousands(Math.round(value)) : value.toFixed(1);
 }
 
 const isHollow = (p: TrendPoint) => p.incomplete || p.soFar;
@@ -98,50 +96,64 @@ function shortDay(key: string): string {
   return `${d} ${MONTH[m - 1]}`;
 }
 
-export function TrendChart({ series, range, width }: Props) {
+export function TrendChart({ series, range }: Props) {
+  // The MEASURED inside of the card. Nothing is drawn until it is known.
+  const [plotWidth, setPlotWidth] = useState(0);
+
   const color = NUTRIENT_COLOR[series.nutrient] ?? Colors.green;
   const values = series.points
     .map((p) => p.value)
     .filter((v): v is number => v != null);
 
-  // Its own scale, anchored at zero. The goal is included so the target
-  // line is always on the canvas rather than off the top of it.
+  // Its own scale, anchored at zero. The goal is included so the dashed
+  // target line is always on the canvas rather than off the top of it.
   const max = Math.max(
     ...values,
     0,
     ...(series.goal != null ? [series.goal] : []),
   );
   const scale = buildChartScale({
-    width,
+    width: Math.max(plotWidth, 1),
     height: CHART_HEIGHT,
     pointCount: series.points.length,
     max,
   });
 
   const segments = buildPathSegments(series.points, scale.x, scale.y);
-  const axis = xAxisLabels(
-    series.points.map((p) => p.date),
-    range,
+  const axis = xAxisLabelBounds(
+    xAxisLabels(series.points.map((p) => p.date), range),
+    scale,
+    series.points.length,
+    AXIS_CHAR_W,
   );
 
   const latest = [...series.points].reverse().find((p) => p.value != null);
   const hasAnyData = values.length > 0;
   const scaleTop = max > 0 ? max : 1;
-  const lastIndex = series.points.length - 1;
+  const goalText = goalCaption(series.goal, series.meta.unit);
+
+  const onPlotLayout = (e: LayoutChangeEvent) =>
+    setPlotWidth(e.nativeEvent.layout.width);
 
   return (
     <View style={styles.card}>
       <View style={styles.head}>
         <View style={styles.titleWrap}>
           <View style={[styles.swatch, { backgroundColor: color }]} />
-          <Text style={styles.title} numberOfLines={1}>
+          {/* Two lines allowed, so "Sat fat · goal 20 g" wraps the goal
+              onto its own line at the largest font rather than truncating
+              the nutrient's name. */}
+          <Text style={styles.title} numberOfLines={2}>
             {series.meta.label}
+            {goalText != null && (
+              <Text style={styles.goal}>{` · ${goalText}`}</Text>
+            )}
           </Text>
         </View>
         {latest?.value != null && (
           <View style={styles.latestWrap}>
             <Text style={[styles.latest, { color }]} numberOfLines={1}>
-              {formatValue(latest.value, series.meta.unit)}
+              {formatNutrientValue(latest.value, series.meta.unit)}
               <Text style={styles.unit}> {series.meta.unit}</Text>
             </Text>
             {/* Say WHICH day the headline number is. Without this it reads
@@ -154,118 +166,110 @@ export function TrendChart({ series, range, width }: Props) {
       </View>
 
       {hasAnyData ? (
-        <Svg width={width} height={CHART_HEIGHT}>
-          {/* ── y-axis: the top of the scale, and zero ── */}
-          <SvgText
-            x={scale.plotLeft - POINT_EXTENT - 4}
-            y={scale.plotTop + AXIS_FONT / 2}
-            fill={Colors.textDim}
-            fontSize={AXIS_FONT}
-            fontFamily={Fonts.mono.regular}
-            textAnchor="end"
-          >
-            {formatValue(scaleTop, series.meta.unit)}
-          </SvgText>
-          <SvgText
-            x={scale.plotLeft - POINT_EXTENT - 4}
-            y={scale.plotBottom + AXIS_FONT / 3}
-            fill={Colors.textDim}
-            fontSize={AXIS_FONT}
-            fontFamily={Fonts.mono.regular}
-            textAnchor="end"
-          >
-            0
-          </SvgText>
-
-          {/* The baseline, so zero is a place on the chart rather than a
-              label floating beside nothing. */}
-          <Line
-            x1={scale.plotLeft}
-            y1={scale.plotBottom}
-            x2={scale.plotRight}
-            y2={scale.plotBottom}
-            stroke={Colors.border}
-            strokeWidth={1}
-          />
-
-          {/* ── Goal line — dashed, behind the data, and LABELLED. Absent
-                 unless goals are loaded and a target is set; see PL-026. */}
-          {series.goal != null && (
-            <>
-              <Line
-                x1={scale.plotLeft}
-                y1={scale.y(series.goal)}
-                x2={scale.plotRight}
-                y2={scale.y(series.goal)}
-                stroke={Colors.textDim}
-                strokeWidth={1}
-                strokeDasharray="3 4"
-              />
-              {/* Left-aligned, not right: today's point sits at the right
-                  edge, and a label there would land on top of it. */}
-              <SvgText
-                x={scale.plotLeft + 2}
-                y={Math.max(scale.y(series.goal) - 3, AXIS_FONT)}
-                fill={Colors.textDim}
-                fontSize={AXIS_FONT}
-                fontFamily={Fonts.mono.regular}
-                textAnchor="start"
-              >
-                {`goal ${formatValue(series.goal, series.meta.unit)}`}
-              </SvgText>
-            </>
-          )}
-
-          {segments.map((segment, i) => (
-            <Path
-              key={i}
-              d={segment.d}
-              stroke={color}
-              strokeWidth={2}
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              // The leg into today: the day isn't over, so the line isn't
-              // solid either.
-              strokeDasharray={segment.dashed ? "4 3" : undefined}
-            />
-          ))}
-
-          {series.points.map((p, i) =>
-            p.value == null ? null : (
-              <Circle
-                key={p.date}
-                cx={scale.x(i)}
-                cy={scale.y(p.value)}
-                r={POINT_RADIUS}
-                // Hollow = "this number is not the whole story". Filled =
-                // a complete, finished day.
-                fill={isHollow(p) ? Colors.bg : color}
-                stroke={color}
-                strokeWidth={isHollow(p) ? POINT_STROKE : 0}
-              />
-            ),
-          )}
-
-          {/* ── x-axis dates ── */}
-          {axis.map(({ index, label }) => (
-            <SvgText
-              key={`${index}-${label}`}
-              x={scale.x(index)}
-              y={CHART_HEIGHT - 3}
-              fill={Colors.textDim}
-              fontSize={AXIS_FONT}
-              fontFamily={Fonts.mono.regular}
-              // Centred under its point, except at the two ends, where
-              // centring would push the label past the edge of the canvas.
-              textAnchor={
-                index === 0 ? "start" : index === lastIndex ? "end" : "middle"
-              }
+        <View style={styles.plotRow}>
+          {/* The y-axis, OUTSIDE the svg so the layout engine sizes it.
+              Both labels are width-independent: plotTop and plotBottom come
+              from the height and the point extent alone. */}
+          <View style={styles.yAxis}>
+            <Text
+              style={[
+                styles.axisText,
+                { top: scale.plotTop - AXIS_FONT / 2 - 1 },
+              ]}
             >
-              {label}
-            </SvgText>
-          ))}
-        </Svg>
+              {formatNutrientValue(scaleTop, series.meta.unit)}
+            </Text>
+            <Text
+              style={[
+                styles.axisText,
+                { top: scale.plotBottom - AXIS_FONT / 2 - 1 },
+              ]}
+            >
+              0
+            </Text>
+          </View>
+
+          <View style={styles.plot} onLayout={onPlotLayout}>
+            {plotWidth > 0 && (
+              <Svg width={plotWidth} height={CHART_HEIGHT}>
+                {/* The baseline, so zero is a place on the chart rather
+                    than a label floating beside nothing. */}
+                <Line
+                  x1={scale.plotLeft}
+                  y1={scale.plotBottom}
+                  x2={scale.plotRight}
+                  y2={scale.plotBottom}
+                  stroke={Colors.border}
+                  strokeWidth={1}
+                />
+
+                {/* The goal line — dashed and UNLABELLED. The number is in
+                    the card header; inside the plot it collided with the
+                    y-axis top label whenever the goal was the top of the
+                    scale, which is common. */}
+                {series.goal != null && (
+                  <Line
+                    x1={scale.plotLeft}
+                    y1={scale.y(series.goal)}
+                    x2={scale.plotRight}
+                    y2={scale.y(series.goal)}
+                    stroke={Colors.textDim}
+                    strokeWidth={1}
+                    strokeDasharray="3 4"
+                  />
+                )}
+
+                {segments.map((segment, i) => (
+                  <Path
+                    key={i}
+                    d={segment.d}
+                    stroke={color}
+                    strokeWidth={2}
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    // The leg into today: the day isn't over, so the line
+                    // isn't solid either.
+                    strokeDasharray={segment.dashed ? "4 3" : undefined}
+                  />
+                ))}
+
+                {series.points.map((p, i) =>
+                  p.value == null ? null : (
+                    <Circle
+                      key={p.date}
+                      cx={scale.x(i)}
+                      cy={scale.y(p.value)}
+                      r={POINT_RADIUS}
+                      // Hollow = "this number is not the whole story".
+                      // Filled = a complete, finished day.
+                      fill={isHollow(p) ? Colors.bg : color}
+                      stroke={color}
+                      strokeWidth={isHollow(p) ? POINT_STROKE : 0}
+                    />
+                  ),
+                )}
+
+                {axis.map(({ index, label, anchor }) => (
+                  <SvgText
+                    key={`${index}-${label}`}
+                    x={scale.x(index)}
+                    y={CHART_HEIGHT - 3}
+                    fill={Colors.textDim}
+                    fontSize={AXIS_FONT}
+                    fontFamily={Fonts.mono.regular}
+                    // The end labels anchor inward; the rule is in
+                    // xAxisLabelBounds, where it is tested against the
+                    // canvas bounds rather than eyeballed.
+                    textAnchor={anchor}
+                  >
+                    {label}
+                  </SvgText>
+                ))}
+              </Svg>
+            )}
+          </View>
+        </View>
       ) : (
         <View style={[styles.empty, { height: CHART_HEIGHT }]}>
           <Text style={styles.emptyText}>Nothing logged in this window</Text>
@@ -329,7 +333,7 @@ const styles = StyleSheet.create(
     },
     titleWrap: {
       flexDirection: "row",
-      alignItems: "center",
+      alignItems: "flex-start",
       gap: 6,
       flexShrink: 1,
       paddingTop: 2,
@@ -338,12 +342,18 @@ const styles = StyleSheet.create(
       width: 8,
       height: 8,
       borderRadius: 4,
+      marginTop: 4,
     },
     title: {
       fontSize: Typography.sm,
       fontWeight: Typography.semibold,
       color: Colors.text,
       flexShrink: 1,
+    },
+    goal: {
+      fontSize: Typography.xs,
+      fontWeight: Typography.regular,
+      color: Colors.textDim,
     },
     latestWrap: {
       alignItems: "flex-end",
@@ -363,6 +373,31 @@ const styles = StyleSheet.create(
       color: Colors.textDim,
       marginTop: -1,
     },
+    plotRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+    },
+    yAxis: {
+      height: CHART_HEIGHT,
+      // No fixed width: the column is as wide as its widest label, which
+      // is what stops "2,800" being clipped to ",800".
+      justifyContent: "flex-start",
+      marginRight: 4,
+    },
+    axisText: {
+      position: "absolute",
+      right: 0,
+      fontSize: AXIS_FONT,
+      fontFamily: Fonts.mono.regular,
+      color: Colors.textDim,
+      // Svg text ignores the system font scale, so the axis numbers must
+      // too, or the column and the plot disagree about where zero is.
+      includeFontPadding: false,
+    },
+    plot: {
+      flex: 1,
+      height: CHART_HEIGHT,
+    },
     empty: {
       alignItems: "center",
       justifyContent: "center",
@@ -378,3 +413,7 @@ const styles = StyleSheet.create(
     },
   }),
 );
+
+// Reserved inside buildChartScale for the x-axis strip; referenced so the
+// two cannot drift apart unnoticed if the strip is ever resized.
+void X_LABEL_HEIGHT;

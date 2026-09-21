@@ -236,18 +236,34 @@ export const POINT_STROKE = 1.5;
 /** How far a drawn point extends beyond its centre, in any direction. */
 export const POINT_EXTENT = POINT_RADIUS + POINT_STROKE / 2;
 
-/** Gutter for the y-axis labels (0 and the top of the scale). */
-export const Y_LABEL_WIDTH = 26;
+/**
+ * The y-axis labels are NOT drawn inside the svg any more.
+ *
+ * A fixed gutter guessed at their width, and the second device pass found
+ * the top label clipped to ",800" instead of "2,800". They are now real
+ * `<Text>` in a column beside the chart, measured by the layout engine, so
+ * the gutter is whatever they actually need -- including at the largest
+ * system font, which svg text does not respond to at all.
+ */
 
 /** Strip under the plot for the x-axis date labels. */
 export const X_LABEL_HEIGHT = 14;
 
 export interface ChartScaleInput {
+  /**
+   * The MEASURED width of the plot area -- the inside of the card, after
+   * its padding and border, via onLayout. Never the window width minus an
+   * assumed padding: that assumption is what put today's point outside the
+   * card on the second device pass.
+   */
   width: number;
   height: number;
   pointCount: number;
   /** The top of the scale. The bottom is ALWAYS zero -- see below. */
   max: number;
+  /** Inset on the left, if anything is drawn there. Zero by default: the
+   *  y-axis labels sit outside the svg in their own measured column. */
+  leftGutter?: number;
 }
 
 export interface ChartScale {
@@ -275,8 +291,9 @@ export function buildChartScale({
   height,
   pointCount,
   max,
+  leftGutter = 0,
 }: ChartScaleInput): ChartScale {
-  const plotLeft = Y_LABEL_WIDTH + POINT_EXTENT;
+  const plotLeft = leftGutter + POINT_EXTENT;
   const plotRight = Math.max(width - POINT_EXTENT, plotLeft + 1);
   const plotTop = POINT_EXTENT;
   const plotBottom = Math.max(
@@ -345,6 +362,91 @@ export function xAxisLabels(dates: string[], range: TrendRange): AxisLabel[] {
   if (indices[indices.length - 1] !== last) indices.push(last);
 
   return indices.map((index) => ({ index, label: format(dates[index]) }));
+}
+
+export type AxisAnchor = "start" | "middle" | "end";
+
+export interface AxisLabelBounds extends AxisLabel {
+  anchor: AxisAnchor;
+  /** Leftmost and rightmost ink, in the same coordinates as the scale. */
+  left: number;
+  right: number;
+}
+
+/**
+ * Where each x-axis label actually sits, given the scale.
+ *
+ * The anchor rule lives here rather than in the chart so it can be checked:
+ * the two end labels are anchored INWARD, because a centred label under the
+ * first or last point hangs half of itself off the canvas. Every other
+ * label is centred under its point.
+ *
+ * `charWidth` is the width of one character. The axis font is JetBrains
+ * Mono, which is monospaced, so a label's width really is its length times
+ * one character -- that is the whole reason this can be computed rather
+ * than measured per label.
+ */
+export function xAxisLabelBounds(
+  labels: AxisLabel[],
+  scale: ChartScale,
+  pointCount: number,
+  charWidth: number,
+): AxisLabelBounds[] {
+  const lastIndex = pointCount - 1;
+
+  return labels.map((label) => {
+    const w = label.label.length * charWidth;
+    const x = scale.x(label.index);
+
+    if (label.index === 0) {
+      return { ...label, anchor: "start" as const, left: x, right: x + w };
+    }
+    if (label.index === lastIndex) {
+      return { ...label, anchor: "end" as const, left: x - w, right: x };
+    }
+    return { ...label, anchor: "middle" as const, left: x - w / 2, right: x + w / 2 };
+  });
+}
+
+// ── Number and goal formatting ─────────────────────────────────────────────
+//
+// Pure, and here rather than in the component, so the device's locale gets
+// no vote. A chart that says 2,800 in one place and 2.800 in another is
+// showing a different number, not a different style.
+
+function withThousands(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
+/** Rounds for DISPLAY only. The stored value is never rounded -- rounding
+ *  to display precision on a write was the defect in PL-028. */
+export function formatNutrientValue(
+  value: number,
+  unit: "kcal" | "g",
+): string {
+  if (unit === "kcal") return withThousands(Math.round(value));
+  return value >= 10 ? withThousands(Math.round(value)) : value.toFixed(1);
+}
+
+/**
+ * The goal, as it reads in the card header: "goal 2,800", "goal 20 g".
+ *
+ * It moved out of the plot after the second device pass. Inside, it sat on
+ * the dashed line -- and whenever the goal WAS the top of the scale, which
+ * is common, the y-axis top label landed directly on top of it: "2,800"
+ * over "goal 2,800". In the header it is read once, beside the nutrient it
+ * belongs to, and the dashed line can stay unlabelled.
+ *
+ * Null for no goal, so the caller has nothing to render rather than an
+ * empty string to hide. Zero means "no target set", never "a target of 0".
+ */
+export function goalCaption(
+  goal: number | null,
+  unit: "kcal" | "g",
+): string | null {
+  if (goal == null || goal <= 0) return null;
+  const value = formatNutrientValue(goal, unit);
+  return unit === "g" ? `goal ${value} g` : `goal ${value}`;
 }
 
 /**

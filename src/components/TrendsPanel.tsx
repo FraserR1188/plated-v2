@@ -14,7 +14,6 @@ import {
   ScrollView,
   Pressable,
   StyleSheet,
-  LayoutChangeEvent,
 } from "react-native";
 import { useStore } from "../store/useStore";
 import {
@@ -46,7 +45,6 @@ export function TrendsPanel() {
 
   const [nutrients, setNutrients] = useState<TrendNutrient[]>(DEFAULT_NUTRIENTS);
   const [range, setRange] = useState<TrendRange>(7);
-  const [width, setWidth] = useState(0);
   const [capMessage, setCapMessage] = useState<string | null>(null);
 
   // The message clears itself: it answers a tap, and an explanation that
@@ -121,9 +119,6 @@ export function TrendsPanel() {
     [entries, nutrients, range, goals, goalsState],
   );
 
-  const onLayout = (e: LayoutChangeEvent) =>
-    setWidth(e.nativeEvent.layout.width);
-
   return (
     <ScrollView
       contentContainerStyle={styles.scroll}
@@ -183,16 +178,14 @@ export function TrendsPanel() {
       )}
 
       {/* ── The small multiples ──────────────────────────── */}
-      <View onLayout={onLayout} style={styles.charts}>
-        {width > 0 &&
-          series.map((s) => (
-            <TrendChart
-              key={s.nutrient}
-              series={s}
-              range={range}
-              width={width}
-            />
-          ))}
+      {/* No width is passed down: each chart measures the inside of its own
+          card. Handing one width to all of them is what put today's point
+          outside the card edge -- the card's padding and border live inside
+          whatever the container measures. */}
+      <View style={styles.charts}>
+        {series.map((s) => (
+          <TrendChart key={s.nutrient} series={s} range={range} />
+        ))}
       </View>
 
       {goalsState !== "loaded" && (

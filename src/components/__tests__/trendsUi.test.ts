@@ -136,8 +136,28 @@ describe("TrendChart", () => {
     expect(code).toMatch(/strokeDasharray=\{segment\.dashed \?/);
   });
 
-  it("labels the goal line rather than showing a bare number", () => {
-    expect(code).toMatch(/`goal \$\{formatValue\(series\.goal/);
+  // Moved to the card header after the second device pass: inside the plot
+  // the goal label sat on top of the y-axis top number whenever the goal
+  // WAS the top of the scale, which is common ("2,800" over "goal 2,800").
+  it("puts the goal in the header, not in the plot", () => {
+    expect(code).toContain("goalCaption(series.goal, series.meta.unit)");
+    expect(code).toMatch(/<Text style=\{styles\.goal\}>\{` · \$\{goalText\}`\}<\/Text>/);
+    // No goal text inside the svg. The dashed line stays, unlabelled.
+    const svg = code.slice(code.indexOf("<Svg"), code.indexOf("</Svg>"));
+    expect(svg).not.toContain("goalText");
+    expect(svg).toMatch(/strokeDasharray="3 4"/);
+  });
+
+  it("renders no goal at all when the series has none", () => {
+    // goalCaption returns null rather than "", so there is nothing to hide.
+    expect(code).toMatch(/goalText != null &&/);
+    expect(code).toMatch(/series\.goal != null &&/);
+  });
+
+  it("lets the header wrap instead of truncating the nutrient name", () => {
+    // "Sat fat · goal 20 g" beside "4.0 g / today so far" is the longest
+    // case at 360dp and the largest font.
+    expect(code).toMatch(/style=\{styles\.title\} numberOfLines=\{2\}/);
   });
 
   it("says which day the headline number belongs to", () => {
@@ -145,9 +165,36 @@ describe("TrendChart", () => {
   });
 
   it("draws both y-axis bounds and the x-axis dates", () => {
-    expect(code).toMatch(/formatValue\(scaleTop, series\.meta\.unit\)/);
+    expect(code).toMatch(/formatNutrientValue\(scaleTop, series\.meta\.unit\)/);
     expect(code).toMatch(/axis\.map\(/);
     expect(code).toContain("xAxisLabels");
+  });
+
+  // The y-axis top label came back clipped to ",800" from a fixed gutter.
+  // Real <Text> in a column with no width means the layout engine sizes
+  // it, which is the only thing that is right at every font scale.
+  it("renders the y-axis labels outside the svg, in an unsized column", () => {
+    const svg = code.slice(code.indexOf("<Svg"), code.indexOf("</Svg>"));
+    expect(svg).not.toContain("scaleTop");
+    expect(code).toMatch(/yAxis: \{/);
+    const yAxisStyle = code.slice(code.indexOf("yAxis: {"), code.indexOf("axisText: {"));
+    expect(yAxisStyle).not.toMatch(/width:/);
+  });
+
+  // The svg was wider than its own card: the width came from the
+  // container, and the card's padding and border live inside that.
+  it("measures its own plot width rather than being handed one", () => {
+    expect(code).not.toMatch(/width: number;/);
+    expect(code).toMatch(/onLayout=\{onPlotLayout\}/);
+    expect(code).toMatch(/setPlotWidth\(e\.nativeEvent\.layout\.width\)/);
+    expect(code).toMatch(/plotWidth > 0 &&/);
+  });
+
+  it("anchors the end labels from the tested bounds helper", () => {
+    expect(code).toContain("xAxisLabelBounds");
+    expect(code).toMatch(/textAnchor=\{anchor\}/);
+    // No second copy of the inward-anchoring rule.
+    expect(code).not.toMatch(/index === 0 \? "start"/);
   });
 
   it("formats numbers without asking the device's locale", () => {
@@ -157,11 +204,26 @@ describe("TrendChart", () => {
     expect(code).not.toContain("toLocaleDateString");
   });
 
-  it("rounds only for display", () => {
-    expect(code).toMatch(/function formatValue/);
-    // The rounding helper is used in the JSX, never to build a value that
-    // is stored — the PL-028 lesson, one layer up.
-    expect(code).not.toMatch(/writeTrendsPrefs\([^)]*formatValue/);
+  // A "delegates" assertion has to forbid the ALTERNATIVE, not just
+  // require the delegation. A sabotage that replaced ONE call site with
+  // String(Math.round(...)) passed a toContain("formatNutrientValue")
+  // check, because the helper is still used elsewhere in the file. The
+  // fourth time in this feature a structural test has missed its target.
+  it("delegates number formatting and does no rounding of its own", () => {
+    expect(code).toContain("formatNutrientValue");
+    expect(code).not.toMatch(/function formatValue/);
+    expect(code).not.toMatch(/function withThousands/);
+    // Any local rounding IS a second formatter, wherever it appears.
+    expect(code).not.toMatch(/Math\.round\(/);
+    expect(code).not.toMatch(/\.toFixed\(/);
+    expect(code).not.toContain("toLocaleString");
+  });
+
+  it("formats every displayed number through the same helper", () => {
+    // One call per number the card shows: the headline, the y-axis top.
+    // The goal goes through goalCaption, which uses the same helper.
+    const calls = code.match(/formatNutrientValue\(/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -229,6 +291,11 @@ describe("TrendsPanel", () => {
   it("clears that message on a timer, and clears the timer on unmount", () => {
     expect(code).toMatch(/setTimeout\(\(\) => setCapMessage\(null\)/);
     expect(code).toMatch(/clearTimeout\(capTimer\.current\)/);
+  });
+
+  it("hands each chart no width — the chart measures its own card", () => {
+    expect(code).not.toMatch(/width=\{width\}/);
+    expect(code).not.toMatch(/setWidth\(/);
   });
 
   it("tells each chart which range it is drawing", () => {

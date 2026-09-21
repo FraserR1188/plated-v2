@@ -49,7 +49,8 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 
 | Date | Tester | Build / version | Device | Issues raised | Still open | Doc |
 |---|---|---|---|---|---|---|
-| 2026-09-20 | self (dev pass) | master @ `5d03ebf`; three OTAs — Android `faa10722`/`875be285`/`7c0b4336`/`63f5a117`, iOS `75060c2b`/`b3285525`/`6f4454b1`/`3930c7e2` | Pixel (default + 360dp + largest font); iOS owed | 11 | 11 | `testing/2026-09-20-internal.md` |
+| 2026-09-21 | self (dev pass) | production OTA, master @ `1d6babb` (runtime `c1907ba4…`); fix on branch `feat/trends-axes` off `f47615d`, not yet published | Google Pixel 9, Android 15 | 1 | 1 | `testing/2026-09-21-internal.md` |
+| 2026-09-20 | self (dev pass) | master @ `5d03ebf`; three OTAs — Android `faa10722`/`875be285`/`7c0b4336`/`63f5a117`, iOS `75060c2b`/`b3285525`/`6f4454b1`/`3930c7e2` | Pixel (default + 360dp + largest font); iOS owed | 15 | 15 | `testing/2026-09-20-internal.md` |
 | 2026-09-19 | self (dev pass) | production OTA, master @ `48d09e1` (fixes since shipped to `5ab80ea`) | Pixel (Android) | 17 | 16 | `testing/2026-09-19-internal.md` |
 | 2026-08-25 | Ian | Not recorded (newest Android store build then: v6, `f48184c`) | Google Pixel 10, Android 17 | 4 | 4 | `testing/2026-08-25-ian.md` |
 
@@ -68,10 +69,13 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | PL-007 | Major | CSV export and last30Days use UTC dates | Fixed | 2026-09-19-internal | dateKey for the date column, filename and last30Days bounds; calendar arithmetic, not fixed ms. Window is now exactly 30 local days (was 31). Suite pinned to Europe/London. 14 tests, 4 sabotage runs. Master @ 5ab80ea; OTA Android 875be285 + iOS b3285525. Pixel pass OK; iOS owed. Needs a tester |
 | PL-008 | Major | CSV exports NULL small four as 0.0 | Fixed | 2026-09-19-internal | optionalCell: empty for NULL, 0.0 for a measured zero. Header and column order pinned by test. Master @ 5ab80ea; OTA Android 875be285 + iOS b3285525. Pixel pass OK; iOS owed. Needs a tester |
 | PL-028 | Major | Product with no OFF nutrition data stored all-zero; a bundle freezes it | In progress | 2026-09-20-internal | OFF has 0 of 8 nutriment keys for these barcodes; parseProduct coalesces the BIG four to 0 (openfoodfacts.ts:254, 313-316) while the small four correctly stay undefined. 3 real bundle items / 2 users; 32 zeroed chia entries. Chia repairable from a known-good sibling, onions not. PL-011 with a measured cost. Ingestion holes now closed (missingMacros + bundle prompt); the all-zero barcode path was already closed by cb51fd5 on 2026-08-15 and all four products predate it. Data repair pending |
+| PL-031 | Major | The PL-028 repair backup was created in `public`, so `anon`/`authenticated` had full DML on 41 rows across 3 accounts, RLS off | Fixed | 2026-09-20-internal | Moved to `maintenance.pl028_repair_backup` the same day; live ~20 minutes, caught by the post-commit readback. Rule: a scratch table never goes in `public` |
 | PL-011 | Major | meal_entries big four can't represent unknown | Deferred | 2026-09-19-internal | Riskier schema change; separate decision |
 | P-TF01b | Major | Never asked for calorie or macro targets | Logged | 2026-08-25-ian | No onboarding; new accounts run on DEFAULT_GOALS (2000 kcal) until set in Settings. No fix found |
 | P-TF02a | Major | Food search kept erroring; worked after numerous retries | Logged | 2026-08-25-ian | Probable fix, unconfirmed: e958f4d (OFF User-Agent + timeout), Android v8+ and iOS build 3. Symptom not tied to it |
 | PL-018 | Major | Today/workouts don't refetch when a foreground sync resolves | Fixed | 2026-09-20-internal | syncRefetch.ts watches each sync; refetches only when it wrote. Master @ 2f8195f; OTA Android 10b5ab16 + iOS 7f5a5b0b. Device pass OK (Pixel + iOS). Needs a tester |
+| PL-034 | Minor | Trends y-axis labels render outside the card — "2,800" shows as ",800" | In progress | 2026-09-21-internal | The labels were absolutely positioned inside a column with no width, so the column measured zero and every label hung off its left edge. Nice-number ticks, gridlines, dated x labels and a computed gutter, all from one pure buildChartLayout. Branch `feat/trends-axes`; device pass owed |
+| PL-032 | Minor | "Three bean chilli and avocado salsa" holds two identical 6 g Salt items; possibly a duplicate insert | Logged | 2026-09-20-internal | Not reproduced; needs the composition's history checked before anything is deleted |
 | PL-010 | Minor | buildEditPatch snaps edits to the rounding grid | Deferred | 2026-09-19-internal | Bounded drift, not urgent |
 | PL-014 | Minor | Copy-a-day failures double-report to Sentry | Logged | 2026-09-19-internal | Audit applyEntries callers |
 | PL-012 | Minor | Tesco Gold Coffee library row saved all-zero | Deferred | 2026-09-19-internal | Check the OFF source first |
@@ -88,6 +92,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 | PL-020 | Minor | Batches "Logged" alert says "today's log" when a past day was picked | Fixed | 2026-09-20-internal | batchLogAlert names the picked day via dateKey. Master @ 2f8195f; OTA Android 10b5ab16 + iOS 7f5a5b0b. Combined device pass OK (Pixel + iOS). Needs a tester |
 | PL-021 | Minor | Today header overflows at 360dp, off-today pages with the Bundles chip | Fixed | 2026-09-20-internal | "Return to today" moved into the eyebrow; right row is the Bundles chip + calendar. Master @ 2f8195f; OTA Android 10b5ab16 + iOS 7f5a5b0b. Combined pass OK (Pixel default/360dp/largest font, iOS). Needs a tester |
 | PL-013 | Polish | RecipeConfirm doubles the bottom inset | Fixed | 2026-09-19-internal | SafeAreaView edge kept, footer inset dropped. Master @ 4c2d2f1; OTA Android ce5de6bb + iOS bf4b3ef8. Device pass OK. Needs a tester |
+| PL-033 | Polish | Today's "so far" point is visually identical to an incomplete one — both hollow | Logged | 2026-09-20-internal | `isHollow` is `incomplete \|\| soFar`. Options: a different stroke for `soFar`, or mark today some other way — the dashed leg already arrives there |
 | PL-022 | Polish | whoop_data.sql:125-127 describes an upsert gate that doesn't exist | Logged | 2026-09-20-internal | Sync upserts blindly (whoop-sync/index.ts:290-297); comment-only drift |
 
 ## Closed issues

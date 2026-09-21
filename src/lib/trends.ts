@@ -236,18 +236,49 @@ export const POINT_STROKE = 1.5;
 /** How far a drawn point extends beyond its centre, in any direction. */
 export const POINT_EXTENT = POINT_RADIUS + POINT_STROKE / 2;
 
-/**
- * The y-axis labels are NOT drawn inside the svg any more.
- *
- * A fixed gutter guessed at their width, and the second device pass found
- * the top label clipped to ",800" instead of "2,800". They are now real
- * `<Text>` in a column beside the chart, measured by the layout engine, so
- * the gutter is whatever they actually need -- including at the largest
- * system font, which svg text does not respond to at all.
- */
-
 /** Strip under the plot for the x-axis date labels. */
 export const X_LABEL_HEIGHT = 14;
+
+// ── The axis font, MEASURED ────────────────────────────────────────────────
+//
+// Read out of the bundled file itself with fontTools --
+// node_modules/@expo-google-fonts/jetbrains-mono/400Regular/
+// JetBrainsMono_400Regular.ttf -- rather than assumed:
+//
+//   unitsPerEm       1000
+//   advance width     600 for every glyph the labels use (digits, comma,
+//                     full stop, space, and the letters in the weekday and
+//                     month names). JetBrains Mono is monospaced by design,
+//                     which is the whole reason a label's width can be
+//                     COMPUTED from its length instead of measured.
+//   OS/2 sCapHeight   730, cross-checked against the 'H' glyph bbox: 730
+//   hhea descent     -300, which is what "Sep" hangs below the baseline
+//
+// Digits actually reach 740 -- round shapes overshoot the cap line -- which
+// is 0.09px at 9px and not worth modelling.
+//
+// This matters twice over. The y labels are svg <Text> now, and svg text
+// does NOT follow the system font scale, so these numbers stay true at the
+// largest Dynamic Type setting. The RN <Text> they replaced DID scale,
+// which is the second reason the old column could not hold its own width:
+// its contents grew while the geometry positioning them did not.
+
+export const AXIS_FONT_SIZE = 9;
+export const MONO_ADVANCE_EM = 0.6;
+export const MONO_CAP_HEIGHT_EM = 0.73;
+export const MONO_DESCENDER_EM = 0.3;
+
+/** One character of the axis font, in px. */
+export const AXIS_CHAR_W = AXIS_FONT_SIZE * MONO_ADVANCE_EM;
+
+/** Cap height of the axis font, in px: what a tick label is centred on. */
+export const AXIS_CAP_HEIGHT = AXIS_FONT_SIZE * MONO_CAP_HEIGHT_EM;
+
+/** Gap between the y labels and the plot they label. */
+export const GUTTER_PAD = 4;
+
+/** Gap between the x labels' baseline and the bottom of the canvas. */
+export const X_LABEL_BASELINE_PAD = 3;
 
 export interface ChartScaleInput {
   /**
@@ -261,9 +292,15 @@ export interface ChartScaleInput {
   pointCount: number;
   /** The top of the scale. The bottom is ALWAYS zero -- see below. */
   max: number;
-  /** Inset on the left, if anything is drawn there. Zero by default: the
-   *  y-axis labels sit outside the svg in their own measured column. */
+  /** The y-axis labels' column, at the left, inside the svg. */
   leftGutter?: number;
+  /**
+   * Room at BOTH ends for whatever is drawn at the first and last points.
+   * Defaults to a point's own extent; the caller raises it to half an x
+   * label's width when the labels are centred on their points, which is
+   * what lets the end labels sit ON their points instead of beside them.
+   */
+  inset?: number;
 }
 
 export interface ChartScale {
@@ -292,9 +329,10 @@ export function buildChartScale({
   pointCount,
   max,
   leftGutter = 0,
+  inset = POINT_EXTENT,
 }: ChartScaleInput): ChartScale {
-  const plotLeft = leftGutter + POINT_EXTENT;
-  const plotRight = Math.max(width - POINT_EXTENT, plotLeft + 1);
+  const plotLeft = leftGutter + inset;
+  const plotRight = Math.max(width - inset, plotLeft + 1);
   const plotTop = POINT_EXTENT;
   const plotBottom = Math.max(
     height - X_LABEL_HEIGHT - POINT_EXTENT,
@@ -320,11 +358,125 @@ export function buildChartScale({
   };
 }
 
+// ── Nice numbers ───────────────────────────────────────────────────────────
+//
+// The axis used to be labelled with the series' own maximum: Carbs read
+// "339" at the top, Calories read "2,800" only because the goal happened to
+// be higher than anything eaten. Two charts, two different KINDS of number
+// in the same place, neither of them chosen by anyone.
+//
+// A round number means the same thing on every chart, and it is what makes
+// gridlines worth drawing at all: a line at 300 lets you read a point off
+// the chart, a line at 339 only tells you where the best day was.
+
+const NICE_STEPS = [1, 2, 2.5, 5];
+
+/** The most intervals a 150px-tall plot can carry and stay readable. */
+const MAX_INTERVALS = 4;
+
+export interface NiceTicks {
+  /** 0, step, ... top. Rounded to the step's own precision. */
+  ticks: number[];
+  /** One label per tick, in the same order. */
+  labels: string[];
+  step: number;
+  /** The last tick: strictly above the max, by less than one step. */
+  top: number;
+  /** Decimal places in the step, and so in every label. */
+  decimals: number;
+}
+
+/** Round to a fixed number of decimals, so a tick is the number it prints
+ *  as. See the float-noise note in niceTicks. */
+function roundTo(value: number, decimals: number): number {
+  const factor = Math.pow(10, decimals);
+  return Math.round(value * factor) / factor;
+}
+
+/** The smallest {1, 2, 2.5, 5} x 10^k at or above `target`. */
+function niceStep(target: number): { step: number; decimals: number } {
+  const start = Math.floor(Math.log10(target)) - 1;
+  for (let exp = start; exp <= start + 4; exp++) {
+    for (const k of NICE_STEPS) {
+      const candidate = k * Math.pow(10, exp);
+      if (candidate >= target) {
+        // 2.5 carries one decimal place of its own; every other nice number
+        // is an integer, so the precision is the exponent's.
+        return {
+          step: candidate,
+          decimals: Math.max(0, (k === 2.5 ? 1 : 0) - exp),
+        };
+      }
+    }
+  }
+  // Unreachable for a finite positive target: the loop spans four decades
+  // around it. Fail visibly rather than silently returning a zero step.
+  return { step: target, decimals: 0 };
+}
+
+/**
+ * The y-axis for one chart: round numbers from zero to just above the max.
+ *
+ * THE TOP IS STRICTLY ABOVE THE MAX. At-or-above would park the best day's
+ * point exactly on the top gridline, where it reads as clipped rather than
+ * as the highest value -- and on a goal-topped chart it would put the goal
+ * line along the frame, where it stops looking like a line at all.
+ *
+ * TICK VALUES ARE ROUNDED TO THE STEP'S OWN PRECISION, which is not
+ * cosmetic. 3 * 0.1 is 0.30000000000000004 in binary floating point. It
+ * still FORMATS as "0.3", so nothing looks wrong, but it is no longer equal
+ * to a goal of 0.3 -- and the gridline that should give way to the goal
+ * line silently stops doing so. Rounding here makes the tick the number it
+ * prints as.
+ */
+export function niceTicks(max: number): NiceTicks {
+  // An empty window, or a day that genuinely totals zero. Matches what the
+  // scale does with a max of 0, so the axis and the geometry agree.
+  if (!(max > 0)) {
+    return { ticks: [0, 1], labels: ["0", "1"], step: 1, top: 1, decimals: 0 };
+  }
+
+  const { step, decimals } = niceStep(max / MAX_INTERVALS);
+
+  // How many whole steps fit under the max -- plus one, always, for the
+  // headroom. The tolerance is for a max that IS a multiple of the step:
+  // 0.3 / 0.1 is 2.9999999999999996, and Math.floor would hand back a top
+  // of exactly 0.3, sitting the point on the frame.
+  const quotient = max / step;
+  const nearest = Math.round(quotient);
+  const onATick =
+    Math.abs(quotient - nearest) <= Math.max(1, Math.abs(quotient)) * 1e-9;
+  const intervals = onATick ? nearest + 1 : Math.floor(quotient) + 1;
+
+  const ticks: number[] = [];
+  for (let i = 0; i <= intervals; i++) ticks.push(roundTo(i * step, decimals));
+
+  return {
+    ticks,
+    // No unit: the unit is in the card header, once, beside the nutrient's
+    // name. Repeating it down the axis is noise at 9px.
+    labels: ticks.map((value) => withThousands(value.toFixed(decimals))),
+    step,
+    top: ticks[ticks.length - 1],
+    decimals,
+  };
+}
+
 // ── x-axis labels ──────────────────────────────────────────────────────────
 
-/** A fixed table rather than toLocaleDateString: the device's locale must
+/** Fixed tables rather than toLocaleDateString: the device's locale must
  *  not decide what a chart axis says, or whether a test passes. */
 const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTH = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/** "19 Sep" -- for the headline when the most recent value isn't today's. */
+export function shortDay(key: string): string {
+  const d = parseDateKey(key); // never new Date("2026-09-20") -- that is UTC
+  return `${d.getDate()} ${MONTH[d.getMonth()]}`;
+}
 
 export interface AxisLabel {
   /** Index into the series' points, so the caller can reuse the x scale. */
@@ -335,78 +487,200 @@ export interface AxisLabel {
 /**
  * Which days to label, and how.
  *
- * Over 7 days every day is labelled with a short weekday, which is how
- * people actually think about a week. Over 14 a weekday would appear twice
- * and mean two different days, so it switches to d/M and thins out: the
- * first, the last, and roughly every third in between, never two adjacent.
- * At 360dp with the largest system font a d/M label is about a fifth of the
- * chart width, so neighbouring labels would collide.
+ * A weekday on its own does not say WHICH Tuesday, and over 14 days it says
+ * two different ones. So every label carries the day of the month:
+ *
+ *   7 days   every day, "Tue 15" -- the weekday is how people think about a
+ *            week, the date is what pins it to one.
+ *   14 days  every OTHER day, counting back from the last, so the odd day
+ *            out falls at the old end where nothing depends on it. Just the
+ *            date ("15"), because seven weekdays in a fortnight would
+ *            repeat; the month appears on the first label and again
+ *            wherever it changes, since "1" after "29" otherwise reads as a
+ *            number going backwards.
+ *
+ * THE LAST LABEL IS ALWAYS "Today". It is the one day the reader can name
+ * without counting, and the window always ends on it.
  */
 export function xAxisLabels(dates: string[], range: TrendRange): AxisLabel[] {
-  const format = (key: string) => {
-    const d = parseDateKey(key); // never new Date("2026-09-20") -- that is UTC
-    return range === 7
-      ? WEEKDAY[d.getDay()]
-      : `${d.getDate()}/${d.getMonth() + 1}`;
-  };
+  const last = dates.length - 1;
+  if (last < 0) return [];
 
+  const indices: number[] = [];
   if (range === 7) {
-    return dates.map((key, index) => ({ index, label: format(key) }));
+    for (let i = 0; i <= last; i++) indices.push(i);
+  } else {
+    for (let i = last; i >= 1; i -= 2) indices.unshift(i);
   }
 
-  const last = dates.length - 1;
-  const indices: number[] = [];
-  // Stop two short of the end so the final label never lands next to the
-  // one before it -- the gap that would actually overlap.
-  for (let i = 0; i <= last - 2; i += 3) indices.push(i);
-  if (indices[indices.length - 1] !== last) indices.push(last);
+  let previousMonth: number | null = null;
 
-  return indices.map((index) => ({ index, label: format(dates[index]) }));
+  return indices.map((index) => {
+    const d = parseDateKey(dates[index]);
+    const month = d.getMonth();
+    const monthChanged = previousMonth === null || month !== previousMonth;
+    previousMonth = month;
+
+    if (index === last) return { index, label: "Today" };
+    if (range === 7) {
+      return { index, label: `${WEEKDAY[d.getDay()]} ${d.getDate()}` };
+    }
+    return {
+      index,
+      label: monthChanged
+        ? `${d.getDate()} ${MONTH[month]}`
+        : String(d.getDate()),
+    };
+  });
 }
 
-export type AxisAnchor = "start" | "middle" | "end";
+// ── The whole layout, in one place ─────────────────────────────────────────
 
-export interface AxisLabelBounds extends AxisLabel {
-  anchor: AxisAnchor;
-  /** Leftmost and rightmost ink, in the same coordinates as the scale. */
-  left: number;
-  right: number;
+export interface ChartLayoutInput {
+  /** The MEASURED width of the card's inside, via onLayout. */
+  width: number;
+  height: number;
+  /** One date key per point, oldest first. */
+  dates: string[];
+  range: TrendRange;
+  /** One value per date, null for a gap. Same order as `dates`. */
+  values: (number | null)[];
+  /** Already gated on goalsState by buildTrendSeries -- see PL-026. */
+  goal: number | null;
+  /** Width of one character of the axis font, in px. */
+  charW: number;
+  /** Cap height of the axis font, in px. */
+  capHeight: number;
+}
+
+export interface YTick {
+  value: number;
+  label: string;
+  /** Where the line sits -- identical to scale.y(value), by construction. */
+  y: number;
+  /** Baseline for the label, so the text is centred on its own line. */
+  baseline: number;
+  /** False where the goal line already sits at exactly this value. */
+  gridline: boolean;
+}
+
+export interface XLabel {
+  index: number;
+  text: string;
+  /** Centre of the label: it is anchored "middle" on its own point. */
+  x: number;
+}
+
+export interface ChartLayout {
+  scale: ChartScale;
+  yTicks: YTick[];
+  xLabels: XLabel[];
+  /** Width reserved at the left for the y labels, including their padding. */
+  gutter: number;
+  /** x for every y label, which is anchored "end" against it. */
+  yLabelX: number;
+  /** Baseline for every x label. */
+  xLabelBaseline: number;
+  /** Extent of the gridlines and the goal line. */
+  gridLeft: number;
+  gridRight: number;
+  /** null when there is no goal to draw. */
+  goalY: number | null;
+  /** False when every point in the window is a gap. */
+  hasData: boolean;
 }
 
 /**
- * Where each x-axis label actually sits, given the scale.
+ * Everything the chart needs to draw itself, computed once.
  *
- * The anchor rule lives here rather than in the chart so it can be checked:
- * the two end labels are anchored INWARD, because a centred label under the
- * first or last point hangs half of itself off the canvas. Every other
- * label is centred under its point.
+ * The component maps these arrays to svg elements and does no arithmetic of
+ * its own -- not because component code is untestable in principle, but
+ * because this project has no React Native runtime under vitest, so the
+ * only thing a test can do to TrendChart.tsx is read its source text. Four
+ * separate times in this feature a source-text assertion has passed while
+ * the thing it was written for was broken. Anything that can be got WRONG
+ * rather than merely misspelled belongs here, where a test can run it.
  *
- * `charWidth` is the width of one character. The axis font is JetBrains
- * Mono, which is monospaced, so a label's width really is its length times
- * one character -- that is the whole reason this can be computed rather
- * than measured per label.
+ * THE GUTTER IS THE REASON THIS FUNCTION EXISTS (PL-034). It was a fixed
+ * 26px guess, which clipped "2,800" to ",800"; then an RN <Text> column
+ * with no width, which measured ZERO because its labels were absolutely
+ * positioned and so did not size their parent -- the same symptom, from the
+ * opposite mistake. It is now the widest label's own width, in a font whose
+ * advance is measured, plus a fixed gap: arithmetic, not a hope about Yoga.
  */
-export function xAxisLabelBounds(
-  labels: AxisLabel[],
-  scale: ChartScale,
-  pointCount: number,
-  charWidth: number,
-): AxisLabelBounds[] {
-  const lastIndex = pointCount - 1;
+export function buildChartLayout({
+  width,
+  height,
+  dates,
+  range,
+  values,
+  goal,
+  charW,
+  capHeight,
+}: ChartLayoutInput): ChartLayout {
+  // A zero width reaches here on the frame before onLayout reports, and
+  // through it into a division. The component doesn't draw then, but the
+  // guard belongs with the geometry rather than at the call site.
+  const canvas = Math.max(width, 1);
 
-  return labels.map((label) => {
-    const w = label.label.length * charWidth;
-    const x = scale.x(label.index);
+  const drawn = values.filter((v): v is number => v != null);
+  const max = Math.max(...drawn, 0, ...(goal != null ? [goal] : []));
+  const { ticks, labels, step, top } = niceTicks(max);
 
-    if (label.index === 0) {
-      return { ...label, anchor: "start" as const, left: x, right: x + w };
-    }
-    if (label.index === lastIndex) {
-      return { ...label, anchor: "end" as const, left: x - w, right: x };
-    }
-    return { ...label, anchor: "middle" as const, left: x - w / 2, right: x + w / 2 };
+  const widestLabel = labels.reduce((w, l) => Math.max(w, l.length), 0);
+  const gutter = widestLabel * charW + GUTTER_PAD;
+
+  const axis = xAxisLabels(dates, range);
+  const widestDate = axis.reduce((w, l) => Math.max(w, l.label.length), 0);
+  // Half a label at each end, because every label is centred on its point.
+  // The first and last points are always the ones at the edges.
+  const inset = Math.max(POINT_EXTENT, (widestDate * charW) / 2);
+
+  const scale = buildChartScale({
+    width: canvas,
+    height,
+    pointCount: dates.length,
+    // The TOP TICK, not the data max: the axis labels and the geometry must
+    // be the same scale, or the top gridline sits below the top of the plot.
+    max: top,
+    leftGutter: gutter,
+    inset,
   });
+
+  const yTicks: YTick[] = ticks.map((value, i) => {
+    const y = scale.y(value);
+    return {
+      value,
+      label: labels[i],
+      y,
+      // Computed, not delegated to alignmentBaseline: that property is not
+      // dependable across react-native-svg's two platform backends, and a
+      // label half a line off its own gridline is worse than no label.
+      baseline: y + capHeight / 2,
+      // Two lines at the same y is just a thicker line, and the dashes stop
+      // reading as dashes. The goal wins; the tick keeps its label.
+      gridline: goal == null || Math.abs(goal - value) > step * 1e-6,
+    };
+  });
+
+  return {
+    scale,
+    yTicks,
+    xLabels: axis.map(({ index, label }) => ({
+      index,
+      text: label,
+      x: scale.x(index),
+    })),
+    gutter,
+    yLabelX: gutter - GUTTER_PAD,
+    xLabelBaseline: height - X_LABEL_BASELINE_PAD,
+    gridLeft: gutter,
+    gridRight: canvas,
+    goalY: goal != null ? scale.y(goal) : null,
+    hasData: drawn.length > 0,
+  };
 }
+
 
 // ── Number and goal formatting ─────────────────────────────────────────────
 //
@@ -414,7 +688,9 @@ export function xAxisLabelBounds(
 // no vote. A chart that says 2,800 in one place and 2.800 in another is
 // showing a different number, not a different style.
 
-function withThousands(n: number): string {
+function withThousands(n: number | string): string {
+  // Takes a string as well as a number so a tick label keeps the decimal
+  // places its step calls for: String(0.30) is "0.3", but "0.30".
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 

@@ -18,15 +18,21 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  AXIS_CAP_HEIGHT,
+  AXIS_CHAR_W,
+  AXIS_FONT_SIZE,
   DEFAULT_NUTRIENTS,
+  MONO_DESCENDER_EM,
   POINT_EXTENT,
+  X_LABEL_HEIGHT,
+  buildChartLayout,
   buildChartScale,
   buildPathSegments,
   capMessageFor,
   formatNutrientValue,
   goalCaption,
+  niceTicks,
   xAxisLabels,
-  xAxisLabelBounds,
   MAX_SELECTED,
   NULLABLE_NUTRIENTS,
   RANGE_DAYS,
@@ -762,91 +768,403 @@ describe("buildChartScale", () => {
     expect(Number.isFinite(s.y(0))).toBe(true);
     expect(s.y(0)).toBe(s.plotBottom);
   });
-});
 
-// ────────────────────────────────────────────────────────────
-// Nothing drawn may leave the CARD, not merely the plot
-// ────────────────────────────────────────────────────────────
-
-describe("everything drawn fits inside the measured width", () => {
-  // Second device pass, 2026-09-20: today's point was still past the card's
-  // right edge and the "Mon" label touched it. The padding was right; the
-  // SVG was WIDER THAN ITS CARD, because the width handed to it was the
-  // container's, and the card adds its own padding and border inside that.
-  //
-  // The component now measures the plot area itself. This is the invariant
-  // that measurement has to satisfy, stated once for every width the phone
-  // sizes this to -- points AND labels, within [0, width].
-  const CHAR_W = 5.4; // 9px JetBrains Mono, which is monospaced by design
-
-  const widths = [280, 296, 320, 328, 360, 412];
-
-  it.each(widths)("keeps every point inside a %ipx plot", (width) => {
-    for (const count of [7, 14]) {
-      const scale = buildChartScale({ width, height: 108, pointCount: count, max: 2500 });
-      for (let i = 0; i < count; i++) {
-        expect(scale.x(i) - POINT_EXTENT).toBeGreaterThanOrEqual(0);
-        expect(scale.x(i) + POINT_EXTENT).toBeLessThanOrEqual(width);
-      }
-    }
-  });
-
-  it.each(widths)("keeps every x-axis label inside a %ipx plot", (width) => {
-    for (const range of [7, 14] as const) {
-      const dates = trendWindowDates(range, noonLocal(2026, 9, 20));
-      const scale = buildChartScale({ width, height: 108, pointCount: range, max: 2500 });
-      const bounds = xAxisLabelBounds(
-        xAxisLabels(dates, range),
-        scale,
-        range,
-        CHAR_W,
-      );
-      for (const b of bounds) {
-        expect(b.left).toBeGreaterThanOrEqual(0);
-        expect(b.right).toBeLessThanOrEqual(width);
-      }
-    }
-  });
-
-  it.each(widths)("never overlaps two x-axis labels at %ipx", (width) => {
-    for (const range of [7, 14] as const) {
-      const dates = trendWindowDates(range, noonLocal(2026, 9, 20));
-      const scale = buildChartScale({ width, height: 108, pointCount: range, max: 2500 });
-      const bounds = xAxisLabelBounds(
-        xAxisLabels(dates, range),
-        scale,
-        range,
-        CHAR_W,
-      );
-      for (let i = 1; i < bounds.length; i++) {
-        expect(bounds[i].left).toBeGreaterThanOrEqual(bounds[i - 1].right);
-      }
-    }
-  });
-
-  it("anchors the end labels inward so they cannot hang off the edge", () => {
-    const scale = buildChartScale({ width: 320, height: 108, pointCount: 7, max: 100 });
-    const dates = trendWindowDates(7, noonLocal(2026, 9, 20));
-    const bounds = xAxisLabelBounds(xAxisLabels(dates, 7), scale, 7, CHAR_W);
-    expect(bounds[0].anchor).toBe("start");
-    expect(bounds[bounds.length - 1].anchor).toBe("end");
-    expect(bounds[1].anchor).toBe("middle");
-  });
-
-  it("leaves room on the left when a gutter is asked for", () => {
-    // The y-axis labels live OUTSIDE the svg now, but the parameter stays
-    // so the plot can be inset without the component doing its own maths.
-    const scale = buildChartScale({
-      width: 320, height: 108, pointCount: 7, max: 100, leftGutter: 30,
+  // The two insets. leftGutter is the y-axis labels' column, INSIDE the svg
+  // now; inset is the room a centred x label needs at either end. They are
+  // separate because only one of them applies to the right-hand edge.
+  it("insets the plot past the y-axis gutter", () => {
+    const s = buildChartScale({
+      width: WIDTH, height: HEIGHT, pointCount: 7, max: 100, leftGutter: 30,
     });
-    expect(scale.plotLeft).toBeGreaterThanOrEqual(30);
+    expect(s.plotLeft).toBeGreaterThanOrEqual(30);
   });
 
-  it("defaults to no left gutter", () => {
-    const scale = buildChartScale({ width: 320, height: 108, pointCount: 7, max: 100 });
-    expect(scale.plotLeft).toBe(POINT_EXTENT);
+  it("defaults to no gutter and a point-sized inset at both ends", () => {
+    const s = buildChartScale({ width: WIDTH, height: HEIGHT, pointCount: 7, max: 100 });
+    expect(s.plotLeft).toBe(POINT_EXTENT);
+    expect(s.plotRight).toBe(WIDTH - POINT_EXTENT);
+  });
+
+  it("takes an inset wide enough for a centred label at both ends", () => {
+    const s = buildChartScale({
+      width: WIDTH, height: HEIGHT, pointCount: 7, max: 100,
+      leftGutter: 30, inset: 16.2,
+    });
+    expect(s.plotLeft).toBe(30 + 16.2);
+    expect(s.plotRight).toBe(WIDTH - 16.2);
   });
 });
+
+// ────────────────────────────────────────────────────────────
+// Nice numbers: an axis reads in round numbers, not in maxima
+// ────────────────────────────────────────────────────────────
+//
+// The axis used to be labelled with the series' own maximum, so Carbs read
+// "339" at the top and Calories read "2,800" only because the goal happened
+// to be higher than anything eaten: a number nobody chose, at the top of
+// every chart, meaning something different on each one.
+
+describe("niceTicks", () => {
+  it("puts 339 on a 0-400 axis, in hundreds", () => {
+    expect(niceTicks(339).ticks).toEqual([0, 100, 200, 300, 400]);
+  });
+
+  it("puts 2,800 on a 0-3,000 axis, in thousands", () => {
+    expect(niceTicks(2800).ticks).toEqual([0, 1000, 2000, 3000]);
+  });
+
+  it("leaves headroom above a max that lands on a tick", () => {
+    // A step of 50 must not stop the axis at 150, below the data, nor sit
+    // the highest point exactly on the frame.
+    expect(niceTicks(160).ticks).toEqual([0, 50, 100, 150, 200]);
+  });
+
+  it("uses whole numbers for a small gram series", () => {
+    expect(niceTicks(4.2).ticks).toEqual([0, 2, 4, 6]);
+  });
+
+  it("uses tenths for a very small series, with no float noise", () => {
+    const { ticks, labels } = niceTicks(0.26);
+    expect(ticks).toEqual([0, 0.1, 0.2, 0.3]);
+    expect(labels).toEqual(["0.0", "0.1", "0.2", "0.3"]);
+    // The whole point of the case: 3 * 0.1 is 0.30000000000000004 in binary
+    // floating point. A tick that is off by 4e-17 still FORMATS as "0.3", so
+    // nothing looks wrong, but it is no longer equal to a goal of 0.3 and
+    // the gridline dedupe below silently stops matching.
+    expect(ticks[3]).toBe(0.3);
+  });
+
+  it("gives an empty or all-zero series a 0-1 axis rather than dividing by zero", () => {
+    expect(niceTicks(0).ticks).toEqual([0, 1]);
+    expect(niceTicks(-5).ticks).toEqual([0, 1]);
+  });
+
+  it("labels to the step's own precision, and groups thousands", () => {
+    expect(niceTicks(2800).labels).toEqual(["0", "1,000", "2,000", "3,000"]);
+    expect(niceTicks(10).labels).toEqual(["0.0", "2.5", "5.0", "7.5", "10.0", "12.5"]);
+    expect(niceTicks(339).labels).toEqual(["0", "100", "200", "300", "400"]);
+  });
+
+  it("carries no unit — the unit is in the card header", () => {
+    for (const label of niceTicks(4.2).labels) {
+      expect(label).not.toMatch(/[a-z]/i);
+    }
+  });
+});
+
+describe("niceTicks holds as a property, not only on the examples", () => {
+  // Every nice number, the value just above it, and the awkward ones in
+  // between. The values just above matter most: they are what a "top at or
+  // above max" rule gets wrong, and they are a hundredth away from the
+  // values that make that rule look right.
+  const MAXIMA = [
+    0.01, 0.099, 0.1, 0.26, 1, 1.0001, 2.4, 2.5, 4.2, 5, 5.0001, 9.99, 10,
+    12.5, 25, 50, 99.99, 100, 100.01, 160, 200, 250, 339, 500, 1000, 1999,
+    2500, 2800, 9999, 10000, 12345,
+  ];
+  const NICE = [1, 2, 2.5, 5];
+
+  it.each(MAXIMA)("gives %p a readable axis", (max) => {
+    const { ticks, labels, step, top } = niceTicks(max);
+
+    expect(ticks[0]).toBe(0);
+    for (let i = 1; i < ticks.length; i++) {
+      expect(ticks[i]).toBeGreaterThan(ticks[i - 1]);
+    }
+
+    // The step is one of {1, 2, 2.5, 5} times a power of ten.
+    const mantissa = step / Math.pow(10, Math.floor(Math.log10(step)));
+    expect(NICE.some((n) => Math.abs(n - mantissa) < 1e-9)).toBe(true);
+
+    // Headroom, and not too much of it: the top is STRICTLY above the max,
+    // by less than one whole step.
+    expect(top).toBe(ticks[ticks.length - 1]);
+    expect(top).toBeGreaterThan(max);
+    expect(top - step).toBeLessThanOrEqual(max);
+
+    // Enough lines to read a level off, few enough to stay legible at 150px.
+    const intervals = ticks.length - 1;
+    expect(intervals).toBeGreaterThanOrEqual(3);
+    expect(intervals).toBeLessThanOrEqual(5);
+
+    expect(labels).toHaveLength(ticks.length);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// buildChartLayout — the one place a chart's geometry is decided
+// ────────────────────────────────────────────────────────────
+
+const CHART_H = 150;
+const WIDTHS = [270, 280, 296, 320, 328, 360, 412];
+
+/** A 7- or 14-day window ending on Sunday 2026-09-20. */
+const windowOf = (range: 7 | 14) => trendWindowDates(range, noonLocal(2026, 9, 20));
+
+/** Calories-shaped values: thousands, one gap, whole numbers. */
+const caloriesValues = (range: number): (number | null)[] =>
+  Array.from({ length: range }, (_, i) =>
+    i === 2 ? null : 1200 + ((i * 337) % 1650),
+  );
+
+/** Small-four-shaped values: single-digit grams, so the ticks are decimal. */
+const saltValues = (range: number): (number | null)[] =>
+  Array.from({ length: range }, (_, i) =>
+    i === 3 ? null : 0.4 + ((i * 17) % 80) / 10,
+  );
+
+const layoutOf = (
+  over: {
+    width?: number;
+    height?: number;
+    range?: 7 | 14;
+    values?: (number | null)[];
+    goal?: number | null;
+  } = {},
+) => {
+  const range = over.range ?? 7;
+  return buildChartLayout({
+    width: over.width ?? 320,
+    height: over.height ?? CHART_H,
+    dates: windowOf(range),
+    range,
+    values: over.values ?? caloriesValues(range),
+    goal: over.goal === undefined ? 2800 : over.goal,
+    charW: AXIS_CHAR_W,
+    capHeight: AXIS_CAP_HEIGHT,
+  });
+};
+
+describe("the axis and the geometry cannot disagree", () => {
+  it("draws every tick's label exactly where the scale puts its value", () => {
+    const L = layoutOf();
+    expect(L.yTicks.length).toBeGreaterThan(1);
+    for (const tick of L.yTicks) {
+      expect(L.scale.y(tick.value)).toBe(tick.y);
+    }
+  });
+
+  it("anchors zero at the bottom of the plot and the top tick at the top", () => {
+    const L = layoutOf();
+    expect(L.yTicks[0].value).toBe(0);
+    expect(L.yTicks[0].y).toBe(L.scale.plotBottom);
+    expect(L.yTicks[L.yTicks.length - 1].y).toBe(L.scale.plotTop);
+  });
+
+  it("scales to the TOP TICK, not to the data max", () => {
+    // If the scale kept its own max, the top gridline would sit below the
+    // top of the plot and the axis would be labelled for a chart that is
+    // not the one drawn. 2,850 eaten against a 2,800 goal tops out at 3,000.
+    const L = layoutOf({ values: [2850, 1200, 1400], goal: 2800 });
+    expect(L.yTicks[L.yTicks.length - 1].value).toBe(3000);
+    expect(L.scale.y(3000)).toBe(L.scale.plotTop);
+    expect(L.scale.y(2850)).toBeGreaterThan(L.scale.plotTop);
+  });
+
+  it("includes the goal in the axis even when nothing eaten comes near it", () => {
+    const L = layoutOf({ values: [100, 120, 90], goal: 2800 });
+    expect(L.yTicks[L.yTicks.length - 1].value).toBeGreaterThanOrEqual(2800);
+    expect(L.goalY).toBe(L.scale.y(2800));
+  });
+
+  it("reports an empty window rather than making the caller work it out", () => {
+    expect(layoutOf({ values: [null, null, null], goal: null }).hasData).toBe(false);
+    expect(layoutOf().hasData).toBe(true);
+  });
+
+  it("centres each tick label on its line, from the font's cap height", () => {
+    // alignmentBaseline is not dependable across react-native-svg's two
+    // platform backends, so the baseline is computed here instead.
+    const L = layoutOf();
+    for (const tick of L.yTicks) {
+      expect(tick.baseline).toBeCloseTo(tick.y + AXIS_CAP_HEIGHT / 2, 10);
+    }
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// PL-034: the y labels must stay inside their own gutter
+// ────────────────────────────────────────────────────────────
+//
+// The defect: the labels were RN <Text> with position:"absolute" inside a
+// column with no width. Absolutely positioned children do not size their
+// parent, so the column measured ZERO wide and every label hung off its
+// left edge — "2,800" rendered as ",800" with its left edge at -2dp, and
+// three-character labels started outside the card's border.
+//
+// The gutter is now computed from the widest label and the plot starts
+// after it, so the invariant is arithmetic rather than a layout hope.
+
+describe("the y labels stay inside the gutter", () => {
+  it.each(WIDTHS)("keeps every y label's ink inside [0, gutter] at %ipx", (width) => {
+    for (const range of [7, 14] as const) {
+      const L = layoutOf({ width, range, values: caloriesValues(range), goal: 2800 });
+
+      // The case that clipped: five characters including a comma. The axis
+      // now tops out at 3,000 rather than at the 2,800 goal, but it is the
+      // same width of label that used to lose its first digit.
+      expect(L.yTicks.some((t) => t.label === "3,000")).toBe(true);
+
+      for (const tick of L.yTicks) {
+        const inkLeft = L.yLabelX - tick.label.length * AXIS_CHAR_W;
+        expect(inkLeft).toBeGreaterThanOrEqual(0);
+        expect(L.yLabelX).toBeLessThanOrEqual(L.gutter);
+      }
+
+      // And nothing the plot draws may sit on top of them.
+      expect(L.scale.plotLeft).toBeGreaterThanOrEqual(L.gutter);
+    }
+  });
+
+  it("widens the gutter for a wider label rather than clipping it", () => {
+    const narrow = layoutOf({ values: [4.2], goal: null });
+    const wide = layoutOf({ values: [2850], goal: 2800 });
+    expect(wide.gutter).toBeGreaterThan(narrow.gutter);
+    for (const L of [narrow, wide]) {
+      const widest = Math.max(...L.yTicks.map((t) => t.label.length));
+      expect(L.gutter).toBeGreaterThanOrEqual(widest * AXIS_CHAR_W);
+    }
+  });
+});
+
+describe("gridlines and the goal line", () => {
+  it("drops the gridline where the goal sits exactly on a tick, and keeps the label", () => {
+    const L = layoutOf({ values: [160, 120, 140], goal: 150 });
+    const at150 = L.yTicks.find((t) => t.value === 150);
+    expect(at150).toBeDefined();
+    expect(at150!.gridline).toBe(false);
+    expect(at150!.label).toBe("150");
+    expect(L.goalY).toBe(at150!.y);
+    // Exactly one line is dropped; the rest of the axis is untouched.
+    expect(L.yTicks.filter((t) => !t.gridline)).toHaveLength(1);
+  });
+
+  it("keeps every gridline when the goal falls between two ticks", () => {
+    const L = layoutOf({ values: [339, 280, 300], goal: 325 });
+    expect(L.yTicks.map((t) => t.value)).toEqual([0, 100, 200, 300, 400]);
+    expect(L.yTicks.every((t) => t.gridline)).toBe(true);
+  });
+
+  it("keeps every gridline when there is no goal at all", () => {
+    const L = layoutOf({ goal: null });
+    expect(L.goalY).toBeNull();
+    expect(L.yTicks.every((t) => t.gridline)).toBe(true);
+  });
+
+  it("matches a goal that is a tick even through float noise", () => {
+    // 0.3 the goal against 3 * 0.1 the tick. They format identically; only
+    // the rounding inside niceTicks makes them actually equal.
+    const L = layoutOf({ values: [0.26, 0.2], goal: 0.3 });
+    const at3 = L.yTicks.find((t) => t.label === "0.3");
+    expect(at3).toBeDefined();
+    expect(at3!.gridline).toBe(false);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// Nothing drawn may leave the canvas, at any width the phone gives us
+// ────────────────────────────────────────────────────────────
+//
+// Second device pass, 2026-09-20: the svg was wider than its card because
+// the width was assumed. It is measured now, and this is the invariant the
+// measurement has to satisfy — points, y labels and x labels — at every
+// width from a 320dp phone's card interior (270) upwards.
+
+describe("everything drawn fits inside the measured plot", () => {
+  const SERIES = [
+    { name: "calories", values: caloriesValues, goal: 2800 as number | null },
+    { name: "salt", values: saltValues, goal: 6 as number | null },
+  ];
+
+  it.each(WIDTHS)("keeps every point inside a %ipx plot", (width) => {
+    for (const range of [7, 14] as const) {
+      for (const s of SERIES) {
+        const values = s.values(range);
+        const L = layoutOf({ width, range, values, goal: s.goal });
+        for (let i = 0; i < range; i++) {
+          expect(L.scale.x(i) - POINT_EXTENT).toBeGreaterThanOrEqual(0);
+          expect(L.scale.x(i) + POINT_EXTENT).toBeLessThanOrEqual(width);
+        }
+        for (const v of values) {
+          if (v == null) continue;
+          expect(L.scale.y(v) - POINT_EXTENT).toBeGreaterThanOrEqual(0);
+          expect(L.scale.y(v) + POINT_EXTENT).toBeLessThanOrEqual(CHART_H);
+        }
+      }
+    }
+  });
+
+  it.each(WIDTHS)("keeps every x label inside a %ipx plot, clear of the gutter", (width) => {
+    for (const range of [7, 14] as const) {
+      for (const s of SERIES) {
+        const L = layoutOf({ width, range, values: s.values(range), goal: s.goal });
+        for (const label of L.xLabels) {
+          const half = (label.text.length * AXIS_CHAR_W) / 2;
+          expect(label.x - half).toBeGreaterThanOrEqual(L.gutter);
+          expect(label.x + half).toBeLessThanOrEqual(width);
+        }
+        // Vertically: cap height above the baseline, descender below it
+        // ("Sep" has one), all inside the strip under the plot.
+        expect(L.xLabelBaseline - AXIS_CAP_HEIGHT).toBeGreaterThanOrEqual(
+          L.scale.plotBottom,
+        );
+        expect(
+          L.xLabelBaseline + AXIS_FONT_SIZE * MONO_DESCENDER_EM,
+        ).toBeLessThanOrEqual(CHART_H);
+      }
+    }
+  });
+
+  it.each(WIDTHS)("never overlaps two x labels at %ipx", (width) => {
+    for (const range of [7, 14] as const) {
+      for (const s of SERIES) {
+        const L = layoutOf({ width, range, values: s.values(range), goal: s.goal });
+        for (let i = 1; i < L.xLabels.length; i++) {
+          const prev = L.xLabels[i - 1];
+          const here = L.xLabels[i];
+          const gap =
+            here.x -
+            (here.text.length * AXIS_CHAR_W) / 2 -
+            (prev.x + (prev.text.length * AXIS_CHAR_W) / 2);
+          expect(gap).toBeGreaterThanOrEqual(0);
+        }
+      }
+    }
+  });
+
+  it.each(WIDTHS)("keeps every y label inside the canvas at %ipx", (width) => {
+    for (const range of [7, 14] as const) {
+      for (const s of SERIES) {
+        const L = layoutOf({ width, range, values: s.values(range), goal: s.goal });
+        for (const tick of L.yTicks) {
+          expect(tick.baseline - AXIS_CAP_HEIGHT).toBeGreaterThanOrEqual(0);
+          expect(tick.baseline).toBeLessThanOrEqual(CHART_H);
+        }
+      }
+    }
+  });
+
+  it.each(WIDTHS)("keeps the y labels a label-height apart at %ipx", (width) => {
+    for (const range of [7, 14] as const) {
+      for (const s of SERIES) {
+        const L = layoutOf({ width, range, values: s.values(range), goal: s.goal });
+        for (let i = 1; i < L.yTicks.length; i++) {
+          const gap = L.yTicks[i - 1].y - L.yTicks[i].y; // y grows downward
+          expect(gap).toBeGreaterThanOrEqual(AXIS_FONT_SIZE);
+        }
+      }
+    }
+  });
+
+  it("leaves the x-axis strip intact at the taller height", () => {
+    // CHART_HEIGHT went 108 → 150; X_LABEL_HEIGHT stayed 14, so all 42px
+    // went to the plot rather than to the label strip.
+    const L = layoutOf();
+    expect(X_LABEL_HEIGHT).toBe(14);
+    expect(CHART_H - L.scale.plotBottom).toBeCloseTo(X_LABEL_HEIGHT + POINT_EXTENT, 10);
+  });
+});
+
 
 // ────────────────────────────────────────────────────────────
 // The goal, now in the card header
@@ -902,45 +1220,70 @@ describe("formatNutrientValue", () => {
 // ────────────────────────────────────────────────────────────
 // x-axis labels
 // ────────────────────────────────────────────────────────────
+//
+// A weekday alone ("Tue") does not say WHICH Tuesday, and over 14 days it
+// says two different ones. Every label now carries the day of the month,
+// the month appears where it changes, and the last point says "Today"
+// because that is the one day the reader can name without counting.
 
 describe("xAxisLabels", () => {
   const week = trendWindowDates(7, noonLocal(2026, 9, 20));
   const fortnight = trendWindowDates(14, noonLocal(2026, 9, 20));
 
-  it("labels every day over 7", () => {
-    const labels = xAxisLabels(week, 7);
-    expect(labels).toHaveLength(7);
-    expect(labels.map((l) => l.index)).toEqual([0, 1, 2, 3, 4, 5, 6]);
+  it("labels all seven days with weekday and date, and the last as Today", () => {
+    // A fixed weekday table, not toLocaleDateString: the device's locale
+    // must not decide what an axis says, nor whether a test passes.
+    // 2026-09-20 is a Sunday, so the window opens on Monday the 14th.
+    expect(xAxisLabels(week, 7).map((l) => l.label)).toEqual([
+      "Mon 14",
+      "Tue 15",
+      "Wed 16",
+      "Thu 17",
+      "Fri 18",
+      "Sat 19",
+      "Today",
+    ]);
   });
 
-  it("uses a short weekday over 7 days", () => {
-    // A fixed table, not toLocaleDateString: the device's locale must not
-    // decide whether a test passes, and 2026-09-20 is a Sunday.
-    const labels = xAxisLabels(week, 7);
-    expect(labels[6].label).toBe("Sun");
-    expect(labels[0].label).toBe("Mon");
+  it("labels every index over 7 days", () => {
+    expect(xAxisLabels(week, 7).map((l) => l.index)).toEqual([0, 1, 2, 3, 4, 5, 6]);
   });
 
-  it("thins to first, last and about every third day over 14", () => {
-    const labels = xAxisLabels(fortnight, 14);
-    expect(labels.length).toBeLessThanOrEqual(6);
-    expect(labels[0].index).toBe(0);
-    expect(labels[labels.length - 1].index).toBe(13);
+  it("labels every other day over 14, counting back from the last", () => {
+    // Counting back, not forward: the anchor is today, so the gap that
+    // absorbs the odd day out falls at the OLD end where nothing depends
+    // on it, rather than leaving today unlabelled.
+    expect(xAxisLabels(fortnight, 14).map((l) => l.index)).toEqual([
+      1, 3, 5, 7, 9, 11, 13,
+    ]);
   });
 
-  it("uses d/M over 14 days, where a weekday would repeat twice", () => {
-    const labels = xAxisLabels(fortnight, 14);
-    expect(labels[0].label).toBe("7/9");
-    expect(labels[labels.length - 1].label).toBe("20/9");
+  it("uses the day of the month over 14 days, with Today at the end", () => {
+    expect(xAxisLabels(fortnight, 14).map((l) => l.label)).toEqual([
+      "8 Sep",
+      "10",
+      "12",
+      "14",
+      "16",
+      "18",
+      "Today",
+    ]);
   });
 
-  it("never places two labels adjacent over 14 days", () => {
-    // The overlap guard, stated as a property rather than as pixels: at
-    // 360dp with the largest font a d/M label is about a fifth of the
-    // width, so neighbouring labels would collide.
-    const labels = xAxisLabels(fortnight, 14);
-    const gaps = labels.slice(1).map((l, i) => l.index - labels[i].index);
-    expect(Math.min(...gaps)).toBeGreaterThanOrEqual(2);
+  it("names the month again when it changes", () => {
+    // 14 days ending Monday 2026-10-05: the labelled days step over the
+    // month boundary between 29 Sep and 1 Oct. Without the month, "1"
+    // after "29" reads as a number going backwards.
+    const across = trendWindowDates(14, noonLocal(2026, 10, 5));
+    expect(xAxisLabels(across, 14).map((l) => l.label)).toEqual([
+      "23 Sep",
+      "25",
+      "27",
+      "29",
+      "1 Oct",
+      "3",
+      "Today",
+    ]);
   });
 
   it("never emits a duplicate index", () => {
@@ -951,13 +1294,28 @@ describe("xAxisLabels", () => {
   });
 
   it("reads the local calendar day, not a UTC one", () => {
-    // parseDateKey, never new Date("2026-09-20") -- a bare date string is
-    // parsed as UTC midnight and lands on the 19th west of Greenwich.
-    // 2026-10-25 is the BST->GMT Sunday; it must still read as Sunday.
-    const labels = xAxisLabels(trendWindowDates(7, new Date(2026, 9, 25, 23, 30)), 7);
-    expect(labels[6].label).toBe("Sun");
+    // parseDateKey, never new Date("2026-10-25") — a bare date string is
+    // parsed as UTC midnight and lands on the previous day west of
+    // Greenwich. 2026-10-25 is the BST→GMT Sunday, the 25-hour day.
+    const labels = xAxisLabels(
+      trendWindowDates(7, new Date(2026, 9, 25, 23, 30)),
+      7,
+    );
+    expect(labels[0].label).toBe("Mon 19");
+    expect(labels[5].label).toBe("Sat 24");
+    expect(labels[6].label).toBe("Today");
+  });
+
+  it("centres every label on its own point", () => {
+    for (const range of [7, 14] as const) {
+      const L = layoutOf({ range, values: caloriesValues(range) });
+      for (const label of L.xLabels) {
+        expect(label.x).toBe(L.scale.x(label.index));
+      }
+    }
   });
 });
+
 
 // ────────────────────────────────────────────────────────────
 // The goal line

@@ -105,31 +105,41 @@ describe("TrendChart", () => {
     // buildTrendSeries is what nulls the goal when goalsState !== "loaded";
     // this is the render side of PL-026, and it must not second-guess it
     // by falling back to the store's goals.
-    expect(code).toMatch(/series\.goal != null &&/);
+    expect(code).toMatch(/layout\.goalY != null &&/);
     expect(code).not.toContain("useStore");
     expect(code).not.toContain("DEFAULT_GOALS");
   });
 
-  // The zero-anchored scale moved into lib/trends.ts' buildChartScale when
-  // the device pass found points clipped at the edges -- same reasoning as
-  // the path builder: "nothing falls off the canvas" and "the axis starts
-  // at zero" are behavioural, and a regex cannot check either. They are
+  // The zero-anchored scale, the nice-number ticks, the gutter and the x
+  // label text all moved into lib/trends.ts' buildChartLayout -- same
+  // reasoning as the path builder: "nothing falls off the canvas", "the
+  // axis starts at zero" and "the top is a round number above the data"
+  // are behavioural, and a regex cannot check any of them. They are
   // asserted against real numbers in lib/__tests__/trends.test.ts; all this
   // file checks is that the chart delegates instead of keeping its own.
-  it("delegates the scale to the tested builder and keeps no second copy", () => {
-    expect(code).toMatch(/const scale = buildChartScale\(/);
-    expect(code).not.toMatch(/Math\.min\(\.\.\.values/);
+  it("delegates the whole layout to the tested builder, and keeps no second copy", () => {
+    expect(code).toMatch(/const layout = buildChartLayout\(/);
+    // No second scale, no second axis, no second maximum. Math.max is
+    // banned outright: every use of it here would be re-deriving something
+    // the layout already decided (the width guard lives in the layout too).
+    expect(code).not.toMatch(/buildChartScale\(/);
+    expect(code).not.toMatch(/niceTicks\(/);
+    expect(code).not.toMatch(/Math\.max\(/);
+    expect(code).not.toMatch(/Math\.min\(/);
+    expect(code).not.toContain("scaleTop");
     expect(code).not.toMatch(/const plotH =/);
     expect(code).not.toMatch(/const PAD_LEFT/);
   });
 
-  it("sizes the point padding from the point itself, not a guess", () => {
+  it("sizes the point from the same constants the geometry uses", () => {
     // The clipping bug: the padding had been sized for the LINE, and a
     // hollow dot is wider than its centre by its radius plus half its
-    // stroke. Both now come from the same constants the geometry uses.
-    expect(code).toContain("POINT_EXTENT");
+    // stroke. The dot is drawn from those constants here; how much ROOM it
+    // needs at the canvas edge is the layout's answer to give, and a local
+    // POINT_EXTENT here would be a second one.
     expect(code).toMatch(/r=\{POINT_RADIUS\}/);
     expect(code).toMatch(/strokeWidth=\{isHollow\(p\) \? POINT_STROKE : 0\}/);
+    expect(code).not.toContain("POINT_EXTENT");
   });
 
   it("dashes the leg into today rather than drawing it solid", () => {
@@ -149,9 +159,11 @@ describe("TrendChart", () => {
   });
 
   it("renders no goal at all when the series has none", () => {
-    // goalCaption returns null rather than "", so there is nothing to hide.
+    // goalCaption returns null rather than "", so there is nothing to hide,
+    // and buildChartLayout returns a null goalY rather than a y for a goal
+    // that isn't there.
     expect(code).toMatch(/goalText != null &&/);
-    expect(code).toMatch(/series\.goal != null &&/);
+    expect(code).toMatch(/layout\.goalY != null &&/);
   });
 
   it("lets the header wrap instead of truncating the nutrient name", () => {
@@ -164,21 +176,54 @@ describe("TrendChart", () => {
     expect(code).toMatch(/latest\.soFar \? "today so far" : shortDay\(latest\.date\)/);
   });
 
-  it("draws both y-axis bounds and the x-axis dates", () => {
-    expect(code).toMatch(/formatNutrientValue\(scaleTop, series\.meta\.unit\)/);
-    expect(code).toMatch(/axis\.map\(/);
-    expect(code).toContain("xAxisLabels");
+  it("draws the y ticks and the x dates from the layout's own arrays", () => {
+    // Was: a top label formatted here from a local scaleTop, and a bottom
+    // one hard-coded to "0". The axis is a computed set of ticks now, so
+    // there is no maximum for the component to hold or to get wrong.
+    expect(code).toMatch(/layout\.yTicks\.map\(/);
+    expect(code).toMatch(/layout\.xLabels\.map\(/);
+    expect(code).not.toContain("scaleTop");
+    expect(code).not.toMatch(/>0</);
   });
 
-  // The y-axis top label came back clipped to ",800" from a fixed gutter.
-  // Real <Text> in a column with no width means the layout engine sizes
-  // it, which is the only thing that is right at every font scale.
-  it("renders the y-axis labels outside the svg, in an unsized column", () => {
+  // PL-034. The previous fix put the y labels in an RN <Text> column with
+  // no width, on the theory that the layout engine would size it to its
+  // widest label. It cannot: both labels were position:"absolute", and an
+  // absolutely positioned child does not size its parent. The column
+  // measured ZERO wide, every label hung off its left edge, and "2,800"
+  // rendered as ",800" again -- the same symptom the fixed gutter had.
+  //
+  // This test's predecessor asserted the very property that caused it
+  // ("the yAxis style has no width:"), which is why it is replaced rather
+  // than repaired: the subject it was written about no longer exists.
+  //
+  // The labels are svg <Text> in a gutter the LAYOUT computes from the
+  // widest label, so the width is arithmetic, not a hope about Yoga.
+  it("draws the y labels as svg text inside the computed gutter", () => {
     const svg = code.slice(code.indexOf("<Svg"), code.indexOf("</Svg>"));
-    expect(svg).not.toContain("scaleTop");
-    expect(code).toMatch(/yAxis: \{/);
-    const yAxisStyle = code.slice(code.indexOf("yAxis: {"), code.indexOf("axisText: {"));
-    expect(yAxisStyle).not.toMatch(/width:/);
+    expect(svg).toContain("tick.label");
+    expect(svg).toMatch(/x=\{layout\.yLabelX\}/);
+    expect(svg).toMatch(/y=\{tick\.baseline\}/);
+    expect(svg).toMatch(/textAnchor="end"/);
+    // The RN column and its absolutely positioned labels are gone, and so
+    // is any attempt to centre the text by asking svg to do it.
+    expect(code).not.toContain("yAxis");
+    expect(code).not.toContain("axisText");
+    expect(code).not.toMatch(/position:\s*"absolute"/);
+    expect(code).not.toContain("alignmentBaseline");
+  });
+
+  it("draws a gridline at every tick but the one the goal sits on", () => {
+    const svg = code.slice(code.indexOf("<Svg"), code.indexOf("</Svg>"));
+    // Which tick loses its line is decided in the layout and tested there;
+    // what this file can say is that the chart asks, rather than drawing a
+    // line at every tick regardless.
+    expect(svg).toMatch(/tick\.gridline/);
+    expect(svg).toMatch(/stroke=\{Colors\.border\}/);
+  });
+
+  it("gives the plot the taller canvas the ticks need", () => {
+    expect(code).toMatch(/const CHART_HEIGHT = 150;/);
   });
 
   // The svg was wider than its own card: the width came from the
@@ -190,10 +235,16 @@ describe("TrendChart", () => {
     expect(code).toMatch(/plotWidth > 0 &&/);
   });
 
-  it("anchors the end labels from the tested bounds helper", () => {
-    expect(code).toContain("xAxisLabelBounds");
-    expect(code).toMatch(/textAnchor=\{anchor\}/);
-    // No second copy of the inward-anchoring rule.
+  it("centres every x label on its point", () => {
+    // The end labels used to anchor inward so they could not hang off the
+    // canvas. They are centred like every other label now: the layout
+    // reserves half a label's width at each end instead, which is what
+    // lets the first and last labels sit ON their points rather than
+    // beside them. The old anchor rule -- and its helper -- are gone.
+    expect(code).toMatch(/layout\.xLabels\.map\(/);
+    expect(code).toMatch(/textAnchor="middle"/);
+    expect(code).not.toContain("xAxisLabelBounds");
+    expect(code).not.toContain("anchor={");
     expect(code).not.toMatch(/index === 0 \? "start"/);
   });
 
@@ -220,10 +271,13 @@ describe("TrendChart", () => {
   });
 
   it("formats every displayed number through the same helper", () => {
-    // One call per number the card shows: the headline, the y-axis top.
-    // The goal goes through goalCaption, which uses the same helper.
+    // The headline is the only number the CARD formats now -- the axis
+    // labels are formatted in the layout, next to the ticks they belong
+    // to, and the goal goes through goalCaption, which uses the same
+    // helper underneath.
     const calls = code.match(/formatNutrientValue\(/g) ?? [];
-    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.length).toBeGreaterThanOrEqual(1);
+    expect(code).toContain("goalCaption(series.goal, series.meta.unit)");
   });
 });
 

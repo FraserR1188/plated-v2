@@ -6,7 +6,7 @@
 //   Stack navigator (root)
 //   └── MainTabs (bottom tab bar)
 //       ├── Today    → TodayScreen
-//       ├── History  → HistoryScreen
+//       ├── Data     → DataScreen      ← History | Trends, one screen
 //       ├── Insights → InsightsScreen   ← centre slot, stub for now
 //       ├── Batches  → BatchesScreen
 //       └── Settings → SettingsScreen
@@ -39,7 +39,7 @@ import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import * as Sentry from "@sentry/react-native";
 
 import { TodayScreen } from "../screens/TodayScreen";
-import { HistoryScreen } from "../screens/HistoryScreen";
+import { DataScreen } from "../screens/DataScreen";
 import { SettingsScreen } from "../screens/SettingsScreen";
 import { AddIngredientScreen } from "../screens/AddIngredientScreen";
 import { ScannerScreen } from "../screens/ScannerScreen";
@@ -97,9 +97,9 @@ function MainTabs() {
         options={{ tabBarLabel: "Today" }}
       />
       <Tab.Screen
-        name="History"
-        component={HistoryScreen}
-        options={{ tabBarLabel: "History" }}
+        name="Data"
+        component={DataScreen}
+        options={{ tabBarLabel: "Data" }}
       />
       {/* Centre of five, deliberately: this is where the product's
           differentiator lands once the readiness query exists. */}

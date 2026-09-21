@@ -30,6 +30,7 @@ import {
   writeWhoopConnectionCache,
   clearWhoopConnectionCache,
 } from "../lib/whoopConnectionCache";
+import { clearTrendsPrefs } from "../lib/trendsPrefs";
 
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
@@ -601,6 +602,9 @@ export const useStore = create<AppState>((set, get) => ({
     // frame. The user-id check in readWhoopConnectionCache is the real
     // guard; this is the tidy-up.
     void clearWhoopConnectionCache();
+    // Trends' remembered nutrients and range. Same reasoning: a preference
+    // left behind greets the next account with the previous one's charts.
+    void clearTrendsPrefs();
     set({
       userId: null,
       entries: [],

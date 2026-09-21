@@ -47,7 +47,7 @@ const TAB_ICONS: Record<
   { default: string; active: string }
 > = {
   Today: { default: "⊕", active: "⊕" },
-  History: { default: "◫", active: "◫" },
+  Data: { default: "◫", active: "◫" },
   Insights: { default: "◈", active: "◈" },
   Batches: { default: "⊞", active: "⊞" },
   Settings: { default: "⊙", active: "⊙" },

@@ -809,7 +809,10 @@ export type RootStackParamList = {
  */
 export type BottomTabParamList = {
   Today: undefined;
-  History: undefined;
+  /** History + Trends, behind an in-screen segmented control. Renamed from
+   *  "History" in Part 4 -- the ROUTE, not just the label, so that TAB_ICONS
+   *  and every navigate() call are dragged along by tsc. */
+  Data: undefined;
   /** Centre slot. Stub until the readiness query exists — see InsightsScreen. */
   Insights: undefined;
   Batches: undefined;

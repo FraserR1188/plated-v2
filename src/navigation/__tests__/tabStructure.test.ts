@@ -115,9 +115,15 @@ function typeMembers(sourceFile: ts.SourceFile, name: string): string[] {
 
 // Friends left the bar for a Settings row (the header icons for Batches
 // and Bundles didn't read as anything), and Batches came back to it.
+//
+// Part 4: "History" became "Data", because the tab now holds two things --
+// the day-by-day History list and the new Trends charts. The ROUTE was
+// renamed, not just the label: TAB_ICONS and BottomTabParamList are both
+// keyed by route name, so tsc drags every reference along with it. The
+// assertions below are what stops the two drifting apart again.
 const EXPECTED_TABS = [
   "Today",
-  "History",
+  "Data",
   "Insights",
   "Batches",
   "Settings",
@@ -158,6 +164,26 @@ describe("bottom tabs", () => {
   // that nothing stops drifting from the route name.
   it("looks icons up by route name", () => {
     expect(tabBar.text).toMatch(/TAB_ICONS\[\s*route\.name/);
+  });
+
+  it("labels the Data tab \"Data\", not \"History\"", () => {
+    expect(navigator.text).toMatch(/tabBarLabel:\s*"Data"/);
+    expect(navigator.text).not.toMatch(/tabBarLabel:\s*"History"/);
+  });
+
+  // The rename has to be total. A leftover navigate("History") compiles
+  // only until BottomTabParamList drops the key, and a leftover icon entry
+  // would leave the Data tab on the "·" placeholder -- so assert the name
+  // is gone from all three files that know about routes, not just renamed
+  // in the navigator.
+  it("leaves no \"History\" route behind in the navigator, the icon map or the param list", () => {
+    expect(navigator.text).not.toMatch(/name="History"/);
+    expect(objectLiteralKeys(tabBar.sourceFile, "TAB_ICONS")).not.toContain(
+      "History",
+    );
+    expect(typeMembers(types.sourceFile, "BottomTabParamList")).not.toContain(
+      "History",
+    );
   });
 
   // AppNavigator carried a second, unused TAB_ICONS/TabIcon pair that

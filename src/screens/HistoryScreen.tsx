@@ -23,7 +23,18 @@ type Range = "7d" | "30d";
 // rather than the NativeStackNavigationProp every push-modal screen uses.
 type Nav = BottomTabNavigationProp<BottomTabParamList>;
 
-export function HistoryScreen() {
+interface HistoryScreenProps {
+  /**
+   * Rendered inside the Data tab's segmented control rather than as a tab
+   * of its own. Two differences, both about not drawing a chrome twice:
+   * DataScreen already owns the SafeAreaView and the screen title, so an
+   * embedded History skips its own safe-area inset and its own "History"
+   * heading. Everything below the header is identical.
+   */
+  embedded?: boolean;
+}
+
+export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
   const { goals, getDaySummaryForDate, setViewedDate } = useStore();
   const navigation = useNavigation<Nav>();
   const [range, setRange] = useState<Range>("7d");
@@ -122,15 +133,25 @@ export function HistoryScreen() {
     ? Math.round((adherent / logged.length) * 100)
     : 0;
 
+  // A plain View when embedded: DataScreen's SafeAreaView has already
+  // applied the top inset, and applying it twice pushes the list down by
+  // the status-bar height for no reason.
+  const Frame = embedded ? View : SafeAreaView;
+  const frameProps = embedded
+    ? {}
+    : ({ edges: ["top", "left", "right"] } as const);
+
   return (
-    <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
+    <Frame style={styles.safe} {...frameProps}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
         {/* ── Header ─────────────────────────────────────── */}
-        <View style={styles.header}>
-          <Text style={styles.heading}>History</Text>
+        <View style={[styles.header, embedded && styles.headerEmbedded]}>
+          {/* The segmented control above already says "History" -- a second
+              heading directly under it is the same word twice. */}
+          {!embedded && <Text style={styles.heading}>History</Text>}
 
           {/* Range picker — pill toggle */}
           <View style={styles.rangePicker}>
@@ -338,7 +359,7 @@ export function HistoryScreen() {
 
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
-    </SafeAreaView>
+    </Frame>
   );
 }
 
@@ -422,6 +443,12 @@ const styles = StyleSheet.create(
     alignItems: "center",
     justifyContent: "space-between",
     marginBottom: Spacing.lg,
+  },
+  // With the heading gone, space-between would leave the range picker
+  // pinned left against nothing. Push it to the right where it was.
+  headerEmbedded: {
+    justifyContent: "flex-end",
+    marginBottom: Spacing.md,
   },
   heading: {
     fontSize: Typography.xl,

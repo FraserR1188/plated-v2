@@ -94,7 +94,7 @@ describe("resolveEatenAt", () => {
     vi.useRealTimers();
   });
 
-  it("GUESSES and rolls back a day when no explicit day is given and the time is >3h ahead", () => {
+  it("GUESSES last night in the small hours, when yesterday's reading of the pick is the nearer one", () => {
     // "Now" is 00:30 local. Picking 23:45 with no explicit day must mean LAST
     // night, not tonight.
     vi.setSystemTime(new Date(2026, 6, 27, 0, 30));
@@ -107,10 +107,10 @@ describe("resolveEatenAt", () => {
     expect(d.getMinutes()).toBe(45);
   });
 
-  it("does NOT roll back when the time is within the 3h grace window", () => {
+  it("does NOT roll back a forward pick in the evening, outside the small hours", () => {
     vi.setSystemTime(new Date(2026, 6, 27, 22, 0));
 
-    const iso = resolveEatenAt(23, 45); // only 1h45 ahead
+    const iso = resolveEatenAt(23, 45);
     expect(dateKey(new Date(iso))).toBe("2026-07-27");
   });
 
@@ -124,6 +124,112 @@ describe("resolveEatenAt", () => {
     const iso = resolveEatenAt(19, 0, tomorrow);
 
     expect(dateKey(new Date(iso))).toBe(addDays("2026-07-27", 1));
+  });
+});
+
+// PL-039. The roll-back guess exists for ONE case: logging last night's meal
+// shortly after midnight. Outside the small hours, a forward pick on today
+// means today, and the planned trigger (eaten_at > now() + 30 min) decides
+// whether it's a plan. Inside them, the pick resolves to whichever of today's
+// and yesterday's reading is nearer to now (a tie goes to today).
+//
+// Every test passes `now` explicitly AND pins the device clock to the same
+// instant, so an implementation that ignores `now` and reads the clock still
+// fails on BEHAVIOUR — except the one test that separates the two on purpose.
+describe("resolveEatenAt — PL-039: forward picks outside the small hours", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // 27 Jul 2026: BST, no clock change nearby.
+  const at = (h: number, m: number): Date => {
+    const now = new Date(2026, 6, 27, h, m);
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    return now;
+  };
+  const pick = (now: Date, h: number, m: number, day?: Date): Date =>
+    new Date(resolveEatenAt(h, m, day, now));
+
+  it("12:00, pick 19:00 → today 19:00 (Ian's case: planning tonight at lunchtime)", () => {
+    const d = pick(at(12, 0), 19, 0);
+    expect(dateKey(d)).toBe("2026-07-27");
+    expect(d.getHours()).toBe(19);
+    expect(d.getMinutes()).toBe(0);
+  });
+
+  it("06:00, pick 22:00 → today (the window earns its place: nearest alone would say yesterday)", () => {
+    expect(dateKey(pick(at(6, 0), 22, 0))).toBe("2026-07-27");
+  });
+
+  it("12:00, pick 11:00 → today 11:00 (a backward pick is untouched)", () => {
+    const d = pick(at(12, 0), 11, 0);
+    expect(dateKey(d)).toBe("2026-07-27");
+    expect(d.getHours()).toBe(11);
+  });
+
+  it("00:30, pick 07:00 → today 07:00 (this morning is nearer than yesterday morning)", () => {
+    const d = pick(at(0, 30), 7, 0);
+    expect(dateKey(d)).toBe("2026-07-27");
+    expect(d.getHours()).toBe(7);
+  });
+
+  it("00:10, pick 23:45 → yesterday 23:45 (last night: the case the guess exists for)", () => {
+    const d = pick(at(0, 10), 23, 45);
+    expect(dateKey(d)).toBe("2026-07-26");
+    expect(d.getHours()).toBe(23);
+    expect(d.getMinutes()).toBe(45);
+  });
+
+  it("00:30, pick 21:00 → yesterday 21:00", () => {
+    const d = pick(at(0, 30), 21, 0);
+    expect(dateKey(d)).toBe("2026-07-26");
+    expect(d.getHours()).toBe(21);
+  });
+
+  it("00:30, pick 01:00 → today 01:00", () => {
+    const d = pick(at(0, 30), 1, 0);
+    expect(dateKey(d)).toBe("2026-07-27");
+    expect(d.getHours()).toBe(1);
+  });
+
+  it("00:00, pick 12:00 → today (an exact tie goes to today)", () => {
+    const d = pick(at(0, 0), 12, 0);
+    expect(dateKey(d)).toBe("2026-07-27");
+    expect(d.getHours()).toBe(12);
+  });
+
+  it("03:59, pick 19:00 → yesterday; 04:00, pick 19:00 → today (the 04:00 boundary, both sides)", () => {
+    expect(dateKey(pick(at(3, 59), 19, 0))).toBe("2026-07-26");
+    expect(dateKey(pick(at(4, 0), 19, 0))).toBe("2026-07-27");
+  });
+
+  it("an explicit day never rolls back, in either window", () => {
+    const tomorrow = parseDateKey("2026-07-28");
+    expect(dateKey(pick(at(12, 0), 23, 0, tomorrow))).toBe("2026-07-28");
+    expect(dateKey(pick(at(0, 30), 23, 0, tomorrow))).toBe("2026-07-28");
+    const today = parseDateKey("2026-07-27");
+    expect(dateKey(pick(at(0, 30), 23, 0, today))).toBe("2026-07-27");
+  });
+
+  it("a pick more than 30 min ahead lands where the planned trigger will fire", () => {
+    // The TIMESTAMP, not the flag: planned is the database's to decide
+    // (eaten_at > now() + interval '30 minutes', meal_planning.sql:125).
+    const now = at(12, 0);
+    const d = pick(now, 19, 0);
+    expect(d.getTime()).toBeGreaterThan(
+      now.getTime() + PLANNING_GRACE_MINUTES * 60 * 1000,
+    );
+  });
+
+  it("uses the `now` it is given, not the device clock", () => {
+    // Device clock at 12:00, rule told it's 00:30. Pick 13:00: anything that
+    // reads the clock (12:00, 1h ahead) says today; from 00:30, yesterday's
+    // 13:00 (11h30 back) is nearer than today's (12h30 ahead).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 27, 12, 0));
+    const d = new Date(resolveEatenAt(13, 0, undefined, new Date(2026, 6, 27, 0, 30)));
+    expect(dateKey(d)).toBe("2026-07-26");
   });
 });
 
@@ -321,15 +427,18 @@ describe("anchored bundle apply stays on the explicit target day (roll-back bypa
     vi.useRealTimers();
   });
 
-  it("does not roll back even when the naive (no-day) heuristic would", () => {
-    // "Now" is 00:10 — exactly the window where the naive/no-day heuristic
-    // rolls an early-morning pick back a day (it's >3h "ahead" of a
-    // just-past-midnight now). Prove the trap is real first...
+  it("stays on the explicit target day — and since PL-039 the no-day path agrees", () => {
+    // "Now" is 00:10. Until PL-039 this proved a TRAP: the no-day heuristic
+    // rolled any pick >3h ahead back a day, so this morning's 07:00 landed on
+    // yesterday. PL-039 replaced the 3h threshold with the nearer of today's
+    // and yesterday's reading: 07:00 today is 6h50 away, 07:00 yesterday is
+    // 17h10 away, so the no-day path now resolves to TODAY too. The
+    // expectation below flipped on purpose; the trap no longer exists.
     vi.setSystemTime(new Date(2026, 6, 27, 0, 10));
     const naive = resolveEatenAt(7, 0);
-    expect(dateKey(new Date(naive))).toBe("2026-07-26"); // wrongly rolled back
+    expect(dateKey(new Date(naive))).toBe("2026-07-27");
 
-    // ...then prove the anchored-bundle path — which always resolves through
+    // ...and the anchored-bundle path — which always resolves through
     // sameTimeOnDay with the sheet's EXPLICIT target day — does not fall into
     // it. Bundle saved at 07:00 / 07:05 / 07:20; applied with the picker's
     // default (the saved earliest time), to today.

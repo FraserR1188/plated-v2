@@ -52,6 +52,7 @@ import {
 import { getSignedImageUrl } from "../lib/customFoodImages";
 import { reportError } from "../lib/reportError";
 import { SourceNotice } from "../components/SourceNotice";
+import { buildEditPatch } from "../lib/entryEdit";
 import { scanMealPhoto, mealScanToFoodProduct, MacroKey } from "../lib/mealRecognition";
 import {
   computeServingTotals,
@@ -276,14 +277,25 @@ export function ProductScreen() {
 
   const isEditing = !!editEntryId;
 
-  // The route's mealType is only ever a STARTING guess now — derived from
-  // the time picked on Today (sectionForTime), not chosen by the user. This
-  // is the one place it becomes overridable: an editable tag on CREATE only.
-  // meal_type is sticky once a row exists (MealEntryPatch has no field for
-  // it — see CLAUDE.md's architecture invariants), so on an EDIT this stays
-  // fixed at the entry's real, already-set section and the tag renders
-  // read-only.
+  // On CREATE the route's mealType is only a starting guess, derived from the
+  // time picked on Today (sectionForTime). On an EDIT it is the row's own
+  // slot. Either way the chips make it overridable. PL-037: an older comment
+  // here said MealEntryPatch had no meal_type field, and the chips were
+  // hidden on edit because of it. It has always had one; a slot-only edit
+  // now sends { meal_type } and nothing else (see lib/entryEdit.ts).
   const [mealType, setMealType] = useState<MealType>(routeMealType);
+
+  // PL-037: the row as it was LOADED — the baseline buildEditPatch diffs
+  // against. Snapshotted once, from the store, not rebuilt from route params:
+  // a refetch can replace the store's row while this screen is open, and
+  // diffing against what the user saw is what keeps an untouched field from
+  // being written back over a concurrent change. null when not editing, or if
+  // the row is somehow missing — handleSubmit then refuses to guess.
+  const [originalEntry] = useState(() =>
+    editEntryId
+      ? (useStore.getState().entries.find((e) => e.id === editEntryId) ?? null)
+      : null,
+  );
 
   // ── Editable draft ──────────────────────────────────────────
   //
@@ -509,22 +521,17 @@ export function ProductScreen() {
       eatenAt,
     );
 
-    // ⚠ KNOWN BUG, NOT FIXED IN D4 — flagged so nobody "discovers" it later.
+    // PL-010, now narrowed by PL-037. On an EDIT, macros are recomputed from
+    // `draft`, which mealEntryToProduct() reconstructed by DIVIDING the stored
+    // per-serving values and rounding (Math.round / toFixed). The round-trip
+    // does not commute: a 250g entry at 437 kcal comes back as 175 kcal/100g
+    // and multiplies out to 437.5 — bounded by half a rounding step × g/100,
+    // except that a sub-half-step trace becomes exactly 0.
     //
-    // On an EDIT, every macro below is recomputed from `draft`, which
-    // mealEntryToProduct() reconstructed by DIVIDING the stored per-serving
-    // values and rounding (Math.round / toFixed). The round-trip does not
-    // commute: a 250g entry at 437 kcal comes back as 175 kcal/100g and
-    // multiplies out to 437.5.
-    //
-    // So editing a logged meal's TIME can silently move its macros. It happens
-    // once — the first save snaps the rate onto the rounding grid, and later
-    // saves rewrite the same values (measured, not compounding) — bounded by
-    // half a rounding step × g/100, except that a sub-half-step trace becomes
-    // exactly 0. OFF logs are already on the grid (parseProduct rounds), so it
-    // hits custom foods, staples, AI and label scans, batches and library
-    // re-adds. The fix is to only recompute when `serving` actually changed —
-    // a ProductScreen redesign, not a patch. Until then, know that this is here.
+    // The edit branch no longer uses the `macros` object below: buildEditPatch
+    // recomputes macros ONLY when the serving actually changed, so moving a
+    // meal's slot or time leaves them untouched. A serving change still snaps
+    // once onto the grid, as it always did.
     //
     // (This is also why createBundleFromEntries snapshots MealEntry →
     // meal_composition_items directly and never routes through FoodProduct.)
@@ -548,16 +555,38 @@ export function ProductScreen() {
     };
 
     if (isEditing) {
-      // Only ever UPGRADE the flag. An edit that doesn't open the picker
-      // (changing the serving size, say) must NOT downgrade a previously
-      // confirmed time back to "estimated" — that would quietly destroy the one
-      // piece of provenance the correlation depends on.
-      //
-      // `date` is NOT in this patch: the store derives it from eaten_at. That is
-      // the only place the relationship is enforced, and MealEntryPatch is shaped
-      // so this screen cannot bypass it even by accident.
-      const patch: MealEntryPatch = { ...macros };
-      if (timeTouched) patch.eaten_at_estimated = false;
+      // No baseline, no guess: without the loaded row there is nothing to
+      // diff against, and falling back to resending everything is the bug
+      // PL-037 removed.
+      if (!originalEntry) {
+        submittingRef.current = false;
+        setSaving(false);
+        Alert.alert(
+          "Couldn't find this entry",
+          "Go back and open it again.",
+          [{ text: "OK" }],
+        );
+        return;
+      }
+
+      // Only what CHANGED against the loaded row (PL-037, lib/entryEdit.ts).
+      // The flag is only ever UPGRADED, on a touched time. `date` can't be in
+      // this patch — MealEntryPatch has no field for it — and the store
+      // derives it from eaten_at only when eaten_at is sent.
+      const patch: MealEntryPatch = buildEditPatch(originalEntry, {
+        mealType,
+        servingText: serving,
+        eatenAt: eaten_at,
+        timeTouched,
+        product: draft,
+      });
+
+      // Nothing changed: write nothing, just leave.
+      if (Object.keys(patch).length === 0) {
+        setSaving(false);
+        navigation.popToTop();
+        return;
+      }
 
       // ⚠ D4: updateEntry RETURNS AN ERROR NOW, AND THIS SCREEN MUST NOT POP ON IT.
       //
@@ -658,7 +687,10 @@ export function ProductScreen() {
     if (!editEntryId) return;
     Alert.alert(
       "Delete entry",
-      `Remove "${draft.name}" from ${MEAL_LABELS[mealType]}?`,
+      // The slot the row is actually IN, not the chip: since PL-037 the chip
+      // can be changed before Delete, and a destructive prompt must name
+      // where the entry really is.
+      `Remove "${draft.name}" from ${MEAL_LABELS[originalEntry?.meal_type ?? mealType]}?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -798,34 +830,29 @@ export function ProductScreen() {
                     ? "Plan a meal"
                     : "Add to meal"}
               </Text>
-              {isEditing ? (
-                <View style={styles.mealPill}>
-                  <Text style={styles.mealPillText}>{mealLabel}</Text>
-                </View>
-              ) : (
-                <View style={styles.mealTypeRow}>
-                  {MEAL_TYPES.map((mt) => (
-                    <Pressable
-                      key={mt}
-                      onPress={() => setMealType(mt)}
-                      style={({ pressed }) => [
-                        styles.mealTypeChip,
-                        mealType === mt && styles.mealTypeChipActive,
-                        pressed && { opacity: 0.75 },
+              {/* Same chips on create and edit (PL-037). */}
+              <View style={styles.mealTypeRow}>
+                {MEAL_TYPES.map((mt) => (
+                  <Pressable
+                    key={mt}
+                    onPress={() => setMealType(mt)}
+                    style={({ pressed }) => [
+                      styles.mealTypeChip,
+                      mealType === mt && styles.mealTypeChipActive,
+                      pressed && { opacity: 0.75 },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.mealTypeChipText,
+                        mealType === mt && styles.mealTypeChipTextActive,
                       ]}
                     >
-                      <Text
-                        style={[
-                          styles.mealTypeChipText,
-                          mealType === mt && styles.mealTypeChipTextActive,
-                        ]}
-                      >
-                        {MEAL_LABELS[mt]}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-              )}
+                      {MEAL_LABELS[mt]}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
             </View>
           </View>
 
@@ -1330,20 +1357,6 @@ const styles = StyleSheet.create(
     fontWeight: Typography.bold,
     color: Colors.text,
     letterSpacing: -0.3,
-  },
-  mealPill: {
-    alignSelf: "flex-start",
-    backgroundColor: Colors.greenSoft,
-    borderRadius: Radius.pill,
-    paddingHorizontal: 9,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: `${Colors.green}35`,
-  },
-  mealPillText: {
-    fontSize: Typography.xs,
-    fontWeight: Typography.semibold,
-    color: Colors.green,
   },
   mealTypeRow: {
     flexDirection: "row",

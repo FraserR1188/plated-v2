@@ -54,6 +54,10 @@ import {
   healthConnectSyncWroteData,
 } from "./src/lib/syncRefetch";
 import { reportError } from "./src/lib/reportError";
+import {
+  validateSignUpPassword,
+  PASSWORD_HINT,
+} from "./src/lib/passwordRules";
 
 function ErrorFallback({ onReset }: { onReset: () => void }) {
   return (
@@ -429,6 +433,11 @@ function AuthScreen({ onForgotPassword }: { onForgotPassword: () => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [mode, setMode] = useState<"signin" | "signup" | "pending">("signin");
+  // PL-038: a show/hide toggle instead of a confirm field — see "Deliberately
+  // not changed" in testing/2026-09-21-kayce.md for why.
+  const [showPassword, setShowPassword] = useState(false);
+  // Sign-up's client-side check, from the same rule the reset screen uses.
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   // Captured at the moment either pending entry point fires, independent of
@@ -462,6 +471,15 @@ function AuthScreen({ onForgotPassword }: { onForgotPassword: () => void }) {
 
   const handleSubmit = async () => {
     if (!email.trim() || !password) return;
+    // Sign-up only: sign-in must never be refused by a client rule the
+    // account's existing password predates.
+    if (mode === "signup") {
+      const ruleError = validateSignUpPassword(password);
+      if (ruleError) {
+        setPasswordError(ruleError);
+        return;
+      }
+    }
     setLoading(true);
     try {
       if (mode === "signin") {
@@ -585,15 +603,49 @@ function AuthScreen({ onForgotPassword }: { onForgotPassword: () => void }) {
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
+              autoComplete="email"
+              textContentType="emailAddress"
             />
-            <TextInput
-              style={styles.input}
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Password"
-              placeholderTextColor={Colors.textDim}
-              secureTextEntry
-            />
+            <View style={styles.passwordRow}>
+              <TextInput
+                style={[styles.input, styles.passwordInput]}
+                value={password}
+                onChangeText={(text) => {
+                  setPassword(text);
+                  setPasswordError(null);
+                }}
+                placeholder="Password"
+                placeholderTextColor={Colors.textDim}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                // new-password lets Google / Samsung autofill offer to
+                // generate and save one on sign-up.
+                autoComplete={
+                  mode === "signup" ? "new-password" : "current-password"
+                }
+                textContentType={mode === "signup" ? "newPassword" : "password"}
+              />
+              <TouchableOpacity
+                style={styles.passwordToggle}
+                onPress={() => setShowPassword((v) => !v)}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  showPassword ? "Hide password" : "Show password"
+                }
+              >
+                <Text style={styles.passwordToggleText}>
+                  {showPassword ? "Hide" : "Show"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {mode === "signup" && (
+              <Text
+                style={passwordError ? styles.passwordError : styles.passwordHint}
+              >
+                {passwordError ?? PASSWORD_HINT}
+              </Text>
+            )}
             {mode === "signin" && (
               <TouchableOpacity
                 style={styles.forgotBtn}
@@ -617,7 +669,11 @@ function AuthScreen({ onForgotPassword }: { onForgotPassword: () => void }) {
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.switchBtn}
-              onPress={() => setMode(mode === "signin" ? "signup" : "signin")}
+              onPress={() => {
+                setMode(mode === "signin" ? "signup" : "signin");
+                setPasswordError(null);
+                setShowPassword(false);
+              }}
             >
               <Text style={styles.switchText}>
                 {mode === "signin"
@@ -716,6 +772,36 @@ const styles = StyleSheet.create(
     },
     switchBtn: { paddingVertical: Spacing.md, alignItems: "center" },
     switchText: { fontSize: Typography.sm, color: Colors.textMuted },
+    passwordRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: Colors.surface2,
+      borderRadius: Radius.control,
+      marginBottom: Spacing.sm,
+    },
+    passwordInput: {
+      flex: 1,
+      marginBottom: 0,
+      backgroundColor: "transparent",
+    },
+    passwordToggle: { paddingHorizontal: Spacing.md, paddingVertical: Spacing.sm },
+    passwordToggleText: {
+      fontSize: Typography.sm,
+      fontWeight: Typography.semibold,
+      color: Colors.textMuted,
+    },
+    passwordHint: {
+      fontSize: Typography.xs,
+      color: Colors.textDim,
+      marginTop: -Spacing.xs,
+      marginBottom: Spacing.sm,
+    },
+    passwordError: {
+      fontSize: Typography.xs,
+      color: Colors.danger,
+      marginTop: -Spacing.xs,
+      marginBottom: Spacing.sm,
+    },
     forgotBtn: { alignItems: "flex-end", marginBottom: Spacing.xs },
     forgotText: { fontSize: Typography.sm, color: Colors.textMuted },
     pendingBody: {

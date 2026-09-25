@@ -29,6 +29,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import { updatePassword } from "../lib/supabase";
 import { reportError } from "../lib/reportError";
+import { validateSignUpPassword } from "../lib/passwordRules";
 import {
   Colors,
   Spacing,
@@ -63,8 +64,10 @@ export function ResetPasswordScreen({
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
+    // PL-038: the same rule as sign-up, from one place.
+    const ruleError = validateSignUpPassword(password);
+    if (ruleError) {
+      setError(ruleError);
       return;
     }
     if (password !== confirm) {

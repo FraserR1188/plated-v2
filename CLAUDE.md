@@ -30,7 +30,7 @@ The app tracks **eight macros** (calories, protein, carbs, fat, saturated fat, s
 
 These are the source of most historical bugs. Each one is an invariant, not a preference.
 
-- **`planned` is always derived by a DB `BEFORE INSERT` trigger** from whether `eaten_at` is a future calendar day. **Never written by the client.**
+- **`planned` is always derived by a DB `BEFORE INSERT` trigger** as `eaten_at > now() + interval '30 minutes'`, on the database clock (`20260712180000_meal_planning.sql`). It is not "a future calendar day": a meal later **today** is planned too. **Never written by the client.**
 - **`date` is always derived from `eaten_at` via the local `dateKey()`** (local time). **Never** use `toISOString().split('T')[0]` — that's UTC and produces wrong dates under BST.
 - **Never inherit `date` or `section` from a source entry.** When adding/copying/plating a food, the target `{date, section}` must be passed explicitly. Inheriting from the source is the root cause of the duplicate-on-wrong-day / wrong-section bug class.
 - **`MealEntry` is snake_case throughout.** Never spread a camelCase object into a Supabase insert — map fields explicitly to snake_case. (A silent no-op bug was caused by exactly this.)
@@ -44,7 +44,7 @@ These are the source of most historical bugs. Each one is an invariant, not a pr
 ## Product/data rules
 
 - Confirmation is **one batched banner keyed on days that have ended**; nothing auto-expires (an auto-flip would create ghost meals).
-- `resolveEatenAt` midnight roll-back heuristic: if the picked time is more than 3 hours in the future, subtract a day.
+- `resolveEatenAt` midnight roll-back heuristic (PL-039): only when no day was given **and** local now is before 04:00 (`SMALL_HOURS_END_H`) — then the picked time resolves to whichever of today's and yesterday's reading is nearer to now, a tie going to today. From 04:00 a forward pick is always today. An explicit day is never rolled back. (It used to be "more than 3 h ahead → yesterday" at every hour, which saved lunchtime plans for tonight onto yesterday as eaten.)
 - Wearable calorie estimates are systematically inflated (~27–93% error range in the literature). Gross-to-net conversion requires subtracting BMR for the exercise duration to avoid double-counting resting expenditure. A fixed percentage is not evidence-supported.
 - **OFF search ranking:** fetch 50 results, re-rank locally — exact match +1000, prefix +500, whole-word +250, all-words-present +120, plus a brevity bonus, an unbranded bonus, popularity log-scaled and capped as a tiebreaker, and −80 for nutrition-empty products. Drop `sort_by=unique_scans_n` server-side.
 

@@ -417,10 +417,11 @@ export function ProductScreen() {
   // Did the user explicitly choose a DAY? This gates the midnight roll-back.
   //
   // resolveEatenAt() guesses that a 23:45 picked at 00:30 means LAST night. That
-  // guess is right, and it must survive — but it is also lethal to planning,
-  // because tomorrow's 19:00 is ~27h ahead and would get rolled back into today.
-  // So: guess only when not told. Arriving on a non-today screen counts as being
-  // told, because you navigated there on purpose.
+  // guess is right, and it must survive — but only in the small hours (PL-039:
+  // it used to fire all day, so 19:00 picked at lunchtime became yesterday's
+  // 19:00, saved as eaten). And even then only when not told: an explicit day is
+  // never second-guessed. Arriving on a non-today screen counts as being told,
+  // because you navigated there on purpose.
   const [dateTouched, setDateTouched] = useState(false);
   const dayIsExplicit =
     isEditing || dateTouched || (routeDate ?? todayKey()) !== todayKey();
@@ -481,9 +482,17 @@ export function ProductScreen() {
       next.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
       setEatenAt(next);
     } else {
-      // Today, day untouched → let the roll-back heuristic do its job.
+      // Today, day untouched → today, unless it's the small hours and last
+      // night's reading of this time is the nearer one (PL-039, see time.ts).
       setEatenAt(
-        new Date(resolveEatenAt(picked.getHours(), picked.getMinutes())),
+        new Date(
+          resolveEatenAt(
+            picked.getHours(),
+            picked.getMinutes(),
+            undefined,
+            new Date(),
+          ),
+        ),
       );
     }
   };

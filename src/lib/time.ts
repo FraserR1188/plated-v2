@@ -108,27 +108,53 @@ export function willBePlanned(
 
 /**
  * A time-only picker has to guess which day you meant. Someone logging at 00:30
- * who picks 23:45 means LAST night, not tonight — so a candidate more than
- * ROLLBACK_H hours ahead of now gets rolled back a day.
+ * who picks 23:45 means LAST night, not tonight. That is the ONE case the guess
+ * exists for, and it can only arise in the small hours.
  *
- * The heuristic is right, and it is also lethal to planning: tomorrow's 19:00
- * dinner is ~27 hours ahead, which trips the rollback and silently returns
- * TODAY at 19:00. The feature would look broken with nothing visible to blame.
+ * PL-039: the guess used to be "more than 3 h ahead of now → yesterday", at
+ * every hour. At 12:00, planning tonight's 19:00 dinner landed on YESTERDAY at
+ * 19:00 — saved as eaten, on the wrong day, with only the date chip to show it.
+ * The same trap sat inside the small hours too: at 00:30, this morning's 07:00
+ * breakfast went to yesterday.
  *
- * So the rule is: GUESS ONLY WHEN NOT TOLD. Pass `day` and the heuristic is
- * off — an explicit date is not a guess to be second-guessed. Omit `day` and
- * the old behaviour is preserved exactly, which is what every existing caller
- * relies on.
+ * So, GUESS ONLY WHEN NOT TOLD, and only before SMALL_HOURS_END_H:
+ *   - explicit `day`            → never guess (planning tomorrow must stay put);
+ *   - local now ≥ 04:00         → today, however far ahead; the planned trigger
+ *                                  (eaten_at > now() + 30 min) decides the rest;
+ *   - local now < 04:00         → whichever of today's and yesterday's reading
+ *                                  is NEARER to now; an exact tie goes to today.
+ * The window is what stops "nearest" misfiring in daylight: at 06:00 a 22:00
+ * pick is nearer to yesterday's 22:00, and that would be the bug again.
+ *
+ * The local HOUR is read, not elapsed time since midnight, so the two
+ * clock-change nights keep the same 04:00 cut-off on the wall clock.
  */
-const ROLLBACK_H = 3;
+export const SMALL_HOURS_END_H = 4;
+
+/**
+ * The guess, as a pure function of the today-reading and `now`. Takes `now`
+ * rather than reading the clock so the small-hours branch is testable without
+ * faking a device clock (which would also disagree with the DB clock the
+ * planned trigger uses). Exported for tests; callers go through resolveEatenAt.
+ */
+export function shouldReadAsYesterday(todayReading: Date, now: Date): boolean {
+  if (now.getHours() >= SMALL_HOURS_END_H) return false;
+  const yesterdayReading = new Date(todayReading);
+  yesterdayReading.setDate(yesterdayReading.getDate() - 1); // local calendar: DST-safe
+  return (
+    Math.abs(yesterdayReading.getTime() - now.getTime()) <
+    Math.abs(todayReading.getTime() - now.getTime())
+  );
+}
 
 export function resolveEatenAt(
   hours: number,
   minutes: number,
   /** The day the user explicitly chose. Omit to mean "today, and guess". */
   day?: Date,
+  /** Defaults to the device clock; tests pass it. */
+  now: Date = new Date(),
 ): string {
-  const now = new Date();
   const base = day ?? now;
 
   const candidate = new Date(
@@ -142,11 +168,8 @@ export function resolveEatenAt(
   );
 
   // Only guess when we weren't told.
-  if (!day) {
-    const aheadMs = candidate.getTime() - now.getTime();
-    if (aheadMs > ROLLBACK_H * 3600 * 1000) {
-      candidate.setDate(candidate.getDate() - 1);
-    }
+  if (!day && shouldReadAsYesterday(candidate, now)) {
+    candidate.setDate(candidate.getDate() - 1);
   }
 
   return candidate.toISOString();

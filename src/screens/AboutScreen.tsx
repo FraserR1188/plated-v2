@@ -1,19 +1,38 @@
 // ============================================================
 // src/screens/AboutScreen.tsx — About & legal
 //
-// Fully static: app name/version, data-source attribution (rendered
-// generically from src/content/attributions.ts — never hardcode a source
-// here), and legal/support links. No fetch, no Supabase call, no store
-// subscription — this screen must render correctly with no network.
+// Fully static: app name/version, the running build (PL-043), data-source
+// attribution (rendered generically from src/content/attributions.ts — never
+// hardcode a source here), and legal/support links. No fetch, no Supabase
+// call, no store subscription — this screen must render correctly with no
+// network.
 //
 // ============================================================
 
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  Alert,
+  Clipboard,
+  Platform,
+} from "react-native";
+import * as Updates from "expo-updates";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Colors, Spacing, Radius, Typography, withDefaultFont } from "../theme/tokens";
+import {
+  Colors,
+  Spacing,
+  Radius,
+  Typography,
+  Fonts,
+  withDefaultFont,
+} from "../theme/tokens";
 import { DATA_SOURCES, type Licence } from "../content/attributions";
 import { openURL } from "../lib/links";
+import { formatBuildInfo, type BuildInfo } from "../lib/buildInfo";
 import appJson from "../../app.json";
 
 const APP_VERSION = appJson.expo.version;
@@ -21,7 +40,38 @@ const PRIVACY_URL = "https://platedapp.uk/plated-privacy.html";
 const ATTRIBUTIONS_URL = "https://platedapp.uk/attributions.html";
 const SUPPORT_EMAIL = "robbie@fraseranalytics.com";
 
+// PL-043. Read once: these are fixed for the life of a launch. Wrapped so a
+// dev client, or anything unexpected from the native module, degrades to
+// "unknown" rather than taking the screen down.
+function readBuildInfo(): BuildInfo {
+  try {
+    return formatBuildInfo({
+      runtimeVersion: Updates.runtimeVersion,
+      channel: Updates.channel,
+      updateId: Updates.updateId,
+      isEmbeddedLaunch: Updates.isEmbeddedLaunch,
+    });
+  } catch {
+    return formatBuildInfo({
+      runtimeVersion: null,
+      channel: null,
+      updateId: null,
+      isEmbeddedLaunch: true,
+    });
+  }
+}
+
+// Clipboard is React Native core's DEPRECATED module — the only clipboard
+// native to the current binary (Android ClipboardModule, iOS RCTClipboard).
+// expo-clipboard would move the fingerprint; swap to it with the next native
+// build. Copies build values only: nothing user-identifying.
+function copyBuildInfo(info: BuildInfo) {
+  Clipboard.setString(`plated ${APP_VERSION} (${Platform.OS}) · ${info.copyText}`);
+  Alert.alert("Copied", "Paste it into your report.");
+}
+
 export function AboutScreen() {
+  const buildInfo = React.useMemo(readBuildInfo, []);
   return (
     <SafeAreaView style={styles.safe} edges={["left", "right", "bottom"]}>
       <ScrollView
@@ -32,6 +82,20 @@ export function AboutScreen() {
         <View style={styles.appHeader}>
           <Text style={styles.appName}>plated</Text>
           <Text style={styles.appVersion}>Version {APP_VERSION}</Text>
+          <Pressable
+            onPress={() => copyBuildInfo(buildInfo)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel="Copy build details"
+            style={({ pressed }) => [styles.buildInfo, pressed && { opacity: 0.6 }]}
+          >
+            {buildInfo.lines.map((line) => (
+              <Text key={line} style={styles.buildLine}>
+                {line}
+              </Text>
+            ))}
+            <Text style={styles.buildHint}>Tap to copy for a report</Text>
+          </Pressable>
         </View>
 
         {/* ── Data sources ────────────────────────────── */}
@@ -149,6 +213,20 @@ const styles = StyleSheet.create(
     appVersion: {
       fontSize: Typography.sm,
       color: Colors.textMuted,
+      marginTop: 4,
+    },
+    buildInfo: {
+      alignItems: "center",
+      marginTop: Spacing.sm,
+    },
+    buildLine: {
+      fontSize: Typography.xs,
+      color: Colors.textMuted,
+      fontFamily: Fonts.mono.regular,
+    },
+    buildHint: {
+      fontSize: Typography.xs,
+      color: Colors.textDim,
       marginTop: 4,
     },
     card: {

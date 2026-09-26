@@ -5,6 +5,7 @@ import { useNavigation } from "@react-navigation/native";
 import { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import { useStore } from "../store/useStore";
 import { BottomTabParamList } from "../types";
+import { dailyAverages, KnownAverage } from "../lib/historyAverages";
 import {
   Colors,
   Spacing,
@@ -54,8 +55,15 @@ export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
   // average, "N of 7 logged" and adherence % all derive from `dayData`, so
   // that one unfiltered filter was inflating four surfaces at once. See
   // getDaySummaryForDate in useStore.ts / getDaySummary in lib/entries.ts.
-  const dayData = dayArray.map((date) => {
-    const summary = getDaySummaryForDate(date);
+  const summaries = dayArray.map((date) => ({
+    date,
+    summary: getDaySummaryForDate(date),
+  }));
+
+  // The small four are deliberately NOT carried here: the day rows show only
+  // P/C/F, and the averages come from the buckets themselves (PL-058), where
+  // an unknown stays null instead of being coalesced to a 0 nobody measured.
+  const dayData = summaries.map(({ date, summary }) => {
     const eaten = summary.eaten;
     return {
       date,
@@ -63,13 +71,6 @@ export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
       protein: eaten.protein,
       carbs: eaten.carbs,
       fat: eaten.fat,
-      // Nullable on the bucket (unknown vs zero — see DayBucket in
-      // lib/entries.ts); coalesced to 0 here at the display boundary, same
-      // as everywhere else in the app that reads a nullable macro.
-      satFat: eaten.satFat ?? 0,
-      salt: eaten.salt ?? 0,
-      fibre: eaten.fibre ?? 0,
-      sugar: eaten.sugar ?? 0,
       count: eaten.count,
       // Surfaced separately, never folded into the headline figures above —
       // same "+X kcal planned, not yet eaten" register as TodayScreen's ring.
@@ -79,34 +80,9 @@ export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
   });
 
   const logged = dayData.filter((d) => d.count > 0);
-  const avg = logged.length
-    ? {
-        calories: Math.round(
-          logged.reduce((s, d) => s + d.calories, 0) / logged.length,
-        ),
-        protein: +(
-          logged.reduce((s, d) => s + d.protein, 0) / logged.length
-        ).toFixed(1),
-        carbs: +(
-          logged.reduce((s, d) => s + d.carbs, 0) / logged.length
-        ).toFixed(1),
-        fat: +(logged.reduce((s, d) => s + d.fat, 0) / logged.length).toFixed(
-          1,
-        ),
-        satFat: +(
-          logged.reduce((s, d) => s + d.satFat, 0) / logged.length
-        ).toFixed(1),
-        salt: +(logged.reduce((s, d) => s + d.salt, 0) / logged.length).toFixed(
-          2,
-        ),
-        fibre: +(
-          logged.reduce((s, d) => s + d.fibre, 0) / logged.length
-        ).toFixed(1),
-        sugar: +(
-          logged.reduce((s, d) => s + d.sugar, 0) / logged.length
-        ).toFixed(1),
-      }
-    : null;
+  // PL-058: one shared rule with Trends — a day where a small-four value is
+  // unknown on every row is left out of that average, not counted as 0.
+  const avg = dailyAverages(summaries.map(({ summary }) => summary.eaten));
 
   const fmtDate = (ds: string) => {
     const d = new Date(ds + "T12:00:00");
@@ -222,22 +198,22 @@ export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
             <View style={styles.avgSecondaryRow}>
               <SecondaryAvgStat
                 label="Sat fat"
-                value={`${avg.satFat}g`}
+                average={avg.satFat}
                 color={MacroColor.satFat}
               />
               <SecondaryAvgStat
                 label="Salt"
-                value={`${avg.salt}g`}
+                average={avg.salt}
                 color={MacroColor.salt}
               />
               <SecondaryAvgStat
                 label="Fibre"
-                value={`${avg.fibre}g`}
+                average={avg.fibre}
                 color={MacroColor.fibre}
               />
               <SecondaryAvgStat
                 label="Sugar"
-                value={`${avg.sugar}g`}
+                average={avg.sugar}
                 color={MacroColor.sugar}
               />
             </View>
@@ -389,20 +365,41 @@ function AvgStat({
   );
 }
 
+/**
+ * PL-058: a small-four average can be unknown (no logged day had a value) or
+ * partial (some days were left out). Both are said out loud — "—" and
+ * "n of N days" — rather than shown as a confident number.
+ */
 function SecondaryAvgStat({
   label,
-  value,
+  average,
   color,
 }: {
   label: string;
-  value: string;
+  average: KnownAverage;
   color: string;
 }) {
+  const partial =
+    average.value != null && average.knownDays < average.loggedDays;
   return (
     <View style={avgStyles.secondary}>
       <View style={[avgStyles.secondaryDot, { backgroundColor: color }]} />
       <Text style={avgStyles.secondaryLabel}>{label}</Text>
-      <Text style={[avgStyles.secondaryValue, { color }]}>{value}</Text>
+      <View style={avgStyles.secondaryValueCol}>
+        <Text
+          style={[
+            avgStyles.secondaryValue,
+            { color: average.value == null ? Colors.textMuted : color },
+          ]}
+        >
+          {average.value == null ? "—" : `${average.value}g`}
+        </Text>
+        {partial && (
+          <Text style={avgStyles.secondaryNote}>
+            {average.knownDays} of {average.loggedDays} days
+          </Text>
+        )}
+      </View>
     </View>
   );
 }
@@ -739,6 +736,14 @@ const avgStyles = StyleSheet.create(
       fontSize: Typography.xs,
       fontWeight: Typography.bold,
       fontFamily: Fonts.mono.bold,
+    },
+    secondaryValueCol: {
+      alignItems: "flex-end",
+    },
+    secondaryNote: {
+      fontSize: 10,
+      color: Colors.textMuted,
+      fontWeight: Typography.medium,
     },
   }),
 );

@@ -7,7 +7,11 @@
 // SELECTs this table.
 //
 // USAGE
-//   npx tsx scripts/seedCoreIngredients.ts --cofid path/to/cofid.csv [--dry-run] [--limit 10]
+//   npx tsx scripts/seedCoreIngredients.ts --cofid path/to/cofid.csv [--dry-run] [--limit 10 | --only apple,pear]
+//
+//   --only writes ONLY the named slugs. Use it for any targeted fix: a
+//   whole-table run re-picks every staple without a cofidOverride via
+//   matchCofid() and a live FDC call — see ./seedIngredients/args.ts.
 //
 //   See scripts/seedIngredients/cofid.ts's header comment for the CSV
 //   contract CoFID must be flattened into before this will read it.
@@ -32,8 +36,11 @@
 //   attribution, but crediting USDA costs one more line and is normal
 //   practice.
 //
-// IDEMPOTENT — upserts on slug. Re-running after fixing a CSV mapping bug
-// or adding staples is safe and expected.
+// UPSERTS ON slug — and only upserts. For every staple a run resolves it
+// overwrites display_name, aliases, unit_grams, density_g_per_ml, source,
+// source_ref, verified and all eight *_100g columns, so a dashboard edit to
+// any of those is lost. It never deletes: a slug removed from SEED_STAPLES,
+// or one skipped as MISS / OVERRIDE NOT FOUND, keeps its old row.
 // ============================================================
 
 import { SEED_STAPLES, type SeedStaple } from "./seedStaples";
@@ -41,30 +48,7 @@ import { loadCofid, matchCofidWithRunnerUp } from "./seedIngredients/cofid";
 import { lookupFdc } from "./seedIngredients/fdc";
 import { coalesceMacros, Macro100, MACRO100_KEYS } from "./seedIngredients/convert";
 import { createAdminClient } from "./seedIngredients/db";
-
-interface Args {
-  cofidPath: string;
-  dryRun: boolean;
-  limit?: number;
-}
-
-function parseArgs(argv: string[]): Args {
-  let cofidPath = "";
-  let dryRun = false;
-  let limit: number | undefined;
-
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--cofid") cofidPath = argv[++i];
-    else if (a === "--dry-run") dryRun = true;
-    else if (a === "--limit") limit = parseInt(argv[++i], 10);
-  }
-
-  if (!cofidPath) {
-    throw new Error("Usage: npx tsx scripts/seedCoreIngredients.ts --cofid <path.csv> [--dry-run] [--limit N]");
-  }
-  return { cofidPath, dryRun, limit };
-}
+import { parseSeedArgs, selectStaples } from "./seedIngredients/args";
 
 type Row = {
   slug: string;
@@ -106,7 +90,7 @@ function buildRow(
 }
 
 async function run() {
-  const args = parseArgs(process.argv.slice(2));
+  const args = parseSeedArgs(process.argv.slice(2));
   const fdcKey = process.env.FDC_API_KEY;
   if (!fdcKey) {
     console.warn("[seed] FDC_API_KEY not set — running CoFID-only. FDC-only NULL fills will not happen.");
@@ -120,7 +104,8 @@ async function run() {
   // fine), but an override lookup has no reason to pay that cost too.
   const cofidByCode = new Map(cofidRows.map((r) => [r.foodCode, r]));
 
-  const staples = args.limit ? SEED_STAPLES.slice(0, args.limit) : SEED_STAPLES;
+  const staples = selectStaples(SEED_STAPLES, args);
+  if (args.only) console.log(`[seed] --only: ${staples.length} staple(s): ${staples.map((st) => st.slug).join(", ")}`);
 
   const outRows: Row[] = [];
   const misses: string[] = [];
@@ -240,8 +225,10 @@ async function run() {
   }
 
   if (args.dryRun) {
-    console.log("[seed] --dry-run: not writing to Supabase. Sample row:");
-    console.log(JSON.stringify(outRows[0], null, 2));
+    // A targeted run is small enough to print whole, so what WOULD be
+    // written can be read before anything is.
+    console.log(`[seed] --dry-run: not writing to Supabase. ${args.only ? "Rows:" : "Sample row:"}`);
+    console.log(JSON.stringify(args.only ? outRows : outRows[0], null, 2));
     return;
   }
 

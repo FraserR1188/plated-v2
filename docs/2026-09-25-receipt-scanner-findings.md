@@ -371,7 +371,7 @@ lines: Array<{
 | Anthropic, per request | 32 MB | Same page, linking the API overview's request size limits |
 | Supabase Edge Function request body | **Not documented** | [supabase.com/docs/guides/functions/limits](https://supabase.com/docs/guides/functions/limits), fetched 2026-09-26. Documented: 256 MB memory, 150 s idle timeout, 150 s (free) / 400 s (paid) wall clock, 2 s CPU. |
 
-**Proposal:**
+**Proposal — PROVISIONAL until commit 0 re-measures real photos.** The proxies are clean renders plus Gaussian noise. A real phone photo of crumpled, curled thermal paper, with glare and background texture, compresses worse. The limits below are fixed only after the bake-off measures the base64 size of your real photos at the chosen size, **especially the multi-photo receipts**. If the heaviest real part is more than about a third of 3.5M, raise the per-part cap or lower the quality before fixing the numbers.
 
 - **Per part:** `MAX_PART_BASE64_CHARS = 3,500,000`.
   - That's 3.2× the heaviest realistic proxy (heavy noise at 2576, 1.08M), and above the pure-noise bound at the recommended 2212 px (under 2.89M).
@@ -989,11 +989,13 @@ Each commit uses the house style: a two-`-m` conventional commit, red tests befo
   - **total taken from the correct part:** `total_printed_part` equals the last part that shows a total, checked by hand;
   - **seam-flag hits and false flags:** run the §3 seam check on the output, and count flags on true seam echoes vs flags on genuine repeat purchases;
   - **p95 latency and output tokens on the longest receipt**, against the 150 s idle timeout.
+- **Re-measure image sizes on the real photos** (every arm, especially the multi-photo ones): the base64 length of each prepared part at the chosen size and quality 0.85, the heaviest part, and the heaviest 3-part total. This replaces §3's synthetic-proxy figures, and **fixes `MAX_PART_BASE64_CHARS` and `MAX_TOTAL_BASE64_CHARS`**.
 - **Decides:**
   - the `RECEIPT_MODEL` default and its tier (and so `fitToVisionBudget`'s tier);
   - `max_tokens`;
   - whether the output keys need compacting or the line cap lowering (§3);
-  - whether the seam flag is worth showing, or should be demoted to the reconcile banner alone.
+  - whether the seam flag is worth showing, or should be demoted to the reconcile banner alone;
+  - the per-part and total base64 limits (§3, currently provisional).
 - **Note:** this sends your receipts to Anthropic, the same as the feature will.
 
 ### Commit 1 ⚑ — schema: split into 1a and 1b (two migration files, one push)

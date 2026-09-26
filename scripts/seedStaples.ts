@@ -139,7 +139,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'lemon', displayName: 'Lemon', aliases: ['fresh lemon'],
     unitGrams: { medium: 58 }, densityGPerMl: 1.03, cofidOverride: '14-128', /* Lemons, whole, without pips */ }, // density for 'juice of' when given in ml
   { slug: 'lime', displayName: 'Lime', aliases: ['fresh lime'],
-    unitGrams: { medium: 67 }, densityGPerMl: 1.03, cofidOverride: '14-132', /* Limes, flesh only, weighed with peel and pips */ },
+    unitGrams: { medium: 67 }, densityGPerMl: 1.03, cofidOverride: '14-131', /* Limes, flesh only */ }, // PL-042: was 14-132, per 100 g weighed with peel and pips. unitGrams unsourced — PL-055
   { slug: 'banana', displayName: 'Banana', aliases: ['fresh banana'],
     unitGrams: { small: 90, medium: 118, large: 140 }, cofidOverride: '14-318', /* Bananas, flesh only */ }, // peeled
 
@@ -281,7 +281,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'frozen-peas', displayName: 'Peas', aliases: ['frozen peas', 'garden peas'], cofidOverride: '13-527', /* Peas, frozen, raw */ },
   { slug: 'sweetcorn', displayName: 'Sweetcorn', aliases: ['corn', 'tinned sweetcorn'], preparationPreference: ['canned'], cofidOverride: '13-529', /* Sweetcorn kernels, canned in water, drained */ },
   { slug: 'green-beans', displayName: 'Green beans', aliases: ['french beans', 'fine beans'], cofidOverride: '13-514', /* Beans, green, raw */ },
-  { slug: 'cabbage', displayName: 'Cabbage', aliases: ['savoy cabbage', 'white cabbage'], cofidOverride: '13-509', /* Cabbage, white, raw */ },
+  { slug: 'cabbage', displayName: 'Cabbage', aliases: ['savoy cabbage', 'white cabbage'], cofidOverride: '13-582', /* Cabbage, average, raw */ }, // PL-042: was 13-509 white; aliases span savoy and white
   { slug: 'brussels-sprouts', displayName: 'Brussels sprouts', aliases: ['sprouts'], cofidOverride: '13-177', /* Brussels sprouts, raw */ },
   { slug: 'asparagus', displayName: 'Asparagus', aliases: [], cofidOverride: '13-157', /* Asparagus, raw */ },
   { slug: 'pak-choi', displayName: 'Pak choi', aliases: ['bok choy'], cofidOverride: '13-516', /* Pak choi, steamed */ },
@@ -289,14 +289,17 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'red-chilli', displayName: 'Red chilli', aliases: ['chilli', 'fresh chilli', 'chili pepper'], cofidOverride: '13-317', /* Peppers, capsicum, chilli, red, raw */ },
 
   // Fruit (tail)
-  { slug: 'apple', displayName: 'Apple', aliases: ['eating apple', 'bramley apple'], cofidOverride: '14-362', /* Apples, cooking, raw, flesh only, peeled */ },
-  { slug: 'pear', displayName: 'Pear', aliases: [], cofidOverride: '14-365', /* Pears, average, raw, flesh only */ },
+  // PL-042: apple and pear were the peeled rows, picked because the review
+  // file flagged each skin-on row DISH?. A Bramley is a cooking apple, not
+  // this food, so its alias is gone; a cooking-apple staple is PL-051.
+  { slug: 'apple', displayName: 'Apple', aliases: ['eating apple'], cofidOverride: '14-319', /* Apples, eating, raw, flesh and skin */ },
+  { slug: 'pear', displayName: 'Pear', aliases: [], cofidOverride: '14-321', /* Pears, raw, flesh and skin */ },
   { slug: 'orange', displayName: 'Orange', aliases: [], cofidOverride: '14-327', /* Oranges, flesh only */ },
   { slug: 'strawberries', displayName: 'Strawberries', aliases: [], cofidOverride: '14-324', /* Strawberries, raw */ },
   { slug: 'blueberries', displayName: 'Blueberries', aliases: [], cofidOverride: '14-325', /* Blueberries */ },
   { slug: 'raspberries', displayName: 'Raspberries', aliases: [], cofidOverride: '14-375', /* Raspberries, raw */ },
   { slug: 'grapes', displayName: 'Grapes', aliases: [], cofidOverride: '14-350', /* Grapes, average */ },
-  { slug: 'avocado', displayName: 'Avocado', aliases: [], cofidOverride: '14-039', /* Avocado, Fuerte, flesh only */ },
+  { slug: 'avocado', displayName: 'Avocado', aliases: [], cofidOverride: '14-386', /* Avocado, Hass, flesh only */ }, // PL-042: was 14-039 Fuerte, not the generic case
   { slug: 'mango', displayName: 'Mango', aliases: [], cofidOverride: '14-378', /* Mangoes, ripe, flesh only, raw */ },
   { slug: 'pineapple', displayName: 'Pineapple', aliases: [], cofidOverride: '14-376', /* Pineapple, flesh only, raw */ },
   // Dried fruit isn't raw fruit that happens to need a tie-break — it's
@@ -357,7 +360,7 @@ export const SEED_STAPLES: SeedStaple[] = [
   { slug: 'mayonnaise', displayName: 'Mayonnaise', aliases: ['mayo'], cofidOverride: '17-809', /* Mayonnaise, homemade */ },
   { slug: 'pesto', displayName: 'Pesto', aliases: ['green pesto', 'basil pesto'], cofidOverride: '15-838', /* Pesto sauce, homemade */ },
   { slug: 'sriracha', displayName: 'Sriracha', aliases: ['hot sauce', 'chilli sauce'], densityGPerMl: 1.1, cofidOverride: '17-719', /* Chilli sauce */ },
-  { slug: 'coconut-milk', displayName: 'Coconut milk', aliases: ['tinned coconut milk'], densityGPerMl: 0.98, cofidOverride: '14-820', /* Coconut milk */ },
+  { slug: 'coconut-milk', displayName: 'Coconut milk', aliases: ['tinned coconut milk'], densityGPerMl: 0.98, cofidOverride: '14-889', /* Coconut milk, retail */ }, // PL-042: was 14-820 "Coconut milk", 22 kcal / 0.3 g fat — not the tinned product
   { slug: 'chicken-stock', displayName: 'Chicken stock', aliases: ['chicken stock cube', 'chicken bouillon'], densityGPerMl: 1.0, cofidOverride: '17-726', /* Stock cubes, chicken */ },
   { slug: 'vegetable-stock', displayName: 'Vegetable stock', aliases: ['veg stock cube', 'vegetable bouillon'], densityGPerMl: 1.0, cofidOverride: '17-727', /* Stock cubes, vegetable */ },
   { slug: 'beef-stock', displayName: 'Beef stock', aliases: ['beef stock cube'], densityGPerMl: 1.0, cofidOverride: '17-515', /* Stock cubes, beef */ },

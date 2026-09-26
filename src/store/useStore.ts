@@ -31,6 +31,15 @@ import {
   clearWhoopConnectionCache,
 } from "../lib/whoopConnectionCache";
 import { clearTrendsPrefs } from "../lib/trendsPrefs";
+import { fetchAllPages } from "../lib/paging";
+
+/**
+ * PL-050. Rows per fetchEntries request. Must stay below PostgREST's
+ * max_rows (2000 hosted and in supabase/config.toml since 2026-09-26; 1000
+ * before that): a page the server cuts short reads as the last page, and
+ * the loop would stop there. Pinned below both by fetchEntriesPaging.test.ts.
+ */
+export const ENTRIES_PAGE_SIZE = 500;
 
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
@@ -635,18 +644,34 @@ export const useStore = create<AppState>((set, get) => ({
   // The bounded query, when it lands, is "last N days + everything future +
   // everything pending" — not a flat date window, because a pending meal from
   // three weeks ago must still reach the banner.
+  //
+  // PL-050: "unbounded" means every row, so it is read in pages. One unpaged
+  // select is silently cut at PostgREST's max_rows. `id` ends the ORDER BY so
+  // rows sharing a logged_at (a bundle apply writes several) keep one position
+  // across page requests. A failed page keeps the previous list rather than
+  // installing the pages read so far, and is reported once, here.
   fetchEntries: async () => {
     const { userId } = get();
     if (!userId) return;
     set({ loading: true });
-    const { data, error } = await supabase
-      .from("meal_entries")
-      .select("*")
-      .eq("user_id", userId)
-      .order("logged_at", { ascending: false });
-    if (error) reportError("fetchEntries", error);
-    if (!error && data) set({ entries: data as MealEntry[] });
-    set({ loading: false });
+    try {
+      const rows = await fetchAllPages<MealEntry>(
+        (from, to) =>
+          supabase
+            .from("meal_entries")
+            .select("*")
+            .eq("user_id", userId)
+            .order("logged_at", { ascending: false })
+            .order("id", { ascending: false })
+            .range(from, to),
+        ENTRIES_PAGE_SIZE,
+      );
+      set({ entries: rows });
+    } catch (e) {
+      reportError("fetchEntries", e);
+    } finally {
+      set({ loading: false });
+    }
   },
 
   fetchCompositions: async () => {

@@ -27,16 +27,19 @@ const PACKAGES = ["com.google.android.apps.fitness", "com.strava", "whoop.direct
 const identity = (r: FakeRow) => `${r.origin_package}|${r.source_workout_id}`;
 
 /**
- * `count` workouts for USER. Every block of 4 shares one workout_start, and
- * within a block two rows also share origin_package — so a tiebreak on
- * origin_package alone is still not total. Some foreign rows are mixed in.
+ * `count` workouts for USER. Every block of 7 shares one workout_start, and
+ * packages cycle mod 3, so each block holds rows that share start AND
+ * origin_package — a tiebreak on origin_package alone is still not total.
+ * 7 doesn't divide the page size, so tied blocks straddle page boundaries
+ * (blocks of 4 didn't: 500 / 4 is whole, and the first version of this
+ * fixture never put a tie across a boundary). Some foreign rows mixed in.
  */
 function fixture(count: number): FakeRow[] {
   const rows: FakeRow[] = [];
   const t0 = Date.UTC(2026, 8, 26, 7, 0, 0);
   for (let i = 0; i < count; i++) {
-    const block = Math.floor(i / 4);
-    const pkg = PACKAGES[i % 4 === 3 ? 0 : i % 3];
+    const block = Math.floor(i / 7);
+    const pkg = PACKAGES[i % 3];
     rows.push({
       user_id: USER,
       origin_package: pkg,

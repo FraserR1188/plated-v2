@@ -41,6 +41,10 @@ import { fetchAllPages } from "../lib/paging";
  */
 export const ENTRIES_PAGE_SIZE = 500;
 
+/** PL-056. Rows per fetchWorkouts request; same rule as ENTRIES_PAGE_SIZE,
+ *  pinned below max_rows and 1000 by fetchWorkoutsPaging.test.ts. */
+export const WORKOUTS_PAGE_SIZE = 500;
+
 const DEFAULT_GOALS: Goals = {
   calories: 2000,
   protein: 150,
@@ -688,18 +692,33 @@ export const useStore = create<AppState>((set, get) => ({
   // fetchEntries above (no windowed query here either). biometric_workouts
   // is security_invoker, so RLS already scopes it to the caller — the
   // explicit .eq mirrors fetchEntries rather than relying on that alone.
+  //
+  // PL-056: paged like fetchEntries (PL-050). The ORDER BY ends on the
+  // view's composite identity, (origin_package, source_workout_id): two apps
+  // can log a workout in the same second, and one app can log two, so
+  // nothing shorter gives every row a fixed position across pages. A failed
+  // page keeps the previous list and is reported once, here.
   fetchWorkouts: async () => {
     const { userId } = get();
     if (!userId) return;
-    const { data, error } = await supabase
-      .from("biometric_workouts")
-      .select("*")
-      .eq("user_id", userId);
-    if (error) {
-      reportError("fetchWorkouts", error);
+    let data: Record<string, any>[];
+    try {
+      data = await fetchAllPages<Record<string, any>>(
+        (from, to) =>
+          supabase
+            .from("biometric_workouts")
+            .select("*")
+            .eq("user_id", userId)
+            .order("workout_start", { ascending: false })
+            .order("origin_package", { ascending: true })
+            .order("source_workout_id", { ascending: true })
+            .range(from, to),
+        WORKOUTS_PAGE_SIZE,
+      );
+    } catch (e) {
+      reportError("fetchWorkouts", e);
       return;
     }
-    if (!data) return;
 
     // EXPLICIT snake_case → camelCase mapping — no spread. NULL-faithful:
     // strain/HR/energy/distance are nullable on the spine and stay that way.

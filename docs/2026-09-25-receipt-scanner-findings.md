@@ -9,6 +9,8 @@ Read-only investigation, run 2026-09-26 against master @ `177ed0a` (clean tree).
 - the section is named "Grocery spending";
 - all three brief changes are accepted.
 
+**Revised 2026-09-27 with the bake-off (commit 0).** 13 real receipts, three model arms, three runs, 57 model calls, MEASURED. Its results decide the model, the image tier and the size limits, and correct four things in §3. The results are under commit 0 below. Sections changed carry a "Revised 2026-09-27" marker.
+
 Every section changed by the revision carries a "Revised 2026-09-26" marker. Sections without one are as first written. Line references to `useStore.ts` are at `177ed0a`. PL-050 (`eec75b9`, since committed) moved `fetchEntries` down by about 15 lines.
 
 **Labels.** **READ** means taken from the source at the cited line. **MEASURED** means I ran it and the output is quoted. **PREDICTED** means an expectation that hasn't been checked on a device, the database or the API.
@@ -21,7 +23,7 @@ Every section changed by the revision carries a "Revised 2026-09-26" marker. Sec
 |---|---|---|
 | 1 | Batches placement | Batches holds one list and one action. A receipt entry there reads as "turn a receipt into a batch", which v1 isn't. **Recommend the Data tab's new Spending segment** as the only entry point. |
 | 2 | Data tab | It's two segments over one screen. Two range controls behave differently, and History's averages treat unknown macros as 0 while Trends treats them as gaps. **Recommend** `History \| Trends \| Spending` plus a tidy commit. |
-| 3 | scan-meal-photo | Haiku 4.5, forced tool, 1024 max tokens, and no `stop_reason` check. **PL-036 menu mode is not started on master.** A receipt shares nothing with the meal contract. **Decided: a sibling function, `scan-receipt`.** One call takes 1–3 ordered image parts. MEASURED: 3 realistic parts fit every limit with room to spare. |
+| 3 | scan-meal-photo | Haiku 4.5, forced tool, 1024 max tokens, and no `stop_reason` check. **PL-036 menu mode is not started on master.** A receipt shares nothing with the meal contract. **Decided: a sibling function, `scan-receipt`.** One call takes 1–3 ordered image parts. MEASURED: 3 realistic parts fit every limit with room to spare. **Revised 2026-09-27:** the bake-off picks **`claude-sonnet-5`, high-res tier, thinking disabled**. It was exact on single photos; multi-photo is the weak spot. |
 | 4 | Library picker | Already in every binary. `recipeImageCapture.ts` is the camera-or-library template. The meal path has no library option yet. The capture screen collects 1–3 ordered parts, and a scan counts once against the hourly limit (READ). |
 | 5 | Schema | No money tables or columns anywhere. Migration, three RPCs (`save_receipt`, `update_receipt`, `delete_receipt`), verification SQL and gate tests are below. |
 | 6 | Money | Nothing stores or formats money. A locale-free `money.ts` is needed, following the Trends precedent that bans `toLocaleString`. |
@@ -189,7 +191,7 @@ A receipt fails that test on every axis:
 | Error vocabulary | `no_food` | `no_receipt`, `too_long` |
 | `max_tokens` | 1024 is enough | Up to about 12k for a 3-part, 150-line receipt (PREDICTED, below) |
 | Image tier | 1568 px is fine for a plate | High-res tier, sized to its token cap (below) |
-| Model | Haiku | Decided by the bake-off |
+| Model | Haiku | `claude-sonnet-5`, thinking disabled (bake-off, Revised 2026-09-27) |
 
 **Decided (decision 5): a new sibling function, `supabase/functions/scan-receipt/`,** a sibling of `_shared` per CLAUDE.md. It reuses:
 
@@ -202,7 +204,7 @@ It gets its own `RECEIPT_MODEL` secret, falling back to its own default and neve
 
 **Candidate E lands in the same commit.** The "bump via the MODEL secret, no redeploy needed" comments in the three existing AI functions are replaced with a warning: forced `tool_choice` is a 400 on Claude Opus 5.5 and Claude Fable 5.1, and Sonnet 5's default adaptive thinking counts toward `max_tokens`. The sites are [scan-meal-photo/index.ts:48-49](supabase/functions/scan-meal-photo/index.ts#L48-L49), [scan-recipe/index.ts:54-55](supabase/functions/scan-recipe/index.ts#L54-L55) and [extract-nutrition-label/index.ts:46-47](supabase/functions/extract-nutrition-label/index.ts#L46-L47). The last names `claude-sonnet-5` explicitly, at `max_tokens: 2048` ([:496](supabase/functions/extract-nutrition-label/index.ts#L496)), which is exactly the adaptive-thinking truncation case. It's a comment-only change to those three, so no redeploy is needed.
 
-### What makes printed figures unreliable — Revised 2026-09-26
+### What makes printed figures unreliable — Revised 2026-09-26, 2026-09-27
 
 **Image:**
 
@@ -212,17 +214,18 @@ It gets its own `RECEIPT_MODEL` secret, falling back to its own default and neve
 
   | Prepared size (3:4) | Visual tokens | Standard tier | High-res tier |
   |---|---|---|---|
-  | 1176 × 1568 (today's `MAX_EDGE`) | 2,352 | Downscaled again, to about 1260 long edge | Kept |
-  | 945 × 1260 | 1,530 | **Largest that is kept** | Kept |
+  | 1176 × 1568 (today's `MAX_EDGE`) | 2,352 | Downscaled again, to about 1270 long edge | Kept |
+  | 952 × 1270 | 1,564 | **Largest that is kept** | Kept |
   | 1659 × 2212 | 4,740 | — | **Largest that is kept** |
   | 1932 × 2576 | 6,348 | — | Downscaled again, to about 2212 |
 
-  So Haiku reads a 3:4 photo at about **1260 px**, not 1568, and Sonnet 5 at about **2212 px**, not 2576. Pixels above those are uploaded and then thrown away.
+  So Haiku reads a 3:4 photo at about **1270 px**, not 1568, and Sonnet 5 at about **2212 px**, not 2576. Pixels above those are uploaded and then thrown away.
 
+  - **Revised 2026-09-27:** the standard-tier row said 945 × 1260 (1,530 tokens). The bake-off harness's exact search over rounded sizes found **952 × 1270 (1,564 tokens)** is the largest 3:4 size kept. The standard tier is no longer used for receipts (§3, commit 0), but `fitToVisionBudget` still implements both tiers.
   - **Recommendation:** a pure `fitToVisionBudget(w, h, tier)` in `imagePrep.ts` that implements the documented rule for both limits, instead of a single `MAX_EDGE`.
-  - For a tall screenshot (1080 × 2400), the long edge binds instead. 1159 × 2576 is 3,864 tokens, which is kept.
+  - **It never upscales (Revised 2026-09-27).** An image within both limits is sent at its own size. A 1080 × 2400 screenshot (3,354 tokens, long edge 2400) is **unchanged** on the high-res tier. The earlier "1159 × 2576" figure is what a *larger* tall screenshot (such as 1440 × 3200) is scaled to, where the long edge binds.
   - The `imagePrep.ts` header's "downscales anything over 1568px on the long edge" is incomplete for 3:4 photos. It's a comment fix; the meal photo is unaffected in practice.
-- **Legibility (PREDICTED):** a 50 cm receipt filling the frame height at 2212 px is about 4.4 px/mm, roughly 11 px per 2.5 mm character; at 1260 px, about 6 px.
+- **Legibility (PREDICTED):** a 50 cm receipt filling the frame height at 2212 px is about 4.4 px/mm, roughly 11 px per 2.5 mm character; at 1270 px, about 6 px.
   - This is why multi-image is in v1 (decision 2). Three overlapping parts of a 50 cm receipt give each part about 17–20 cm of receipt height, so about 11–13 px/mm on the high-res tier.
 
 **Layout:**
@@ -234,7 +237,8 @@ It gets its own `RECEIPT_MODEL` secret, falling back to its own default and neve
 - **Quantity lines are split:** "2 @ £1.25" on its own line under the item.
 - **Weighed items have non-integer quantities:** "0.512 kg @ £2.20/kg". So `qty` must be numeric, not an integer, and `unit_price` is sometimes per kg.
 - **VAT code letters sit after prices** ("1.50 A", "1.50 *"), and can be read as digits.
-- **Voids** ("ITEM VOID", "CANCELLED") produce negative lines.
+- **Voids** ("ITEM VOID", "CANCELLED") produce negative lines. **Revised 2026-09-27, MEASURED:** Sainsbury's prints a void as the item line, then `ITEM CANCELLED` and a negative line of the same amount. Every arm listed both. Spec: **keep both** (it's what's printed and the user can see it), with the cancel line negative and `is_discount: true`, so the lines still add up. The pair nets to 0 items.
+- **Loyalty prices are real discounts (Revised 2026-09-27, MEASURED).** Sainsbury's prints `Nectar Price Saving -0.75` under the item. It's a discount line and must be kept, not dropped as a loyalty line (see the redaction fix below).
 - **Several figures compete for "the total":** SUBTOTAL, TOTAL, BALANCE DUE, TOTAL SAVINGS, the card payment amount, CHANGE and CASHBACK. Cashback in particular makes the card amount exceed the goods total. The one wanted is **the amount due for goods after all savings.**
 - **Non-food lines:** carrier bags, toiletries, household goods and gift cards. Decision 1 names the section "Grocery spending" rather than classifying lines.
 - **Dates:** "25/09/26" is DD/MM/YY in the UK, and an ambiguous day ≤12 can be read either way by a US-biased model. Some receipts print only a time on the header and the date at the foot.
@@ -243,7 +247,7 @@ It gets its own `RECEIPT_MODEL` secret, falling back to its own default and neve
 
 **Number handling.** The model returns every amount as the **string exactly as printed** ("12.30", "0.50-"). The server parses it with one strict function into integer pence, and an unparseable string gives NULL. This is the house rule: *the model transcribes, the server calculates* ([scan-meal-photo/index.ts:17-23](supabase/functions/scan-meal-photo/index.ts#L17-L23)).
 
-### Receipt mode spec — Revised 2026-09-26
+### Receipt mode spec — Revised 2026-09-26, 2026-09-27
 
 **Request (client → `scan-receipt`):**
 
@@ -288,6 +292,7 @@ lines: Array<{
    - The images are consecutive parts of ONE receipt, top to bottom. Each overlaps the next by a line or two.
    - **List every physical item line exactly once.** A line that appears in the overlap of two parts is listed once, from the part where it is fully legible, with that `part`.
    - If the parts don't look like the same receipt, set `same_receipt: false`.
+   - **Revised 2026-09-27, needs more work before commit 3.** The bake-off shows this rule isn't enough. On multi-photo receipts Sonnet 5's lines added up in only 3 of 8 reads, against 13 of 14 per arm on single photos, mostly from over-reading at the joins (commit 0). Commit 3's prompt should say more about overlap before it's fixed. For example: "Before listing the first lines of part k+1, find the last line you listed from part k in it, and continue after it." Then re-run the multi-photo arm on more multi-photo receipts than the bake-off had (2).
 3. **Header and total.**
    - Store and date come from part 1: the header.
    - `total_printed` comes from **the last part that shows one**, with its part number in `total_printed_part`.
@@ -298,7 +303,8 @@ lines: Array<{
    - VAT summary tables;
    - store address, phone, VAT number, till/operator/transaction numbers, barcodes and QR text;
    - total-savings summary lines.
-5. **Discounts** are their own lines with `is_discount: true`, including multibuy savings printed at the end.
+   - **Revised 2026-09-27:** a price saving named after a loyalty scheme (`Nectar Price Saving -0.75`, "Clubcard Price") is **not** a loyalty line. It's a discount, rule 5.
+5. **Discounts** are their own lines with `is_discount: true`, including multibuy savings printed at the end. **Revised 2026-09-27:** so is a void's cancel line (`ITEM CANCELLED` and its negative amount). List the voided item and its cancel line both.
 6. **`total_printed`** is the final amount due for goods (after savings), not SUBTOTAL and not the card or cash tendered.
 7. **Dates** are UK DD/MM unless the receipt clearly shows otherwise. If the day and month are ambiguous, return null rather than guess.
 8. If a part is cut off, return what's visible. The client warns when lines don't reconcile.
@@ -316,7 +322,8 @@ lines: Array<{
   - digit runs of 4+ preceded by `*`, `X` or `#`;
   - runs of 12+ digits with optional spaces;
   - UK postcodes;
-  - any line matching tender or loyalty keywords (`VISA|MASTERCARD|AMEX|CONTACTLESS|CARD NO|AID|AUTH|CHANGE|CASHBACK|CLUBCARD NO|NECTAR|POINTS`) is dropped, not redacted.
+  - any line matching tender keywords (`VISA|MASTERCARD|AMEX|CONTACTLESS|CARD NO|AID|AUTH|CHANGE|CASHBACK`) is dropped, not redacted;
+  - **Revised 2026-09-27:** a line with a loyalty keyword (`CLUBCARD|NECTAR|POINTS`) is dropped **only when it also carries an identifier**: a 4+ digit run, "card no", or "points balance". The first rule dropped any `NECTAR` or `POINTS` line. That would delete Sainsbury's `Nectar Price Saving` discounts (MEASURED on real receipts) and break reconcile. The bake-off harness's leak check already works this way.
 - **`store_name`:** at most 60 characters, postcode stripped.
 - **`purchase_date`:**
   - a real calendar date (round-trip through `Date.UTC` fields, **not** `new Date("YYYY-MM-DD")`);
@@ -371,7 +378,17 @@ lines: Array<{
 | Anthropic, per request | 32 MB | Same page, linking the API overview's request size limits |
 | Supabase Edge Function request body | **Not documented** | [supabase.com/docs/guides/functions/limits](https://supabase.com/docs/guides/functions/limits), fetched 2026-09-26. Documented: 256 MB memory, 150 s idle timeout, 150 s (free) / 400 s (paid) wall clock, 2 s CPU. |
 
-**Proposal — PROVISIONAL until commit 0 re-measures real photos.** The proxies are clean renders plus Gaussian noise. A real phone photo of crumpled, curled thermal paper, with glare and background texture, compresses worse. The limits below are fixed only after the bake-off measures the base64 size of your real photos at the chosen size, **especially the multi-photo receipts**. If the heaviest real part is more than about a third of 3.5M, raise the per-part cap or lower the quality before fixing the numbers.
+**Real photos — MEASURED 2026-09-27 (Revised).** The bake-off prepared 15 real phone photos of 13 receipts. The harness uses Pillow, LANCZOS, JPEG quality 85, and the exact vision-budget fit, which approximates `prepareImage` rather than matching it byte for byte.
+
+| Tier | Heaviest single part | Heaviest request (3 parts) |
+|---|---|---|
+| High-res (1659–1666 × 2212) | **933,208 chars** | **2,244,212 chars** |
+| Standard (952 × 1265–1270) | 351,140 chars | 846,484 chars |
+
+- The real photos are about 10–18% heavier than the heaviest realistic proxy at a similar size (791k), as predicted, and well below the pure-noise bound.
+- The heaviest part is **27% of 3.5M**, under the "revisit above about a third" line. The heaviest request is 25% of 9M. **The limits below are confirmed, no longer provisional.** Nothing needs raising and quality doesn't need to drop.
+
+**Proposal — was PROVISIONAL until commit 0 re-measured real photos; confirmed 2026-09-27 (above).** The proxies are clean renders plus Gaussian noise. A real phone photo of crumpled, curled thermal paper, with glare and background texture, compresses worse. The limits below are fixed only after the bake-off measures the base64 size of your real photos at the chosen size, **especially the multi-photo receipts**. If the heaviest real part is more than about a third of 3.5M, raise the per-part cap or lower the quality before fixing the numbers.
 
 - **Per part:** `MAX_PART_BASE64_CHARS = 3,500,000`.
   - That's 3.2× the heaviest realistic proxy (heavy noise at 2576, 1.08M), and above the pure-noise bound at the recommended 2212 px (under 2.89M).
@@ -386,19 +403,25 @@ lines: Array<{
 | | 1 part | 3 parts |
 |---|---|---|
 | Visual tokens, high-res at 1659×2212 | 4,740 | 14,220 |
-| Visual tokens, standard at 945×1260 | 1,530 | 4,590 |
+| Visual tokens, standard at 952×1270 | 1,564 | 4,692 |
 | Prompt + tool schema | about 1.5–2k | about 1.5–2k |
 | Output | about 45–55 tokens per line with `part` (Sonnet 5's tokenizer is about 30% heavier). A 60-line shop is about 3.3k; the 150-line cap is about 8.3k. | |
 
-- **`max_tokens` 12,000:** the 150-line ceiling plus the header, with margin, **with thinking disabled**. If the bake-off keeps adaptive thinking, it's 16,000, because thinking counts toward `max_tokens`. Both are within the non-streaming guidance.
+**MEASURED by the bake-off (Revised 2026-09-27):**
+
+- **Input tokens on Sonnet 5:** 6,402 for 1 part, 11,165 for 2, and 15,918 for 3.
+- **Output on Sonnet 5 is about 71 tokens per line**, consistently: 5,693 for 80 lines, 3,952 for 55, 3,342 for 47. That's heavier than the prediction above, which it replaces. **So the 150-line cap is about 10.7k output tokens**, and the largest seen was 5,897. There were no `max_tokens` stops in 57 calls.
+- **Latency:** Sonnet 5 took 3–23 s for 1 part, about 28 s for 2 and 38–39 s for 3 (80+ lines). At the measured ~150 output tokens/s, a 150-line receipt is about **75 s**. That's inside `ANTHROPIC_TIMEOUT_MS = 120_000` and the 150 s idle timeout, so **the keys don't need compacting and the line cap stays at 150.**
+
+- **`max_tokens` — Revised 2026-09-27: 16,000, with thinking disabled.** At about 10.7k for 150 lines plus the header, 12,000 leaves under 10% margin, too thin for a measured rate taken from 13 receipts. 16,000 was already judged within the non-streaming guidance. (It was 12,000 without thinking, or 16,000 with adaptive thinking, which counts toward `max_tokens`.)
 - **Latency:** output-bound. At about 60–90 output tokens/s, a 60-line receipt is about 40–55 s, and a 150-line receipt about 90–140 s.
   - The upper end is close to Supabase's documented **150 s request idle timeout**. The function sends nothing until the model returns, so the connection is idle the whole time.
-  - So: `ANTHROPIC_TIMEOUT_MS = 120_000`, and the bake-off must record p95 latency for the longest receipt.
+  - So: `ANTHROPIC_TIMEOUT_MS = 120_000`, and the bake-off must record p95 latency for the longest receipt. (MEASURED above: 39 s for the longest.)
   - If p95 is over about 110 s, shorten the output keys (`t`/`q`/`u`/`p`/`d`), which cuts about 30% of output tokens, or lower the line cap to 120. Don't raise the timeout.
 
 **Other settings:**
 
-- **Model:** decided by the bake-off (decision 4). On Sonnet 5, omitting `thinking` runs adaptive thinking; the bake-off runs it both ways.
+- **Model — decided by the bake-off, Revised 2026-09-27:** `RECEIPT_MODEL` defaults to **`claude-sonnet-5`**, with images sized for the **high-res tier**. The request sets **`thinking: { type: "disabled" }` explicitly**, because omitting `thinking` on Sonnet 5 runs adaptive thinking. Adaptive thinking bought nothing measurable (commit 0), and disabling it keeps the `max_tokens` budget for output.
 - **Telemetry:** one `ai_extractions` row per request, whatever the part count (§4). Outcomes stay inside the existing set (`success | no_label | model_error | rate_limited`), because the table's constraints can't be read from the repo (candidate F). `no_receipt` logs as `no_label`, and `too_long` from `max_tokens` as `model_error`.
 - **Nothing else is written. Never `console.*` the tool input.**
 
@@ -439,8 +462,8 @@ This is camelCase on the wire and in the draft. It's mapped explicitly to snake_
 
 `MAX_EDGE` is a single constant ([imagePrep.ts:32](src/lib/imagePrep.ts#L32)). Add `"receipt"` to `PrepareKind` ([:40](src/lib/imagePrep.ts#L40)) and size it with `fitToVisionBudget(w, h, tier)`, the documented long-edge **and** token rule (§3):
 
-- a 3:4 photo prepares to about 1659×2212 on the high-res tier, or 945×1260 on the standard tier;
-- the tier follows the bake-off's model.
+- a 3:4 photo prepares to about 1659×2212 on the high-res tier, or 952×1270 on the standard tier;
+- the tier follows the bake-off's model. **Revised 2026-09-27: high-res**, since the model is Sonnet 5.
 
 Keep quality at 0.85, like label and recipe. The receipt kind uses `MAX_PART_BASE64_CHARS` (3.5M) with one re-encode at 0.7 before failing, instead of the 6.8M guard ([:54](src/lib/imagePrep.ts#L54)). MEASURED sizes are in §3: 0.15–0.79M chars per realistic part at those sizes.
 
@@ -768,7 +791,8 @@ The server's `parsePence` (from printed strings) is a separate function in `_sha
 ### The filters before anything persists
 
 1. **The prompt** excludes tender, card, loyalty, address and identifier lines (§3).
-2. **A deterministic server redaction pass** drops tender/loyalty lines and masks card-like digit runs and postcodes. It's tested in vitest with fixture strings: masked PANs in several formats, "CLUBCARD NO 634004…" and postcodes.
+2. **A deterministic server redaction pass** drops tender lines and loyalty lines carrying an identifier, and masks card-like digit runs and postcodes. It's tested in vitest with fixture strings: masked PANs in several formats, "CLUBCARD NO 634004…" and postcodes. **Revised 2026-09-27:** a loyalty *price saving* line is kept (§3).
+   - **MEASURED in the bake-off:** 0 of 57 model outputs contained a card, tender or loyalty identifier, **before** any redaction. The prompt alone held on these receipts, so the server pass is defence in depth, as intended.
 3. **The review screen.** The user sees every line before save and can delete any.
 4. **The schema** only has the columns listed. There's nowhere to put a card number except `raw_text` or `store`, and both went through step 2.
 
@@ -880,7 +904,7 @@ Old clients never call `scan-receipt` or any of the three RPCs, so steps 1–2 a
 
 Unnumbered unless stated; allocate from the register.
 
-**A. History's daily average counts unknown small-four as 0.** Proposed **Major**, by analogy with PL-008. Not yet filed; checked against the register 2026-09-26.
+**A. History's daily average counts unknown small-four as 0.** Proposed **Major**, by analogy with PL-008. **Revised 2026-09-27: filed and fixed as PL-058**, with red tests at `dd702e1` and the fix at `9ed4956`. The production OTA went out from `f44b90c` on 2026-09-27 and was confirmed on the production app by Robbie. Kept below as first written.
 
 - **Where:** [HistoryScreen.tsx:66-72](src/screens/HistoryScreen.tsx#L66-L72) coalesces a null bucket to 0, and [:96-107](src/screens/HistoryScreen.tsx#L96-L107) averages it.
 - **Contradiction:** Trends draws a gap for the same day ([trends.ts:826-830](src/lib/trends.ts#L826-L830)).
@@ -894,9 +918,9 @@ Unnumbered unless stated; allocate from the register.
 
 - red tests at `be8ed92`, fix at `eec75b9`;
 - hosted Max rows raised to 2000 the same day as a stopgap;
-- OTA and device checklist owed.
+- OTA and device checklist owed. **Revised 2026-09-27:** both done; the OTA went out from `beefa7a` on 2026-09-26.
 
-The same pass swept every other per-user select. Its highest-risk candidate is `fetchWorkouts`, which is unbounded and has **no ORDER BY at all**, so past the cap it would drop an arbitrary set of rows. That one is unnumbered and listed in PL-050's sweep table.
+The same pass swept every other per-user select. Its highest-risk candidate is `fetchWorkouts`, which is unbounded and has **no ORDER BY at all**, so past the cap it would drop an arbitrary set of rows. That one is unnumbered and listed in PL-050's sweep table. **Revised 2026-09-27:** filed and fixed as PL-056, and shipped in the same OTA as PL-050.
 
 **D. No AI function checks `stop_reason`.** Proposed **Minor**. PREDICTED; the `max_tokens` behaviour isn't observed.
 
@@ -945,7 +969,7 @@ Replaces "Product decisions needed before build". Recorded as given, 2026-09-26.
 1. **The section is "Grocery spending".** No per-line food classification in v1. (The Data segment label stays "Spending"; §2.)
 2. **Multi-image is in v1.** Up to 3 overlapping photos of one receipt, sent in one request; 4 or more → `too_long` (§3, §4).
 3. **Human-in-the-loop editing is in v1.** Review before save, **and** re-opening a saved receipt to edit or delete it (§5, §8, commit 5b).
-4. **Model: decided by the bake-off**, not here (commit 0).
+4. **Model: decided by the bake-off**, not here (commit 0). **Revised 2026-09-27, resolved:** `claude-sonnet-5`, high-res tier, thinking disabled, `max_tokens` 16,000. The size limits of 3.5M per part and 9M per request are confirmed.
 5. **All three brief changes accepted:**
    - `scan-receipt` is its own function;
    - the entry point is on Data → Spending only;
@@ -998,6 +1022,84 @@ Each commit uses the house style: a two-`-m` conventional commit, red tests befo
   - the per-part and total base64 limits (§3, currently provisional).
 - **Note:** this sends your receipts to Anthropic, the same as the feature will.
 
+#### Results — MEASURED 2026-09-27 (Revised)
+
+**Setup, as run:**
+
+- **The harness:** `bakeoff.py`, kept outside the repo in a scratch folder and never committed, making raw HTTP calls to the Messages API with the §3 tool schema and prompt (forced tool, parts as labelled image blocks).
+- **Robbie's four conditions, each enforced in code:**
+  - ground truth hand-recorded by Robbie, with scoring only against it;
+  - the photos folder refused if it sits inside a git work tree;
+  - the API key read from the environment only, in Robbie's shell;
+  - results recording yes/no for card, tender or loyalty identifiers, never the digits.
+  - Raw model outputs were deleted after each scoring pass. Only the metrics were kept.
+- **The receipts:** 13 real ones, mostly Sainsbury's, plus M&S.
+  - Two are multi-photo: r08 in 3 parts (123.73) and r10 in 2 parts (93.16).
+  - Eleven are single photos, from one item to 47 lines.
+  - None was faded or in €, and none had a separate loyalty-number block. **Those gaps are still open.**
+- **The arms:**
+  - (A) `claude-haiku-4-5-20251001`, standard tier, no thinking, `max_tokens` 12,000;
+  - (B) `claude-sonnet-5`, high-res, `thinking: disabled`, 12,000;
+  - (C) `claude-sonnet-5`, high-res, adaptive, 16,000.
+- **The runs:** run 1 and run 2 covered the first three receipts, and run 3 all 13. That's 57 calls, all successful.
+- **Ground-truth columns:** printed total, date, `item_lines` (lines printed), `take_home_items` and `total_part`.
+  - `take_home_items` (added at Robbie's request) is the physical products that went home. A multibuy line counts its quantity; discount lines count 0; a void and its cancel line net to 0; a weighed item counts 1.
+  - `total_part` is the photo that shows the TOTAL.
+
+**Single photos, run 3 (10 receipts):**
+
+| Arm | Total exact | Date exact | Take-home exact | Lines add up to total |
+|---|---|---|---|---|
+| A Haiku 4.5 | 10/10 | 9/10 | 4/10 | 2/10 (only the one-item receipts) |
+| B Sonnet 5, thinking disabled | 10/10 | 10/10 | **10/10** | 9/10 |
+| C Sonnet 5, adaptive | 10/10 | 10/10 | **10/10** | **10/10** |
+
+**Single photos, across all three runs:** B's lines add up in **13 of 14** reads and C's in **13 of 14**, each missing a different receipt. Every Sonnet total and date was exact, and every take-home count where scored (runs 2 and 3). **B and C are tied.** Their output lengths are within about 2% of each other, so adaptive thinking barely engages on this task.
+
+**Multi-photo, all runs:**
+
+| Receipt | Arm | Runs | Total | Date | Lines add up | Take-home vs truth |
+|---|---|---|---|---|---|---|
+| r08 (3 parts) | B | 3 | 3/3 | 3/3 | 1/3 | not scored in run 1; +2, +2 |
+| r08 (3 parts) | C | 3 | 3/3 | 3/3 | 2/3 | not scored in run 1; +2, +6 |
+| r08 (3 parts) | A | 3 | 3/3 | 3/3 | 0/3 | not scored in run 1; +27, +24 |
+
+(Take-home was added to the ground truth after run 1, whose raw outputs had already been deleted.)
+| r10 (2 parts) | B, C | 1 | ✓ | **✗ none found** | ✗ | +3 |
+| r10 (2 parts) | A | 1 | ✓ | ✗ none found | ✗ | +15 |
+
+- **Multi-photo is the weak spot.** Totals are always right, but Sonnet's lines add up in only **3 of 8** reads, and the errors are over-reads (extra lines) at or near the joins. §3's prompt rule 2 needs more work before commit 3.
+- **r08's ground truth is uncertain.** Robbie's 65 is in both `item_lines` and `take_home_items`, but the models consistently read about 80 printed lines (67 items and 13 discount or void lines). Its printed lines need recounting, and the photo that shows the total needs recording.
+- **r10 is suspect as an input.** All three arms said the total is on part 1 and found no date on either part. The part order was assigned by Claude as a guess when renaming the files, so the order may be reversed, or the date line cropped. **Robbie to check.** Until then, r10 counts against multi-photo only provisionally.
+
+**Other results, all runs:**
+
+- **The add-up check is the safety net, and it mostly works.** Every Sonnet read with a wrong take-home count also failed the add-up check, apart from run 2's two r08 reads. Those added up at +2 items, and r08's ground truth is itself in doubt. The review screen's reconcile banner (§3) would have flagged all the others.
+- **Seam flag:** it flagged `GREEN LENTILS 0.50` read at the foot of part 1 and again at the head of part 2 (Haiku, a clear echo). As designed, it never compared repeats within one part, such as two `JS CHICKPEAS` lines. Sonnet usually resolves the joins itself. Across the Sonnet multi-photo reads in runs 1 and 3, it raised one flag, and whether that was an echo or a real repeat can't be told without the paper. **Keep it** as a cheap backstop; its false-flag rate is unmeasured.
+- **Card, tender and loyalty identifiers in the output, before redaction: 0 of 57.**
+- **`stop_reason: max_tokens`: 0 of 57.** Largest Sonnet output 5,897 tokens.
+- **Haiku 4.5 is out.** It got every total right but its lines rarely added up (2 of 19 reads across all runs, both one-item receipts). It misread a date, and on r08 it listed 105–107 lines against Sonnet's 80.
+- **Voids:** every arm listed both lines of a void, `*MOMENT HANDWASH DUO 8.50` and its `ITEM CANCELLED … -8.50`. That's now the spec (§3).
+- **Latency and sizes:** see §3's MEASURED blocks.
+
+**Decisions from commit 0:**
+
+| Item | Decision |
+|---|---|
+| `RECEIPT_MODEL` default | `claude-sonnet-5` |
+| Image tier and `fitToVisionBudget` target | High-res: 1659 × 2212 for a 3:4 photo, never upscaled |
+| Thinking | `{ type: "disabled" }`, set explicitly. It's tied with adaptive on accuracy, and disabling it keeps `max_tokens` for output. Revisit if multi-photo work shows C pulling ahead. |
+| `max_tokens` | 16,000 (about 71 output tokens per line, so the 150-line cap is about 10.7k) |
+| Output keys and line cap | Unchanged: full keys, 150 lines. The measured 39 s for 80+ lines leaves room. |
+| Seam flag | Kept |
+| `MAX_PART_BASE64_CHARS` / `MAX_TOTAL_BASE64_CHARS` | 3,500,000 / 9,000,000, confirmed |
+| Spec corrections (§3) | 952 × 1270 standard size; no upscaling; the loyalty redaction rule needs an identifier; voids kept as two lines |
+
+**Still owed before commit 3's prompt is final:**
+- more multi-photo receipts with hand counts (at least 4 more), including one faded and one with a loyalty-number block;
+- r08 recounted and r10's part order checked;
+- then re-run the multi-photo arm with the revised overlap guidance.
+
 ### Commit 1 ⚑ — schema: split into 1a and 1b (two migration files, one push)
 
 It grew from one RPC with 6 checks and 5 sabotages to three RPCs, a trigger, 11 checks and 9 sabotages. The update path's transaction semantics deserve their own review and their own revert point.
@@ -1018,7 +1120,8 @@ It grew from one RPC with 6 checks and 5 sabotages to three RPCs, a trigger, 11 
 
 - **`_shared/__tests__/receipt.test.ts`:**
   - **`parsePence` table:** "12.30", "£12.30", "€3.00", "0.50-", "-0.50" pass. "12.3", "12.305", "", "abc", **"-0.50-"** and **"1,234.56"** → null.
-  - **Redaction fixtures:** masked PANs in several formats, "CLUBCARD NO 634004…", postcodes, and tender lines dropped.
+  - **Redaction fixtures:** masked PANs in several formats, "CLUBCARD NO 634004…", postcodes, and tender lines dropped. **Revised 2026-09-27:** `Nectar Price Saving -0.75` and "Clubcard Price -0.50" are **kept** (no identifier), and "NECTAR POINTS BALANCE 1234" is dropped.
+  - **Voids (Revised 2026-09-27):** an item line followed by `ITEM CANCELLED` and a negative line of the same amount parses as two lines, the second with `is_discount: true`, and reconcile holds.
   - **Date validation:** 29/02 on a non-leap year → null; future → null; 2+ years old → null.
   - **Parts:** 0 → bad_request, 4 → too_long; line `part` out of range → null; non-decreasing parts; `total_printed_part` < n → note; `same_receipt: false` → no_receipt.
   - **Seam flag:**
@@ -1039,10 +1142,11 @@ It grew from one RPC with 6 checks and 5 sabotages to three RPCs, a trigger, 11 
   - a `purchased_on` string never going through `new Date("YYYY-MM-DD")`;
   - **reconcile:** equal / over / under / unknown, plus the "over by exactly the flagged lines" message.
 - **`imagePrep.test.ts` (new):** `fitToVisionBudget`:
-  - 3072×4096 → 1659×2212 on high-res and 945×1260 on standard;
-  - 1080×2400 → long edge binds;
+  - 3072×4096 → 1659×2212 on high-res and 952×1270 on standard (Revised 2026-09-27, was 945×1260);
+  - 1080×2400 → unchanged on high-res (Revised 2026-09-27: within both limits, so it's never upscaled); 1440×3200 → long edge binds at 2576;
   - 800×600 → unchanged;
-  - **the output never exceeds either documented limit**, as a property check over a grid of sizes.
+  - **the output never exceeds either documented limit**, as a property check over a grid of sizes;
+  - **the output is never larger than the input** (Revised 2026-09-27). The bake-off harness's property check found 0 violations of either over 2,788 cases.
 - **`csv.test.ts` additions:** spending header pinned; NULL → empty cell; a receipt with no lines → one row; a comma in `raw_text` quoted.
 - All tests are red (modules absent). Commit them red, following the `e4d3ca4` precedent.
 
@@ -1056,7 +1160,7 @@ It grew from one RPC with 6 checks and 5 sabotages to three RPCs, a trigger, 11 
 - **Same commit:** the three "bump via the MODEL secret, no redeploy" comments are replaced with the §3 warning. Comment-only, so those functions aren't redeployed.
 - **Checklist:**
   - [ ] `npm run check:functions` (deno check). `functions deploy` doesn't type-check.
-  - [ ] `npx vitest run`: all green. Record the count (baseline **1033/1033, 54 files, MEASURED at `eec75b9`**).
+  - [ ] `npx vitest run`: all green. Record the count (baseline **1033/1033, 54 files, MEASURED at `eec75b9`**; **1055/1055, 58 files at `9ed4956`**, Revised 2026-09-27).
   - [ ] After deploy, when asked:
     - [ ] a real 1-part and 3-part receipt → 200 with the expected shape;
     - [ ] a non-receipt → 422 `no_receipt`;
@@ -1173,7 +1277,7 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
 
 | # | Commit | Status vs the first version |
 |---|---|---|
-| 0 | `docs(receipts)`: bake-off, **with the multi-photo arm** | Grew (one more arm, five more metrics); still one docs commit |
+| 0 | `docs(receipts)`: bake-off, **with the multi-photo arm** | Grew (one more arm, five more metrics); still one docs commit. **Done 2026-09-27**; multi-photo follow-up owed before commit 3 |
 | 1a | `feat(db)`: tables, `updated_at` trigger, RLS, `save_receipt`, `delete_receipt` | **⚑ Split** |
 | 1b | `feat(db)`: `update_receipt` | **⚑ Split** |
 | 2 | `test(receipts)`: red tests for all the pure logic | Grew; still one commit (all red, no behaviour) |

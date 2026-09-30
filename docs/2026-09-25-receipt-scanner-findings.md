@@ -23,7 +23,7 @@ Every section changed by the revision carries a "Revised 2026-09-26" marker. Sec
 |---|---|---|
 | 1 | Batches placement | Batches holds one list and one action. A receipt entry there reads as "turn a receipt into a batch", which v1 isn't. **Recommend the Data tab's new Spending segment** as the only entry point. |
 | 2 | Data tab | It's two segments over one screen. Two range controls behave differently, and History's averages treat unknown macros as 0 while Trends treats them as gaps. **Recommend** `History \| Trends \| Spending` plus a tidy commit. |
-| 3 | scan-meal-photo | Haiku 4.5, forced tool, 1024 max tokens, and no `stop_reason` check. **PL-036 menu mode is not started on master.** A receipt shares nothing with the meal contract. **Decided: a sibling function, `scan-receipt`.** One call takes 1–3 ordered image parts. MEASURED: 3 realistic parts fit every limit with room to spare. **Revised 2026-09-27:** the bake-off picks **`claude-sonnet-5`, high-res tier, thinking disabled**. It was exact on single photos; multi-photo is the weak spot. |
+| 3 | scan-meal-photo | Haiku 4.5, forced tool, 1024 max tokens, and no `stop_reason` check. **PL-036 menu mode is not started on master.** A receipt shares nothing with the meal contract. **Decided: a sibling function, `scan-receipt`.** One call takes 1–3 ordered image parts. MEASURED: 3 realistic parts fit every limit with room to spare. **Revised 2026-09-27:** the bake-off picks **`claude-sonnet-5`, high-res tier, thinking disabled**. Single photos are ready. Multi-photo is unproven either way: the only evidence is two receipts whose inputs are in doubt. |
 | 4 | Library picker | Already in every binary. `recipeImageCapture.ts` is the camera-or-library template. The meal path has no library option yet. The capture screen collects 1–3 ordered parts, and a scan counts once against the hourly limit (READ). |
 | 5 | Schema | No money tables or columns anywhere. Migration, three RPCs (`save_receipt`, `update_receipt`, `delete_receipt`), verification SQL and gate tests are below. |
 | 6 | Money | Nothing stores or formats money. A locale-free `money.ts` is needed, following the Trends precedent that bans `toLocaleString`. |
@@ -292,7 +292,7 @@ lines: Array<{
    - The images are consecutive parts of ONE receipt, top to bottom. Each overlaps the next by a line or two.
    - **List every physical item line exactly once.** A line that appears in the overlap of two parts is listed once, from the part where it is fully legible, with that `part`.
    - If the parts don't look like the same receipt, set `same_receipt: false`.
-   - **Revised 2026-09-27, needs more work before commit 3.** The bake-off shows this rule isn't enough. On multi-photo receipts Sonnet 5's lines added up in only 3 of 8 reads, against 13 of 14 per arm on single photos, mostly from over-reading at the joins (commit 0). Commit 3's prompt should say more about overlap before it's fixed. For example: "Before listing the first lines of part k+1, find the last line you listed from part k in it, and continue after it." Then re-run the multi-photo arm on more multi-photo receipts than the bake-off had (2).
+   - **Revised 2026-09-27, unproven, so it's settled before commit 3.** On multi-photo receipts Sonnet 5's lines added up in 3 of 8 reads, against 13 of 14 per arm on single photos. But six of the eight reads are r08, whose ground truth is in doubt, and the other two are r10, whose photo order is in doubt (commit 0). So this rule isn't shown to fail, and it isn't shown to work either. Commit 3's prompt may need more about overlap. For example: "Before listing the first lines of part k+1, find the last line you listed from part k in it, and continue after it." Settle it by re-running the multi-photo arm on about four new multi-photo receipts, with clean inputs.
 3. **Header and total.**
    - Store and date come from part 1: the header.
    - `total_printed` comes from **the last part that shows one**, with its part number in `total_printed_part`.
@@ -1068,9 +1068,9 @@ Each commit uses the house style: a two-`-m` conventional commit, red tests befo
 | r10 (2 parts) | B, C | 1 | ✓ | **✗ none found** | ✗ | +3 |
 | r10 (2 parts) | A | 1 | ✓ | ✗ none found | ✗ | +15 |
 
-- **Multi-photo is the weak spot.** Totals are always right, but Sonnet's lines add up in only **3 of 8** reads, and the errors are over-reads (extra lines) at or near the joins. §3's prompt rule 2 needs more work before commit 3.
-- **r08's ground truth is uncertain.** Robbie's 65 is in both `item_lines` and `take_home_items`, but the models consistently read about 80 printed lines (67 items and 13 discount or void lines). Its printed lines need recounting, and the photo that shows the total needs recording.
-- **r10 is suspect as an input.** All three arms said the total is on part 1 and found no date on either part. The part order was assigned by Claude as a guess when renaming the files, so the order may be reversed, or the date line cropped. **Robbie to check.** Until then, r10 counts against multi-photo only provisionally.
+- **Multi-photo is not ready, but not proven bad either.** Totals are always right. Sonnet's lines add up in **3 of 8** reads, with the extra lines at or near the joins. That's weaker evidence than it looks: six of the eight reads are one receipt, r08, whose ground truth is in doubt, and the other two are r10, whose photo order is in doubt. There's no clean multi-photo test yet.
+- **r08's ground truth is most likely a definition mismatch, not a miscount.** The models read 67 items plus 13 discount and void lines, and Robbie's 65 is close to the 67. So the count was probably of items, without the discount lines. Recount it with the rule stated: **`item_lines` is every printed line with a price, discounts and voids included.** Also record which photo shows the total.
+- **r10 is suspect as an input.** All three arms said the total is on part 1 and found no date on either part. The part order was guessed by Claude when renaming the files, which contaminates what would have been the one clean multi-photo test. The order may be reversed, or the date line cropped. **Rule from now on: part order comes from Robbie.** Robbie names each part at the time of shooting, `rNN-part1.jpg` from the top.
 
 **Other results, all runs:**
 
@@ -1097,7 +1097,8 @@ Each commit uses the house style: a two-`-m` conventional commit, red tests befo
 
 **Still owed before commit 3's prompt is final:**
 - more multi-photo receipts with hand counts (at least 4 more), including one faded and one with a loyalty-number block;
-- r08 recounted and r10's part order checked;
+- r08 recounted by the stated rule, and r10's part order checked;
+- new receipts named by Robbie as they're shot, part 1 from the top;
 - then re-run the multi-photo arm with the revised overlap guidance.
 
 ### Commit 1 ⚑ — schema: split into 1a and 1b (two migration files, one push)

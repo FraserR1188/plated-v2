@@ -13,7 +13,14 @@
 // ============================================================
 
 import { describe, it, expect, afterEach } from "vitest";
-import { receiptAmount, weekRange, monthRange, summariseSpending, reconcile } from "../spending";
+import {
+  receiptAmount,
+  weekRange,
+  monthRange,
+  summariseSpending,
+  reconcile,
+  spendingOverview,
+} from "../spending";
 
 type Range = { start: string; end: string };
 type Line = { line_total_pence: number | null };
@@ -230,5 +237,96 @@ describe("reconcile — lines against the printed total", () => {
   it("over by a different amount than the flagged lines doesn't blame them", async () => {
     const r = reconcile([{ line_total_pence: 700 }], 500, "GBP", 85);
     expect(r.message).toBe("Lines are £2.00 over the total");
+  });
+});
+
+// ============================================================
+// Commit 6 — the Grocery spending segment's view, pure (findings §2).
+// ============================================================
+
+describe("spendingOverview — what the Spending segment shows", () => {
+  const week: Range = { start: "2026-10-19", end: "2026-10-25" };
+
+  it("headlines the currency with the most receipts; another currency is its own line, never added", () => {
+    const o = spendingOverview(
+      [
+        receipt({ id: "a", printed_total_pence: 1000 }),
+        receipt({ id: "b", printed_total_pence: 2000 }),
+        receipt({ id: "c", printed_total_pence: 500, currency: "EUR" }),
+      ],
+      week,
+    );
+    expect(o.headline).toEqual({ currency: "GBP", pence: 3000, receipts: 2 });
+    expect(o.otherCurrencies).toEqual([{ currency: "EUR", pence: 500, receipts: 1 }]);
+  });
+
+  it("no countable receipt in the period: no headline (not a £0 that implies one)", () => {
+    const o = spendingOverview([receipt({ purchased_on: "2026-09-01" })], week);
+    expect(o.headline).toBeNull();
+    expect(o.otherCurrencies).toEqual([]);
+  });
+
+  it("UNKNOWN-TOTAL RECEIPTS ARE LISTED, NOT COUNTED — in the period only", () => {
+    const unknownIn = receipt({ id: "u1", printed_total_pence: null, lines: [{ line_total_pence: null }] });
+    const unknownOut = receipt({ id: "u2", purchased_on: "2026-10-01", printed_total_pence: null, lines: [] });
+    const o = spendingOverview([receipt({ id: "a", printed_total_pence: 1000 }), unknownIn, unknownOut], week);
+    expect(o.headline).toEqual({ currency: "GBP", pence: 1000, receipts: 1 });
+    expect(o.unknown.map((r) => r.id)).toEqual(["u1"]);
+  });
+
+  it("by store comes from the period's countable receipts", () => {
+    const o = spendingOverview(
+      [
+        receipt({ id: "a", store: "Tesco", printed_total_pence: 300 }),
+        receipt({ id: "b", store: "Tesco", printed_total_pence: 200, purchased_on: "2026-01-01" }),
+      ],
+      week,
+    );
+    expect(o.byStore).toEqual([{ store: "Tesco", currency: "GBP", pence: 300, receipts: 1 }]);
+  });
+
+  it("lists EVERY receipt, in the order given (newest first from fetchReceipts), so older ones stay editable", () => {
+    const o = spendingOverview(
+      [receipt({ id: "new", purchased_on: "2026-10-24" }), receipt({ id: "old", purchased_on: "2025-12-01" })],
+      week,
+    );
+    expect(o.rows.map((r) => [r.id, r.inPeriod])).toEqual([
+      ["new", true],
+      ["old", false],
+    ]);
+  });
+
+  it("a row's amount is total, else lines, else unknown — never 0", () => {
+    const o = spendingOverview(
+      [
+        receipt({ id: "t", printed_total_pence: 1230 }),
+        receipt({ id: "l", printed_total_pence: null, lines: [{ line_total_pence: 100 }] }),
+        receipt({ id: "u", printed_total_pence: null, lines: [{ line_total_pence: null }] }),
+      ],
+      week,
+    );
+    expect(o.rows.map((r) => r.amount)).toEqual([
+      { pence: 1230, source: "total" },
+      { pence: 100, source: "lines" },
+      null,
+    ]);
+  });
+
+  it("badges a receipt whose lines don't add up to its printed total, and only then", () => {
+    const o = spendingOverview(
+      [
+        receipt({ id: "over", printed_total_pence: 100, lines: [{ line_total_pence: 150 }] }),
+        receipt({ id: "ok", printed_total_pence: 150, lines: [{ line_total_pence: 150 }] }),
+        receipt({ id: "cant", printed_total_pence: 100, lines: [{ line_total_pence: null }] }),
+        receipt({ id: "nolines", printed_total_pence: 100, lines: [] }),
+      ],
+      week,
+    );
+    expect(o.rows.map((r) => [r.id, r.mismatch])).toEqual([
+      ["over", true],
+      ["ok", false],
+      ["cant", false],
+      ["nolines", false],
+    ]);
   });
 });

@@ -147,3 +147,59 @@ export function reconcile(
   }
   return { status: "under", diffPence: diff, message: `Lines are ${amount} under the total` };
 }
+
+// ─── The Grocery spending segment's view (commit 6) ─────────────────────────
+
+export type CurrencySpend = { currency: string; pence: number; receipts: number };
+
+export type SpendingRow<R extends SpendReceipt = SpendReceipt> = {
+  receipt: R;
+  id: string;
+  /** Total, else lines, else null (unknown) — never 0. */
+  amount: ReceiptAmount;
+  /** Lines known, total printed, and they disagree: the row's badge. */
+  mismatch: boolean;
+  inPeriod: boolean;
+};
+
+export type SpendingOverview<R extends SpendReceipt = SpendReceipt> = {
+  /** The currency with the most receipts in the period; null when none counted. */
+  headline: CurrencySpend | null;
+  /** Every other currency, each on its own line. Never added to the headline. */
+  otherCurrencies: CurrencySpend[];
+  /** In the period with no readable amount: listed, not counted. */
+  unknown: R[];
+  byStore: StoreSpend[];
+  /** EVERY receipt, in the order given (newest first), so any can be edited. */
+  rows: SpendingRow<R>[];
+};
+
+export function spendingOverview<R extends SpendReceipt>(
+  receipts: R[],
+  range: DateRange,
+): SpendingOverview<R> {
+  const summary = summariseSpending(receipts, range);
+  const currencies = Object.entries(summary.byCurrency)
+    .map(([currency, c]) => ({ currency, pence: c.pence, receipts: c.receipts }))
+    .sort((a, z) => z.receipts - a.receipts || z.pence - a.pence || a.currency.localeCompare(z.currency));
+
+  const rows = receipts.map((r) => {
+    const amount = receiptAmount(r);
+    const check = r.lines.length > 0 ? reconcile(r.lines, r.printed_total_pence, r.currency) : null;
+    return {
+      receipt: r,
+      id: r.id,
+      amount,
+      mismatch: check != null && (check.status === "over" || check.status === "under"),
+      inPeriod: inRange(r.purchased_on, range),
+    };
+  });
+
+  return {
+    headline: currencies[0] ?? null,
+    otherCurrencies: currencies.slice(1),
+    unknown: rows.filter((row) => row.inPeriod && row.amount == null).map((row) => row.receipt),
+    byStore: summary.byStore,
+    rows,
+  };
+}

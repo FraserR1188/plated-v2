@@ -9,10 +9,16 @@
 // ============================================================
 
 import { describe, it, expect } from "vitest";
-import { buildCsv, last30Days, CSV_HEADER } from "../csv";
+import {
+  buildCsv,
+  last30Days,
+  CSV_HEADER,
+  SPENDING_CSV_HEADER,
+  buildSpendingCsv,
+  spendingCsvFilename,
+} from "../csv";
 import { dateKey } from "../time";
 import { MealEntry } from "../../types";
-import { requireExports } from "./helpers/redImports";
 
 function makeEntry(overrides: Partial<MealEntry> = {}): MealEntry {
   return {
@@ -262,11 +268,8 @@ describe("last30Days", () => {
 });
 
 // ============================================================
-// Receipt scanner, commit 2 — RED. The spending export doesn't exist in
-// csv.ts yet (findings §6). Every test below must fail with "export not
-// found: csv → …" until commit 4b; the meal-export tests above stay green.
-// See helpers/redImports.ts for why these load the module per test rather
-// than importing at the top.
+// Receipt scanner: the spending export (findings §6). Written red in
+// commit 2, green from commit 6.
 //
 // One row per receipt line; the receipt's columns repeat on each row. Money
 // is "12.30" with an EMPTY cell for NULL (PL-008), and purchased_on is
@@ -290,20 +293,6 @@ type SpendingCsvReceipt = {
   printed_total_pence: number | null;
   lines: SpendingCsvLine[];
 };
-type SpendingCsv = {
-  SPENDING_CSV_HEADER: string;
-  buildSpendingCsv: (receipts: SpendingCsvReceipt[]) => string;
-  spendingCsvFilename: (now: Date) => string;
-};
-
-const CSV_MODULE = "../csv";
-const spendingCsv = () =>
-  requireExports<SpendingCsv>(() => import(/* @vite-ignore */ CSV_MODULE), "csv", [
-    "SPENDING_CSV_HEADER",
-    "buildSpendingCsv",
-    "spendingCsvFilename",
-  ]);
-
 function spendLine(over: Partial<SpendingCsvLine> = {}): SpendingCsvLine {
   return {
     position: 0,
@@ -330,15 +319,13 @@ function spendReceipt(over: Partial<SpendingCsvReceipt> = {}): SpendingCsvReceip
 }
 
 describe("spending CSV (receipt scanner)", () => {
-  it("pins the header", async () => {
-    const { SPENDING_CSV_HEADER } = await spendingCsv();
+  it("pins the header", () => {
     expect(SPENDING_CSV_HEADER).toBe(
       "purchased_on,date_estimated,store,currency,receipt_total,line_no,item_text,qty,qty_unit,unit_price,line_total,is_discount",
     );
   });
 
-  it("starts with the header and writes one row per line, receipt columns repeated", async () => {
-    const { SPENDING_CSV_HEADER, buildSpendingCsv } = await spendingCsv();
+  it("starts with the header and writes one row per line, receipt columns repeated", () => {
     const rows = buildSpendingCsv([
       spendReceipt({
         lines: [
@@ -359,8 +346,7 @@ describe("spending CSV (receipt scanner)", () => {
     expect(rows[2].split(",")[10]).toBe("-0.50");
   });
 
-  it("writes NULL money as an empty cell, never 0.00", async () => {
-    const { buildSpendingCsv } = await spendingCsv();
+  it("writes NULL money as an empty cell, never 0.00", () => {
     const row = buildSpendingCsv([
       spendReceipt({
         printed_total_pence: null,
@@ -372,8 +358,7 @@ describe("spending CSV (receipt scanner)", () => {
     expect(row[10]).toBe(""); // line_total
   });
 
-  it("a receipt with no lines is one row, with empty line cells", async () => {
-    const { buildSpendingCsv } = await spendingCsv();
+  it("a receipt with no lines is one row, with empty line cells", () => {
     const rows = buildSpendingCsv([spendReceipt({ lines: [] })]).trimEnd().split("\n");
     expect(rows).toHaveLength(2);
     const c = rows[1].split(",");
@@ -382,16 +367,14 @@ describe("spending CSV (receipt scanner)", () => {
     expect(c[4]).toBe("12.30"); // the receipt's own total is still there
   });
 
-  it("quotes item text containing a comma", async () => {
-    const { buildSpendingCsv } = await spendingCsv();
+  it("quotes item text containing a comma", () => {
     const out = buildSpendingCsv([
       spendReceipt({ lines: [spendLine({ raw_text: "WINE, RED 75CL", line_total_pence: 650 })] }),
     ]);
     expect(out).toContain('"WINE, RED 75CL"');
   });
 
-  it("names the file by LOCAL date: 00:30 BST on 25 Oct is the 25th, not the 24th", async () => {
-    const { spendingCsvFilename } = await spendingCsv();
+  it("names the file by LOCAL date: 00:30 BST on 25 Oct is the 25th, not the 24th", () => {
     expect(spendingCsvFilename(new Date(2026, 9, 25, 0, 30))).toBe(
       "plated_spending_2026-10-25.csv",
     );

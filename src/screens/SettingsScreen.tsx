@@ -59,7 +59,6 @@ import { syncHealthConnect } from "../lib/healthConnectSync";
 import { reportError } from "../lib/reportError";
 import { SOCIAL_ENABLED } from "../lib/flags";
 import { CountBadge } from "../components/CountBadge";
-import { DevReceiptEntry } from "../components/DevReceiptEntry";
 
 import { supabase } from "../lib/supabase";
 
@@ -791,11 +790,6 @@ export function SettingsScreen() {
               </>
             )}
           </View>
-
-          {/* TEMPORARY, dev builds only (receipt 5a): delete with
-              DevReceiptEntry.tsx when Data → Spending gets the real entry.
-              receiptDevEntry.test.ts enforces both. */}
-          {__DEV__ && <DevReceiptEntry />}
 
           {/* ── Friends ────────────────────────────────── */}
           {/* Was a bottom tab. The badge is the same store count the

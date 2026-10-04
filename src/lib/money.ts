@@ -31,6 +31,16 @@ export function parsePenceInput(text: string): number | null {
   return leadingMinus || trailingMinus ? -pence : pence;
 }
 
+/** 1230 → "12.30", -50 → "-0.50", null → "". Plain decimal text, no symbol
+ *  and an ASCII minus: what a review-screen field shows (parsePenceInput
+ *  reads it back exactly) and what a spending CSV cell holds, where an
+ *  empty cell is NULL (PL-008). */
+export function penceText(pence: number | null): string {
+  if (pence == null) return "";
+  const abs = Math.abs(pence);
+  return `${pence < 0 ? "-" : ""}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
+}
+
 const SYMBOLS: Record<string, string> = { GBP: "£", EUR: "€" };
 
 // U+2212, the typographic minus: a hyphen next to a currency symbol reads as

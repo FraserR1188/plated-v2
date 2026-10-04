@@ -34,18 +34,19 @@ describe("DataScreen", () => {
     expect(code).toMatch(/useState<Segment>\(\s*"history"\s*\)/);
   });
 
-  it("offers exactly History and Trends, in that order", () => {
+  it("offers exactly History, Trends and Spending, in that order", () => {
     const labels = [...code.matchAll(/label:\s*"([^"]+)"/g)].map((m) => m[1]);
-    expect(labels).toEqual(["History", "Trends"]);
+    expect(labels).toEqual(["History", "Trends", "Spending"]);
   });
 
-  it("renders both segments from one screen — no nested navigator", () => {
+  it("renders every segment from one screen — no nested navigator", () => {
     // A navigator here would give each segment its own history stack and
     // focus events, and would be a new dependency in a fingerprint that
     // has to stay OTA-compatible.
     expect(code).not.toMatch(/createBottomTabNavigator|createNativeStackNavigator|createMaterialTopTabNavigator/);
     expect(code).toContain("<HistoryScreen embedded />");
     expect(code).toContain("<TrendsPanel />");
+    expect(code).toContain("<SpendingPanel />");
   });
 
   it("does not persist which segment was last open", () => {

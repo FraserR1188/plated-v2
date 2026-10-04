@@ -1242,7 +1242,7 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
 
 - **5a** `feat(receipts): multi-part capture — add, reorder and remove up to three parts`
   - The `ReceiptScan` modal (§4): parts list, ↑/↓/✕, full-screen view, "Add another part" up to 3, hint, Scan.
-  - **Checklist (Pixel 9):** passed 2026-10-04 (MEASURED, Robbie), dev client on `045d5ab`. 5b doesn't exist yet, so the entry was the `__DEV__`-only `DevReceiptEntry` in Settings, and the result was checked on its one-line summary, not on review. That entry is deleted at commit 6; `receiptDevEntry.test.ts` enforces it.
+  - **Checklist (Pixel 9):** passed 2026-10-04 (MEASURED, Robbie), dev client on `045d5ab`. 5b doesn't exist yet, so the entry was the `__DEV__`-only `DevReceiptEntry` in Settings, and the result was checked on its one-line summary, not on review. That entry was deleted in commit 6; `receiptDevEntry.test.ts` enforces it.
     - [x] Camera and library each add a part.
     - [x] Reorder with ↑/↓, and the order is what's sent (checked on the dev summary; recheck the part labels on review at 5b).
     - [x] ✕ removes.
@@ -1320,15 +1320,67 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
 `feat(data): Spending segment — grocery spending by week, month and store, receipts, CSV`
 
 - The segment described in §2, titled "Grocery spending". The entry point is here, Batches is untouched, and a receipt row tap opens 5b in edit mode.
-- **Checklist:**
+- **Built 2026-10-04 (MEASURED unless marked):**
+  - **`spendingOverview` in `spending.ts`:**
+    - the headline is the currency with the most receipts in the period; every other currency is its own line, never added;
+    - in-period receipts with no readable amount are listed, not counted;
+    - by store comes from `summariseSpending`;
+    - **rows are every receipt, newest first**, not only the period's, so an older receipt can still be opened and edited. Each row's amount is total, else lines, else "—". A "Doesn't add up" badge shows when known lines disagree with the printed total.
+  - **`SpendingPanel`**, the Data tab's third segment ("Spending" on the control; titled "Grocery spending"):
+    - This week / This month;
+    - "Scan a receipt" in the header and in the empty state;
+    - headline card, unknown-total list, By store, Receipts (tap → `ReceiptReview` edit), Export spending (CSV).
+    - It reads through `fetchReceipts` (PL-050 pager) on every focus, so returning from review refreshes it.
+  - **CSV:** `SPENDING_CSV_HEADER`, `buildSpendingCsv`, `spendingCsvFilename`, `exportSpendingCSV(userId)`, the last joining the two paged reads.
+    - `line_no` is position + 1; booleans are `true` / `false`.
+    - `penceText` moved to `money.ts`, so the CSV and the review fields share one formatter.
+    - The 6 CSV tests switched to normal imports, and `redImports.ts` is deleted.
+  - **The `__DEV__` entry is deleted** (`DevReceiptEntry.tsx` and its render). `SettingsScreen.tsx` is byte-identical to its pre-5a state (empty diff against `045d5ab~1`).
+    - With the Spending entries added and the dev entry still present, `receiptDevEntry.test.ts` went red ("DevReceiptEntry.tsx still exists alongside SpendingPanel.tsx → ReceiptScan, SpendingPanel.tsx → ReceiptReview"). It went green only once the dev entry was gone.
+    - The guard stays, so a dev entry can't come back beside the real one.
+  - **Red first:** 15 failed. That's 7 `spendingOverview`, 6 CSV (export missing), and 2 DataScreen (the third label, `<SpendingPanel />`).
+  - **Sabotage:** coalescing an unknown total to 0 in `receiptAmount` → 5 red (both receiptAmount null rules, summariseSpending, and two `spendingOverview` tests). Restored byte-identical.
+  - **Results:** suite **1389 / 1389, 0 expected-red** (the CSV additions are green). `tsc` 0. Runtime versions unchanged (`c1907ba4…` / `5359dcce…`): JS only.
+  - **NOT YET (separate):** the long-receipt notice still gates on the multi-photo re-run or tester reports (§3 rule 2). Merging `feat/receipts` to master is a separate step; the privacy-notice website change (§7) is outside the repo.
+- **Checklist (Pixel 9, dev client):**
   - [ ] The 3-way control fits at 360 dp without truncation.
-  - [ ] Week/Month totals match a hand sum in SQL.
+  - [ ] Week/Month totals match a hand sum in SQL (below). Check both periods, and a currency's receipt count too.
   - [ ] A € receipt shows on its own line, not added.
   - [ ] Unknown-total receipts are listed and not counted.
   - [ ] After an edit or delete, totals update on return.
+  - [ ] A row whose lines don't add up shows "Doesn't add up"; tapping a row opens it in edit mode.
+  - [ ] "Scan a receipt" works from the header, and from the empty state (an account with no receipts).
   - [ ] The CSV opens in Sheets with empty cells for NULL and correct dates.
-  - [ ] `tabStructure.test.ts` unchanged and green.
-- **Sabotage:** coalesce an unknown total to 0 in `spending.ts` → the null-rule test goes red.
+  - [ ] Settings no longer shows the dashed DEV box.
+  - [ ] `tabStructure.test.ts` unchanged and green. MEASURED: unchanged file, passing in the 1389.
+- **Hand-sum SQL** (dashboard editor, one query; set the user id). It applies the app's rule: the printed total, else the sum of lines when every line total is known, else unknown. The week is Monday–Sunday and the month runs to date, both in the London calendar.
+  ```sql
+  with today as (select (now() at time zone 'Europe/London')::date as d),
+  amounts as (
+    select r.id, r.currency, r.purchased_on,
+           coalesce(r.printed_total_pence,
+                    case when count(l.id) > 0 and count(l.id) = count(l.line_total_pence)
+                         then sum(l.line_total_pence) end) as pence
+    from public.receipts r
+    left join public.receipt_lines l on l.receipt_id = r.id
+    where r.user_id = '<user_id>'
+    group by r.id
+  )
+  select p.period, a.currency,
+         sum(a.pence)                          as pence,
+         count(a.pence)                        as receipts_counted,
+         count(*) filter (where a.pence is null) as unknown_listed
+  from today t
+  cross join lateral (values
+    ('week',  date_trunc('week',  t.d)::date, date_trunc('week', t.d)::date + 6),
+    ('month', date_trunc('month', t.d)::date, t.d)
+  ) as p(period, start_d, end_d)
+  join amounts a on a.purchased_on between p.start_d and p.end_d
+  group by p.period, a.currency
+  order by p.period, a.currency;
+  ```
+  `pence` should equal the headline (or a currency line) for that period, and `receipts_counted` its "N receipts". `unknown_listed` should equal how many receipts the disclosure lists.
+- **Sabotage:** coalesce an unknown total to 0 in `spending.ts` → the null-rule test goes red. MEASURED above: 5 red.
 
 ### Commit 7 — Data tab tidy (separate, no behaviour change)
 

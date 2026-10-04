@@ -24,7 +24,7 @@
 // unit price as fact. A line whose total wasn't edited keeps what was read.
 // ============================================================
 
-import { formatPence, parsePenceInput } from "./money";
+import { formatPence, parsePenceInput, penceText } from "./money";
 import { countLines, reconcile, type LineCounts, type Reconcile } from "./spending";
 import type {
   ReceiptDraft,
@@ -79,13 +79,8 @@ export type ReviewSummary = {
 
 // ─── Text ⇄ pence ───────────────────────────────────────────────────────────
 
-/** 1230 → "12.30", -50 → "-0.50", null → "". No symbol: the currency is its
- *  own control, and parsePenceInput reads this back exactly. */
-export function penceText(pence: number | null): string {
-  if (pence == null) return "";
-  const abs = Math.abs(pence);
-  return `${pence < 0 ? "-" : ""}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
-}
+/** What a money field shows (money.ts, shared with the spending CSV). */
+export { penceText };
 
 type Amount = { ok: true; pence: number | null } | { ok: false };
 

@@ -33,6 +33,7 @@ import {
 import { clearTrendsPrefs } from "../lib/trendsPrefs";
 import { fetchAllPages } from "../lib/paging";
 import type { ReceiptDraft } from "../lib/receipts";
+import type { ReceiptPart } from "../lib/receiptCapture";
 
 /**
  * PL-050. Rows per fetchEntries request. Must stay below PostgREST's
@@ -508,6 +509,12 @@ interface AppState {
   receiptDraft: ReceiptDraft | null;
   setReceiptDraft: (draft: ReceiptDraft) => void;
   clearReceiptDraft: () => void;
+  /** Open an empty create-mode draft for ReceiptScan: no parts, dated
+   *  `todayKey` and marked estimated until a scan reads the date. */
+  startReceiptCapture: (todayKey: string) => void;
+  /** Replace the draft's photos (add, reorder, remove — see
+   *  lib/receiptCapture.ts). No-op with no draft open. */
+  setReceiptParts: (parts: ReceiptPart[]) => void;
 
   saveIngredient: (product: FoodProduct) => Promise<SavedIngredientScored | null>;
   deleteIngredient: (id: string) => Promise<void>;
@@ -1658,6 +1665,23 @@ export const useStore = create<AppState>((set, get) => ({
 
   setReceiptDraft: (draft) => set({ receiptDraft: draft }),
   clearReceiptDraft: () => set({ receiptDraft: null }),
+  startReceiptCapture: (todayKey) =>
+    set({
+      receiptDraft: {
+        mode: { kind: "create" },
+        parts: [],
+        header: {
+          store: null,
+          purchasedOn: todayKey,
+          purchasedOnEstimated: true,
+          printedTotalPence: null,
+          currency: "GBP",
+        },
+        lines: [],
+      },
+    }),
+  setReceiptParts: (parts) =>
+    set((s) => (s.receiptDraft ? { receiptDraft: { ...s.receiptDraft, parts } } : {})),
 
   setManualEntryResult: (product) => set({ manualEntryResult: product }),
   consumeManualEntryResult: () => {

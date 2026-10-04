@@ -776,6 +776,13 @@ export type RootStackParamList = {
   RecipeScan: undefined;
 
   /**
+   * No params, on purpose: the photos (up to three, as base64) live in the
+   * store's receiptDraft, never in navigation state (receipt-scanner
+   * findings §7).
+   */
+  ReceiptScan: undefined;
+
+  /**
    * Plain, JSON-serialisable data — NOT the onPick/onScanned anti-pattern
    * described above. That anti-pattern is specifically a function through
    * params; a parsed ingredient list is data, the same category as

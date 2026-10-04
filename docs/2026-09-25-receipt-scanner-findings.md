@@ -1191,10 +1191,12 @@ It now carries a refactor of a shipped flow (recipe capture), the vision-fit siz
   - the `"receipt"` `PrepareKind`, plus `fitToVisionBudget` and `MAX_PART_BASE64_CHARS` with one re-encode;
   - the header comment fix (candidate H).
   - **Checklist:**
-    - [ ] `tsc` 0 and vitest green;
-    - [ ] **device:** the recipe scan by camera and by library still previews and scans;
-    - [ ] meal-photo capture unchanged.
-  - **Sabotage:** make `fitToVisionBudget` ignore the token cap → the 3:4 high-res case goes red (2576 > 2212).
+    - [x] `tsc` 0 and vitest green (the receipt red tests aside): MEASURED 2026-10-04 at `f1bf2af`, 1083 passing, 129 expected-red.
+    - [x] **device:** the recipe scan by camera and by library still previews and scans; cancel from either returns cleanly.
+    - [x] meal-photo capture unchanged: from Add Ingredient and from the batch picker, camera only, results as before.
+    - [x] label and front-of-pack photos in Create Food unchanged (they share `prepareImage`).
+    - **Device pass 2026-10-04**, Robbie, Pixel dev client on `f1bf2af`: all passed.
+  - **Sabotage:** make `fitToVisionBudget` ignore the token cap → the 3:4 high-res case goes red (2576 > 2212). **MEASURED 2026-10-04:** 6 red, 1932×2576 instead of 1659×2212; restored byte-identical.
 - **4b** `feat(receipts): scan client, save/update/delete RPCs, paged reads, draft slice and the write-site guard`
   - `receiptScan.ts`, with its shape check including `part` and `possibleSeamDuplicate`;
   - `receipts.ts`: three RPC wrappers that **return the row or throw**, with `P0002` mapped to a typed "no longer exists" error, plus paged `fetchReceipts` and `fetchReceiptLinesForExport`, and single-receipt `fetchReceipt(id)`;

@@ -404,8 +404,8 @@ drop table maintenance.receipts_v1_snapshot;
 -- [x] V1 AFTER: 1440 rows, same hash. V1c: 0 rows. Snapshot table dropped.
 -- [x] V2, V3 as predicted (MEASURED above).
 -- [x] V4a–e, V5, V7/V8/V9 + date flag, V6 + V11: all PASS, rolled back.
--- [ ] Dashboard → Table editor: receipts and receipt_lines show RLS enabled.
---     (Not reported; V3's relrowsecurity true ×2 covers the same fact.)
+-- [x] Dashboard → Table editor RLS check: covered by V3 (relrowsecurity
+--     true on both tables, MEASURED 2026-10-04).
 -- [x] docs/account-deletion-runbook.md: READ 2026-09-30, it lists no
 --     per-table checks, and delete-account touches no user table directly
 --     (account_deletions, whoop_tokens, storage). Both new tables go by

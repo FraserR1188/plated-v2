@@ -21,18 +21,27 @@
 --       s7b delete and insert as two client requests       → V9 red ("0 lines remain")
 --       s8  update_receipt takes user_id from the payload  → V8 red
 --
---   Hosted — this file, when the push is asked for:
---     BEFORE the push   V1a (per-row snapshot)
---     push              npx supabase db push   (1a and 1b together)
---     AFTER the push    V1b (V1c if it differs) → V2 → V3 → V4 → V5 → V6
---                       → V7 → V8 → V9 → V11
+--   Hosted — this file, AS RUN on 2026-10-04 (dashboard SQL editor,
+--   production), 1a and 1b pushed together:
+--     BEFORE the push   V1 BEFORE (per-row snapshot) + reachability check
+--     push              npx supabase db push
+--     AFTER the push    V1 AFTER → V1c → V2 → V3 → V4a–e → V5
+--                       → V7/V8/V9 + date flag → V6 + V11 → clean-up
 --
--- The dashboard SQL editor runs as a superuser and BYPASSES RLS. V1–V3 are
--- table-wide on purpose. V4 onward switch to `authenticated` with a real JWT
--- claim — the only way to test RLS — and every one of them rolls back. Run
--- each numbered block on its own (the editor shows only the last result).
--- V10 is container-only: it must commit, and the hosted database is not a
--- place for probe rows.
+-- V1–V3 run as the dashboard superuser, which BYPASSES RLS, so they are
+-- table-wide on purpose. V4 onward are single DO blocks that switch to
+-- `authenticated` with a real JWT claim (the only way to test RLS), catch
+-- their own expected errors, and ALWAYS end with `raise exception`, so
+-- nothing they write is ever kept. A pass shows as an error whose text
+-- starts with PASS; any other error text is a failure.
+--
+-- WHY DO BLOCKS AND NOT begin … rollback: the dashboard stops at the first
+-- error, so the savepoint / `rollback to savepoint` pattern can't run there.
+-- The container rig (above) keeps its own form and is unchanged.
+--
+-- V10's updated_at half is container-only: it needs two committed
+-- transactions, and the hosted database is not a place for probe rows. The
+-- date-flag half also ran hosted, inside the V7/V8/V9 block.
 -- ============================================================================
 
 
@@ -43,59 +52,60 @@
 -- NULL distinctly from ''.
 --
 -- TESTERS MAY WRITE BETWEEN THE TWO SNAPSHOTS, so a mismatch is not by itself
--- a failure. The BEFORE snapshot is therefore kept per row, by id, and a
--- mismatch is diffed (V1c) before anything is concluded. The scratch table
--- lives in `maintenance`, never `public` (PL-031), and V1d drops it.
+-- a failure: it is diffed by id (V1c) first. Only a change nobody can account
+-- for is an alarm. Inserts can be placed in time (logged_at is DB-owned);
+-- edits and deletes can't (meal_entries has no updated_at), so those are
+-- alarms until a tester confirms them. The snapshot lives in `maintenance`,
+-- never `public` (PL-031), and is dropped at the end.
+--
+-- AS RUN 2026-10-04:
 
--- V1a. BEFORE the push.
-create table maintenance._diag_receipts_v1_pre as
-select m.id, m.user_id, m.logged_at, md5(m::text) as row_hash, now() as snapped_at
+-- ── V1 BEFORE (quiet hour, before `npx supabase db push`) ──────────────────
+-- The dashboard warned that the table had no RLS; "Run and enable RLS" was
+-- chosen, which is equivalent to the explicit `enable row level security`
+-- line below.
+create table maintenance.receipts_v1_snapshot as
+select m.id, md5(m::text) as row_hash, m.logged_at, now() as taken_at
 from public.meal_entries m;
-revoke all on maintenance._diag_receipts_v1_pre from anon, authenticated;
 
-select count(*)                                          as meal_entries_rows,
-       md5(string_agg(m::text, E'\n' order by m.id))     as content_hash
+alter table maintenance.receipts_v1_snapshot enable row level security;
+
+revoke all on maintenance.receipts_v1_snapshot from public, anon, authenticated;
+
+select count(*) as rows,
+       md5(string_agg(row_hash, '' order by id)) as content_hash
+from maintenance.receipts_v1_snapshot;
+-- MEASURED BEFORE: 1440 rows, 1a23d53787541a1729b8d2843c1b7679
+
+
+-- ── V1 snapshot not reachable from the app ─────────────────────────────────
+select has_schema_privilege('anon', 'maintenance', 'USAGE')          as anon_schema,
+       has_schema_privilege('authenticated', 'maintenance', 'USAGE') as auth_schema,
+       has_table_privilege('authenticated', 'maintenance.receipts_v1_snapshot', 'SELECT') as auth_table;
+-- MEASURED: false, false, false
+
+
+-- ── V1 AFTER (straight after the push) ─────────────────────────────────────
+select count(*) as rows,
+       md5(string_agg(md5(m::text), '' order by m.id)) as content_hash
 from public.meal_entries m;
--- MEASURED BEFORE: (fill in rows + hash; the scratch table's snapped_at is
--- the start of the window)
+-- MEASURED AFTER: 1440 rows, 1a23d53787541a1729b8d2843c1b7679 (identical)
 
--- V1b. AFTER the push: the same aggregate.
-select count(*)                                          as meal_entries_rows,
-       md5(string_agg(m::text, E'\n' order by m.id))     as content_hash
-from public.meal_entries m;
--- PREDICTED: identical to BEFORE if nobody logged in between. If it differs,
--- run V1c before treating it as a failure.
--- MEASURED AFTER: (fill in)
 
--- V1c. Only if V1b differs: the diff, by id.
-with pre as (select * from maintenance._diag_receipts_v1_pre),
-     post as (select m.id, m.user_id, m.logged_at, md5(m::text) as row_hash from public.meal_entries m),
-     win as (select min(snapped_at) as t0 from pre)
-select coalesce(post.id, pre.id)              as id,
-       coalesce(post.user_id, pre.user_id)    as user_id,
-       coalesce(post.logged_at, pre.logged_at) as logged_at,
+-- ── V1c: row-by-row diff (run regardless; required only if V1 differs) ─────
+with s as (select * from maintenance.receipts_v1_snapshot),
+     w as (select min(taken_at) as t0 from s),
+     n as (select m.id, md5(m::text) as row_hash, m.logged_at from public.meal_entries m)
+select coalesce(n.id, s.id) as id,
        case
-         when pre.id is null  and post.logged_at >= win.t0 then 'added in the window: tester write, expected'
-         when pre.id is null                               then 'ALARM: added with logged_at before the window'
-         when post.id is null                              then 'removed: confirm a tester deleted it, else ALARM'
-         else                                                   'changed: confirm a tester edited it, else ALARM'
+         when s.id is null and n.logged_at >= (select t0 from w) then 'ok: added during window (tester write)'
+         when s.id is null then 'ALARM: added but backdated'
+         when n.id is null then 'ALARM: deleted (confirm with tester)'
+         else 'ALARM: edited (confirm with tester)'
        end as verdict
-from pre
-full join post using (id)
-cross join win
-where pre.id is null or post.id is null or pre.row_hash <> post.row_hash
-order by verdict, logged_at;
--- PREDICTED: 0 rows, or only "added in the window" rows.
--- Why edits and deletes can't be cleared automatically: meal_entries has no
--- updated_at (no touch trigger), so a change can't be timestamped. logged_at
--- is when the row was created and is DB-owned, so an insert CAN be placed
--- inside or outside the window. A changed or removed row is an alarm until a
--- tester confirms they made that edit during the window. Only a change to a
--- row that nobody touched in the window is a real alarm.
--- MEASURED: (fill in)
-
--- V1d. Cleanup, once V1 is settled.
--- drop table maintenance._diag_receipts_v1_pre;
+from s full join n on n.id = s.id
+where s.id is null or n.id is null or s.row_hash <> n.row_hash;
+-- MEASURED: 0 rows
 
 
 -- ── V2. SCHEMA (after the push) ─────────────────────────────────────────────
@@ -108,7 +118,7 @@ order by table_name, ordinal_position;
 --   purchased_on_estimated                  boolean  NO   NULL   ← caller must say
 --   currency  character  NO  'GBP'::bpchar;  updated_at  NO  now()
 -- MEASURED (container): as predicted.
--- MEASURED (hosted):    (fill in)
+-- MEASURED (hosted):    2026-10-04: 19 columns (receipts 9, receipt_lines 10), as predicted.
 
 select conrelid::regclass as tbl, conname, pg_get_constraintdef(oid) as def
 from pg_constraint
@@ -118,13 +128,13 @@ order by 1, 2;
 -- receipt_lines_sign, the column CHECKs, unique (receipt_id, position), and
 -- three FKs all ON DELETE CASCADE (receipt_id → receipts; both user_id →
 -- auth.users).
--- MEASURED (hosted): (fill in)
+-- MEASURED (hosted): 2026-10-04: 15 constraints; the three FKs ON DELETE CASCADE.
 
 select tgname, tgtype, tgenabled
 from pg_trigger
 where tgrelid = 'public.receipts'::regclass and not tgisinternal;
 -- PREDICTED: receipts_touch_updated_at, tgtype 19 (BEFORE | ROW | UPDATE), O.
--- MEASURED (hosted): (fill in)
+-- MEASURED (hosted): 2026-10-04: receipts_touch_updated_at, tgtype 19, enabled O.
 
 
 -- ── V3. SECURITY SURFACE (after the push) ───────────────────────────────────
@@ -155,239 +165,230 @@ order by 1;
 -- config=search_path="" anon_exec=false auth_exec=true;
 -- receipts_touch_updated_at auth_exec=false.
 -- MEASURED (container): as predicted (V3, 14 checks).
--- MEASURED (hosted):    (fill in)
+-- MEASURED (hosted):    2026-10-04: as predicted. rls true x2; 8 policies, lines insert/update
+-- with the parent check; anon table privilege false; save/update/delete_receipt
+-- secdef=false search_path="" anon_exec=false auth_exec=true;
+-- receipts_touch_updated_at auth_exec=false.
 
 
--- ── V4. RLS WITH TWO ACCOUNTS — rolled back ─────────────────────────────────
--- A = a8435663-72e9-4d33-9c3f-803c4cbda393, B = 4dbf04ae-7b46-4511-8122-f17284c622d9.
--- Returns one row of booleans; every column must be true.
-begin;
-set local role authenticated;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
-create temp table v4 on commit drop as
-select (public.save_receipt(
-  '{"store":"__v4_probe__","purchased_on":"2026-09-20","purchased_on_estimated":false,"printed_total_pence":100}',
-  '[{"position":0,"raw_text":"MILK","line_total_pence":150},
-    {"position":1,"raw_text":"Nectar Price Saving","line_total_pence":-50,"is_discount":true}]')).id as a_id;
-select
-  (select count(*) from public.receipts r join v4 on r.id = v4.a_id
-    where r.user_id = auth.uid()) = 1                                     as a_owns_receipt,
-  (select count(*) from public.receipt_lines l join v4 on l.receipt_id = v4.a_id
-    where l.user_id = auth.uid()) = 2                                     as a_owns_2_lines;
--- (b)–(d) as B, same transaction:
-select set_config('request.jwt.claims', '{"sub":"4dbf04ae-7b46-4511-8122-f17284c622d9"}', true);
-select
-  (select count(*) from public.receipts r join v4 on r.id = v4.a_id) = 0     as b_cannot_see_a_receipt,
-  (select count(*) from public.receipt_lines l join v4 on l.receipt_id = v4.a_id) = 0 as b_cannot_see_a_lines;
-rollback;
--- PREDICTED: all true.  MEASURED (container, V4a/V4b): pass.  MEASURED (hosted): (fill in)
+-- ── V4a–e: RLS with two accounts ───────────────────────────────────────────
+do $$
+declare
+  a constant uuid := 'a8435663-72e9-4d33-9c3f-803c4cbda393';
+  b constant uuid := '4dbf04ae-7b46-4511-8122-f17284c622d9';
+  rid uuid; n int; u uuid;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims', json_build_object('sub', a)::text, true);
+  select id into rid from public.save_receipt(
+    '{"store":"__v4_probe__","purchased_on":"2026-09-20","purchased_on_estimated":false,"printed_total_pence":100}',
+    '[{"position":0,"raw_text":"MILK","line_total_pence":150},
+      {"position":1,"raw_text":"Nectar Price Saving","line_total_pence":-50,"is_discount":true}]');
+  select count(*) into n from public.receipt_lines where receipt_id = rid and user_id = a;
+  if n <> 2 then raise exception 'FAIL V4a: A owns % lines, expected 2', n; end if;
 
--- (c) B attaching a line to A's receipt is refused.
-begin;
-set local role authenticated;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
-create temp table v4c on commit drop as
-select (public.save_receipt('{"purchased_on":"2026-09-20","purchased_on_estimated":false}', '[]')).id as a_id;
-select set_config('request.jwt.claims', '{"sub":"4dbf04ae-7b46-4511-8122-f17284c622d9"}', true);
-insert into public.receipt_lines (receipt_id, user_id, position, raw_text)
-select a_id, auth.uid(), 5, 'INJECTED' from v4c;
-rollback;
--- PREDICTED: ERROR — new row violates row-level security policy for table
--- "receipt_lines". MEASURED (container, V4c): pass. MEASURED (hosted): (fill in)
+  perform set_config('request.jwt.claims', json_build_object('sub', b)::text, true);
+  select count(*) into n from public.receipts where id = rid;
+  if n <> 0 then raise exception 'FAIL V4b: B can see A''s receipt'; end if;
+  select count(*) into n from public.receipt_lines where receipt_id = rid;
+  if n <> 0 then raise exception 'FAIL V4b: B can see A''s lines'; end if;
 
--- (d) B updating A's receipt touches 0 rows; (e) B's payload naming A is ignored.
-begin;
-set local role authenticated;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
-create temp table v4d on commit drop as
-select (public.save_receipt('{"purchased_on":"2026-09-20","purchased_on_estimated":false}', '[]')).id as a_id;
-select set_config('request.jwt.claims', '{"sub":"4dbf04ae-7b46-4511-8122-f17284c622d9"}', true);
-with upd as (
-  update public.receipts set store = 'x' where id = (select a_id from v4d) returning 1
-), saved as (
-  select public.save_receipt(
-    '{"user_id":"a8435663-72e9-4d33-9c3f-803c4cbda393","purchased_on":"2026-09-21","purchased_on_estimated":true}',
-    '[]') as r
-)
-select (select count(*) from upd) = 0                               as b_update_touches_0_rows,
-       (select (r).user_id from saved) = auth.uid()                 as b_payload_user_id_ignored;
-rollback;
--- PREDICTED: both true. MEASURED (container, V4d/V4e): pass. MEASURED (hosted): (fill in)
+  begin
+    insert into public.receipt_lines (receipt_id, user_id, position, raw_text)
+    values (rid, b, 5, 'INJECTED');
+    raise exception 'FAIL V4c: B attached a line to A''s receipt';
+  exception when insufficient_privilege then null;
+  end;
+
+  update public.receipts set store = 'x' where id = rid;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL V4d: B updated A''s receipt'; end if;
+
+  select user_id into u from public.save_receipt(
+    json_build_object('user_id', a, 'purchased_on', '2026-09-21', 'purchased_on_estimated', true)::jsonb, '[]');
+  if u <> b then raise exception 'FAIL V4e: payload user_id was used'; end if;
+
+  raise exception 'PASS V4a-e (rolled back)';
+end $$;
+-- MEASURED: P0001: PASS V4a-e (rolled back)
 
 
--- ── V5. CONSTRAINTS AND NULL-NOT-0 — rolled back ────────────────────────────
-begin;
-set local role authenticated;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
--- The save goes in its own statement: a CTE calling save_receipt can't see
--- the rows the function inserts in that same statement (it returns 0 rows).
-create temp table v5 on commit drop as
-select (public.save_receipt(
-  '{"purchased_on":"2026-09-20","purchased_on_estimated":false,"printed_total_pence":null}',
-  '[{"position":0,"raw_text":"LOOSE CARROTS","qty":0.512,"qty_unit":"kg"}]')).id as id;
-select r.printed_total_pence is null  as total_null,
-       l.line_total_pence is null     as line_total_null,
-       l.qty = 0.512                  as qty_kept,
-       r.currency = 'GBP'             as currency_defaulted
-from v5 s join public.receipts r on r.id = s.id join public.receipt_lines l on l.receipt_id = s.id;
-rollback;
--- PREDICTED: all true. MEASURED (container): pass. MEASURED (hosted): (fill in)
+-- ── V5: constraints and NULL-not-zero ──────────────────────────────────────
+do $$
+declare
+  a constant uuid := 'a8435663-72e9-4d33-9c3f-803c4cbda393';
+  rid uuid; rec record;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims', json_build_object('sub', a)::text, true);
 
-begin;
-set local role authenticated;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
-select public.save_receipt(
-  '{"purchased_on":"2026-09-20","purchased_on_estimated":false}',
-  '[{"position":0,"raw_text":"SAVING","line_total_pence":250,"is_discount":true}]');
-rollback;
--- PREDICTED: ERROR — violates check constraint "receipt_lines_sign".
--- (The container also refuses a negative total, blank raw_text and a missing
--- purchased_on_estimated, and shows a failing line leaves no header.)
--- MEASURED (hosted): (fill in)
+  select id into rid from public.save_receipt(
+    '{"purchased_on":"2026-09-20","purchased_on_estimated":false,"printed_total_pence":null}',
+    '[{"position":0,"raw_text":"LOOSE CARROTS","qty":0.512,"qty_unit":"kg"}]');
+  select r.printed_total_pence as t, r.currency as c, l.line_total_pence as lt, l.qty as q
+    into rec
+    from public.receipts r join public.receipt_lines l on l.receipt_id = r.id
+   where r.id = rid;
+  if rec.t is not null or rec.lt is not null then
+    raise exception 'FAIL V5: NULL read back as % / %', rec.t, rec.lt; end if;
+  if rec.q <> 0.512 then raise exception 'FAIL V5: qty %', rec.q; end if;
+  if rec.c <> 'GBP' then raise exception 'FAIL V5: currency %', rec.c; end if;
 
+  begin
+    perform public.save_receipt('{"purchased_on":"2026-09-20","purchased_on_estimated":false}',
+      '[{"position":0,"raw_text":"SAVING","line_total_pence":250,"is_discount":true}]');
+    raise exception 'FAIL V5: positive discount accepted';
+  exception when check_violation then null;
+  end;
 
--- ── V6 + V11. DELETE CASCADES, AND IS LOUD — rolled back ────────────────────
-begin;
-set local role authenticated;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
-create temp table v6 on commit drop as
-select (public.save_receipt(
-  '{"purchased_on":"2026-09-20","purchased_on_estimated":false}',
-  '[{"position":0,"raw_text":"A","line_total_pence":1},{"position":1,"raw_text":"B","line_total_pence":2}]')).id as a_id;
-select public.delete_receipt(a_id) from v6;
-select count(*) = 0 as lines_cascaded
-from public.receipt_lines where receipt_id = (select a_id from v6);
-select public.delete_receipt(a_id) from v6;
-rollback;
--- PREDICTED: lines_cascaded true; then the second delete_receipt raises
--- ERROR: delete_receipt: no receipt … for this user (SQLSTATE P0002).
--- (Cross-account delete → P0002 and A's row survives: container V11.)
--- MEASURED (hosted): (fill in)
+  begin
+    perform public.save_receipt(
+      '{"purchased_on":"2026-09-20","purchased_on_estimated":false,"printed_total_pence":-1}', '[]');
+    raise exception 'FAIL V5: negative total accepted';
+  exception when check_violation then null;
+  end;
+
+  begin
+    perform public.save_receipt('{"purchased_on":"2026-09-20"}', '[]');
+    raise exception 'FAIL V5: missing estimated flag accepted';
+  exception when not_null_violation then null;
+  end;
+
+  raise exception 'PASS V5 (rolled back)';
+end $$;
+-- MEASURED: P0001: PASS V5 (rolled back)
 
 
--- ── V7. CROSS-ACCOUNT UPDATE RAISES, A UNCHANGED (1b) — rolled back ────────
--- The temp table holds A's probe id and A's hash. The failing call is inside
--- a savepoint so the transaction can still read A's hash back afterwards.
-begin;
-set local role authenticated;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
-create temp table v7 on commit drop as
-select (public.save_receipt(
-  '{"store":"__v7_probe__","purchased_on":"2026-09-20","purchased_on_estimated":false,"printed_total_pence":300}',
-  '[{"position":0,"raw_text":"A","line_total_pence":100},{"position":1,"raw_text":"B","line_total_pence":200}]')).id as a_id;
-alter table v7 add column h1 text;
-update v7 set h1 = md5((select r::text from public.receipts r where r.id = a_id)
-                       || (select string_agg(l::text, E'\n' order by l.position)
-                             from public.receipt_lines l where l.receipt_id = a_id));
-select set_config('request.jwt.claims', '{"sub":"4dbf04ae-7b46-4511-8122-f17284c622d9"}', true);
-savepoint v7;
-select public.update_receipt(a_id, '{"store":"hijack","purchased_on":"2026-09-20"}', '[]') from v7;
--- PREDICTED: ERROR: update_receipt: no receipt … for this user (SQLSTATE P0002)
-rollback to savepoint v7;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
-select h1 = md5((select r::text from public.receipts r where r.id = a_id)
-                || (select string_agg(l::text, E'\n' order by l.position)
-                      from public.receipt_lines l where l.receipt_id = a_id)) as a_unchanged
-from v7;
-rollback;
--- PREDICTED: the P0002 error, then a_unchanged true.
--- MEASURED (container, V7): pass. MEASURED (hosted): (fill in)
+-- ── V7, V8, V9 and the date flag: the update path ──────────────────────────
+do $$
+declare
+  a constant uuid := 'a8435663-72e9-4d33-9c3f-803c4cbda393';
+  b constant uuid := '4dbf04ae-7b46-4511-8122-f17284c622d9';
+  rid uuid; h0 text; h1 text; old_ids uuid[]; n int; rec record;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims', json_build_object('sub', a)::text, true);
+  select id into rid from public.save_receipt(
+    '{"store":"__v7_probe__","purchased_on":"2026-09-20","purchased_on_estimated":true,"printed_total_pence":300}',
+    '[{"position":0,"raw_text":"A","line_total_pence":100},
+      {"position":1,"raw_text":"B","line_total_pence":100},
+      {"position":2,"raw_text":"C","line_total_pence":100}]');
+  select md5(r::text || (select string_agg(l::text, '|' order by l.position)
+                           from public.receipt_lines l where l.receipt_id = r.id))
+    into h0 from public.receipts r where r.id = rid;
+
+  -- V7: B editing A's receipt raises P0002
+  perform set_config('request.jwt.claims', json_build_object('sub', b)::text, true);
+  begin
+    perform public.update_receipt(rid,
+      '{"store":"hijack","purchased_on":"2026-09-20","printed_total_pence":1,"currency":"GBP"}', '[]');
+    raise exception 'FAIL V7: B''s update of A''s receipt returned normally';
+  exception when no_data_found then null;
+  end;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', a)::text, true);
+  select md5(r::text || (select string_agg(l::text, '|' order by l.position)
+                           from public.receipt_lines l where l.receipt_id = r.id))
+    into h1 from public.receipts r where r.id = rid;
+  if h1 <> h0 then raise exception 'FAIL V7: A''s receipt changed'; end if;
+
+  -- V9: a failing line leaves the old receipt intact
+  begin
+    perform public.update_receipt(rid,
+      '{"store":"changed","purchased_on":"2026-09-20","printed_total_pence":300,"currency":"GBP"}',
+      '[{"position":0,"raw_text":"X","line_total_pence":1},
+        {"position":1,"raw_text":"BAD","line_total_pence":250,"is_discount":true}]');
+    raise exception 'FAIL V9: invalid line accepted';
+  exception when check_violation then null;
+  end;
+  select md5(r::text || (select string_agg(l::text, '|' order by l.position)
+                           from public.receipt_lines l where l.receipt_id = r.id))
+    into h1 from public.receipts r where r.id = rid;
+  if h1 <> h0 then raise exception 'FAIL V9: old receipt not intact'; end if;
+
+  -- V8: lines replaced exactly; payload user_id and flag ignored; same date keeps the flag
+  select array_agg(id) into old_ids from public.receipt_lines where receipt_id = rid;
+  perform public.update_receipt(rid,
+    json_build_object('user_id', b, 'purchased_on_estimated', false, 'store', 'edited',
+                      'purchased_on', '2026-09-20', 'printed_total_pence', 200, 'currency', 'GBP')::jsonb,
+    '[{"position":0,"raw_text":"NEW1","line_total_pence":120},
+      {"position":1,"raw_text":"NEW2","line_total_pence":80}]');
+  select count(*) into n from public.receipt_lines
+   where receipt_id = rid and user_id = a and raw_text in ('NEW1', 'NEW2');
+  if n <> 2 then raise exception 'FAIL V8: expected exactly NEW1, NEW2'; end if;
+  select count(*) into n from public.receipt_lines where receipt_id = rid;
+  if n <> 2 then raise exception 'FAIL V8: % lines, expected 2', n; end if;
+  if exists (select 1 from public.receipt_lines where id = any(old_ids)) then
+    raise exception 'FAIL V8: old lines remain'; end if;
+  select user_id, purchased_on_estimated as est into rec from public.receipts where id = rid;
+  if rec.user_id <> a then raise exception 'FAIL V8: owner changed'; end if;
+  if rec.est is not true then raise exception 'FAIL date flag: same date cleared it'; end if;
+
+  -- changing the date clears the flag
+  perform public.update_receipt(rid,
+    '{"store":"edited","purchased_on":"2026-09-21","printed_total_pence":200,"currency":"GBP"}', '[]');
+  select purchased_on_estimated into rec from public.receipts where id = rid;
+  if rec.purchased_on_estimated is not false then
+    raise exception 'FAIL date flag: new date kept it'; end if;
+
+  raise exception 'PASS V7 V8 V9 + date flag (rolled back)';
+end $$;
+-- MEASURED: P0001: PASS V7 V8 V9 + date flag (rolled back)
 
 
--- ── V8. UPDATE REPLACES THE LINES EXACTLY (1b) — rolled back ────────────────
-begin;
-set local role authenticated;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
-create temp table v8 on commit drop as
-select (public.save_receipt(
-  '{"store":"OLD","purchased_on":"2026-09-20","purchased_on_estimated":false,"printed_total_pence":600}',
-  '[{"position":0,"raw_text":"X","line_total_pence":100},
-    {"position":1,"raw_text":"Y","line_total_pence":200},
-    {"position":2,"raw_text":"Z","line_total_pence":300}]')).id as a_id;
-create temp table v8_old on commit drop as
-select id from public.receipt_lines where receipt_id = (select a_id from v8);
-select public.update_receipt(a_id,
-  '{"store":"NEW","purchased_on":"2026-09-20","printed_total_pence":175}',
-  '[{"position":0,"raw_text":"NEW ONE","qty":2,"qty_unit":"each","unit_price_pence":125,"line_total_pence":250},
-    {"position":1,"raw_text":"Nectar Price Saving","line_total_pence":-75,"is_discount":true}]') is not null as updated
-from v8;
-select
-  (select count(*) from public.receipt_lines where receipt_id = (select a_id from v8)) = 2   as exactly_2_lines,
-  (select count(*) from public.receipt_lines where id in (select id from v8_old)) = 0       as no_old_ids,
-  (select string_agg(position || ':' || raw_text || ':' || coalesce(qty::text, '-') || ':'
-                     || coalesce(line_total_pence::text, '-') || ':' || is_discount, ' | ' order by position)
-     from public.receipt_lines where receipt_id = (select a_id from v8))                     as lines,
-  (select store || '/' || printed_total_pence from public.receipts where id = (select a_id from v8)) as header;
-rollback;
--- PREDICTED: exactly_2_lines t, no_old_ids t,
---   lines  "0:NEW ONE:2.000:250:false | 1:Nectar Price Saving:-:-75:true"
---   header "NEW/175"
--- (The container also checks column-for-column both ways, and that a payload
--- user_id naming B leaves the receipt and lines A's.)
--- MEASURED (container, V8): pass. MEASURED (hosted): (fill in)
+-- ── V6 + V11: delete cascades and is loud ──────────────────────────────────
+do $$
+declare
+  a constant uuid := 'a8435663-72e9-4d33-9c3f-803c4cbda393';
+  b constant uuid := '4dbf04ae-7b46-4511-8122-f17284c622d9';
+  rid uuid; n int;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims', json_build_object('sub', a)::text, true);
+  select id into rid from public.save_receipt(
+    '{"purchased_on":"2026-09-20","purchased_on_estimated":false}',
+    '[{"position":0,"raw_text":"A","line_total_pence":1},
+      {"position":1,"raw_text":"B","line_total_pence":2}]');
+
+  perform set_config('request.jwt.claims', json_build_object('sub', b)::text, true);
+  begin
+    perform public.delete_receipt(rid);
+    raise exception 'FAIL V11: B deleted A''s receipt without error';
+  exception when no_data_found then null;
+  end;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', a)::text, true);
+  if not exists (select 1 from public.receipts where id = rid) then
+    raise exception 'FAIL V11: A''s receipt gone after B''s attempt'; end if;
+
+  perform public.delete_receipt(rid);
+  select count(*) into n from public.receipt_lines where receipt_id = rid;
+  if n <> 0 then raise exception 'FAIL V6: % lines survived', n; end if;
+
+  begin
+    perform public.delete_receipt(rid);
+    raise exception 'FAIL V11: second delete returned normally';
+  exception when no_data_found then null;
+  end;
+
+  begin
+    perform public.update_receipt(rid,
+      '{"purchased_on":"2026-09-20","currency":"GBP"}', '[]');
+    raise exception 'FAIL V11: edit after delete returned normally';
+  exception when no_data_found then null;
+  end;
+
+  raise exception 'PASS V6 V11 (rolled back)';
+end $$;
+-- MEASURED: P0001: PASS V6 V11 (rolled back)
 
 
--- ── V9. A MID-UPDATE FAILURE LEAVES THE OLD RECEIPT INTACT (1b) — rolled back
--- The second new line violates receipt_lines_sign AFTER the delete has run.
--- Once a statement fails the transaction can read nothing, so the failing
--- call runs inside `savepoint v9 … rollback to savepoint v9` and the hash is
--- read after. In the app, PostgREST's per-request transaction rolls back the
--- whole call the same way.
-begin;
-set local role authenticated;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
-create temp table v9 on commit drop as
-select (public.save_receipt(
-  '{"store":"__v9_old__","purchased_on":"2026-09-20","purchased_on_estimated":false,"printed_total_pence":600}',
-  '[{"position":0,"raw_text":"X","line_total_pence":100},
-    {"position":1,"raw_text":"Y","line_total_pence":200},
-    {"position":2,"raw_text":"Z","line_total_pence":300}]')).id as a_id;
-alter table v9 add column h1 text;
-update v9 set h1 = md5((select r::text from public.receipts r where r.id = a_id)
-                       || (select string_agg(l::text, E'\n' order by l.position)
-                             from public.receipt_lines l where l.receipt_id = a_id));
-savepoint v9;
-select public.update_receipt(a_id,
-  '{"store":"__v9_new__","purchased_on":"2026-09-20","printed_total_pence":300}',
-  '[{"position":0,"raw_text":"FINE","line_total_pence":100},
-    {"position":1,"raw_text":"BAD SAVING","line_total_pence":250,"is_discount":true}]') from v9;
--- PREDICTED: ERROR — violates check constraint "receipt_lines_sign"
-rollback to savepoint v9;
-select h1 = md5((select r::text from public.receipts r where r.id = a_id)
-                || (select string_agg(l::text, E'\n' order by l.position)
-                      from public.receipt_lines l where l.receipt_id = a_id)) as old_receipt_intact,
-       (select count(*) from public.receipt_lines where receipt_id = a_id) as lines_remaining
-from v9;
-rollback;
--- PREDICTED: the check-violation error, then old_receipt_intact t,
--- lines_remaining 3 (old store, old 3 lines, updated_at unmoved).
--- MEASURED (container, V9): pass. MEASURED (hosted): (fill in)
-
-
--- ── V11 (1b half). UPDATE AFTER DELETE IS LOUD — rolled back ────────────────
--- "Deleted on another device, then Save here": P0002, and nothing resurrected.
-begin;
-set local role authenticated;
-select set_config('request.jwt.claims', '{"sub":"a8435663-72e9-4d33-9c3f-803c4cbda393"}', true);
-create temp table v11 on commit drop as
-select (public.save_receipt('{"purchased_on":"2026-09-20","purchased_on_estimated":false}',
-  '[{"position":0,"raw_text":"A","line_total_pence":1}]')).id as a_id;
-select public.delete_receipt(a_id) from v11;
-savepoint v11;
-select public.update_receipt(a_id, '{"purchased_on":"2026-09-20"}',
-  '[{"position":0,"raw_text":"RESURRECTED","line_total_pence":1}]') from v11;
--- PREDICTED: ERROR: update_receipt: no receipt … for this user (SQLSTATE P0002)
-rollback to savepoint v11;
-select (select count(*) from public.receipts where id = a_id) = 0
-   and (select count(*) from public.receipt_lines where receipt_id = a_id) = 0 as nothing_resurrected
-from v11;
-rollback;
--- PREDICTED: the P0002 error, then nothing_resurrected t.
--- MEASURED (container, V11): pass. MEASURED (hosted): (fill in)
+-- ── Clean-up ───────────────────────────────────────────────────────────────
+drop table maintenance.receipts_v1_snapshot;
 
 
 -- ============================================================================
--- MANUAL CHECKLIST (commits 1a and 1b, pushed together)
+-- MANUAL CHECKLIST (commits 1a and 1b, pushed together 2026-10-04)
 --
 -- [x] Docker up; container rig clean 59/59 with both migrations; sabotages
 --     1–9 each red on their named check (2026-10-04, see top).
@@ -396,15 +397,15 @@ rollback;
 --     update_receipt.sql 0. The one hit is line 99, inside the
 --     `comment on table public.receipts` text ("nothing here is ever written
 --     to meal_entries"): table documentation, not a reference to the table.
---     Re-run before the push if either file changes.
--- [ ] V1a BEFORE the push — record rows, hash, and the window start.
--- [ ] npx supabase db push   (only when asked; 1a and 1b together)
--- [ ] V1b AFTER. If it differs, V1c: only "added in the window" rows, or
---     changes a tester confirms. Then V1d (drop the scratch table).
--- [ ] V2, V3 as predicted.
--- [ ] V4 (a–e), V5, V6 + V11, V7, V8, V9, V11 (update half) as predicted on
---     hosted, all rolled back.
+-- [x] V1 BEFORE: 1440 rows, 1a23d53787541a1729b8d2843c1b7679. Snapshot table
+--     RLS on, privileges revoked; anon/authenticated schema and table
+--     privileges all false.
+-- [x] npx supabase db push (2026-10-04).
+-- [x] V1 AFTER: 1440 rows, same hash. V1c: 0 rows. Snapshot table dropped.
+-- [x] V2, V3 as predicted (MEASURED above).
+-- [x] V4a–e, V5, V7/V8/V9 + date flag, V6 + V11: all PASS, rolled back.
 -- [ ] Dashboard → Table editor: receipts and receipt_lines show RLS enabled.
+--     (Not reported; V3's relrowsecurity true ×2 covers the same fact.)
 -- [x] docs/account-deletion-runbook.md: READ 2026-09-30, it lists no
 --     per-table checks, and delete-account touches no user table directly
 --     (account_deletions, whoop_tokens, storage). Both new tables go by

@@ -1249,6 +1249,11 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
     - [x] A 4th add is not offered.
     - [x] Cancel at each step returns cleanly.
     - [x] Airplane mode → Scan fails → **all parts still on screen**, and a retry works once online.
+    - Added from the 5a hand-back checklist, all passed on the same run:
+      - [x] Empty state shows the overlap hint, with Take photo and Choose from library.
+      - [x] Tapping a thumbnail opens it full screen; a tap closes it.
+      - [x] A successful scan returns to Settings, and the dev summary shows parts, lines, flagged count, total and date.
+      - [x] Settings is unchanged apart from the dashed dev box.
     - **Observation, not a blocker:** a long receipt came back as **61 lines where 45 items were bought.** Not yet known whether that's the definition or over-reading:
       - `lines` counts every printed line with a price, so discount and multibuy-saving lines count, which inflates it by design;
       - but r08's 88 against about 80 (commit 3 smoke test) says multi-part scans may also over-read at the joins.

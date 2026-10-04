@@ -297,7 +297,11 @@ lines: Array<{
    - **First reading, MEASURED 2026-10-04 (the deployed function's smoke test):**
      - r08 in 3 parts came back as 88 lines, against about 80 in every bake-off run without this guidance. The total was right, and the seam flag caught none of the extra lines.
      - That's one read of one receipt whose ground truth is in doubt, so it doesn't settle anything. It points the wrong way: the guidance didn't reduce over-reading at the joins and may have added to it.
-     - **Still DRAFT. The multi-photo re-run is the gate before the UI ships.**
+     - **Still DRAFT.** ~~The multi-photo re-run is the gate before the UI ships.~~
+     - **Revised 2026-10-04 (Robbie): the gate moves from "before the UI ships" to "before the long-receipt notice comes off".** Long receipts are rare for Robbie, so the re-run could wait months. The UI ships to the testing group with a notice on multi-part scans, and testers' reports count as re-run evidence. Why that's safe:
+       - every save goes through the review screen, where the reconcile banner shows when the lines don't add up to the printed total, and seam flags can be removed in one tap;
+       - so an over-read is visible and fixable before save, not a silent wrong number.
+       - Notice spec: see commit 5b.
    - The same prompt also carries rule 4's loyalty-price-saving clause and rule 5's voids clause (both Revised 2026-09-27). Those are measured: every bake-off arm already behaved that way.
 3. **Header and total.**
    - Store and date come from part 1: the header.
@@ -1173,7 +1177,7 @@ It grew from one RPC with 6 checks and 5 sabotages to three RPCs, a trigger, 11 
     - [x] **1-part (r07):** 200; total 6643, date 2026-09-20, 38 lines, 0 flagged. `ai_extractions`: success, `claude-sonnet-5`, 6,724 in / 2,929 out, 18.7 s.
     - [x] **3-part (r08):** 200; total 12373 (correct), date 2026-07-28, **88 lines**, 0 flagged, note "Total read from part 2 of 3". 16,240 in / 6,115 out, 37.1 s.
       - **The DRAFT overlap guidance (rule 2) didn't reduce over-reading at the joins, and may have added to it.** The bake-off read r08 at about 80 lines in every run, and the seam flag caught none of the extra lines.
-      - **Rule 2 stays DRAFT, and the multi-photo re-run is the gate before the UI ships.**
+      - **Rule 2 stays DRAFT.** The multi-photo re-run gates removing the long-receipt notice, not shipping the UI (Revised 2026-10-04, §3 rule 2).
     - [x] a non-receipt → 422.
     - [x] two parts from different receipts (r01 + r07) → 422.
       - The 422s are recorded by status only: PowerShell 5's `Invoke-WebRequest` drops error bodies, so the `no_receipt` code wasn't seen.
@@ -1248,7 +1252,7 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
     - **Observation, not a blocker:** a long receipt came back as **61 lines where 45 items were bought.** Not yet known whether that's the definition or over-reading:
       - `lines` counts every printed line with a price, so discount and multibuy-saving lines count, which inflates it by design;
       - but r08's 88 against about 80 (commit 3 smoke test) says multi-part scans may also over-read at the joins.
-      - Resolve on the review screen (5b), where discounts are tagged and seam flags show, and in the multi-photo re-run, which still gates the UI shipping.
+      - Resolve on the review screen (5b), where discounts are tagged and seam flags show, and through tester reports and the multi-photo re-run (they gate removing the long-receipt notice).
 - **5b** `feat(receipts): review screen — create and edit modes, delete, reconcile and seam flags`
   - One `ReceiptReview` component with the route param `{ mode: "create" } | { mode: "edit", receiptId }`. Edit loads via `fetchReceipt(id)`.
   - Same live-text fields in both modes, using CopyConfirm's pattern ([CopyConfirmScreen.tsx:108-135](src/screens/CopyConfirmScreen.tsx#L108-L135)).
@@ -1256,7 +1260,15 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
   - Delete in edit mode, with a confirm.
   - Keep-input-on-failure in both modes. `P0002` → "This receipt no longer exists", and the screen closes on acknowledgement.
   - Wrapped in `KeyboardScreen` (PL-004 guard).
+  - **Revised 2026-10-04 (Robbie), after the 5a device pass read 61 lines for 45 items bought:**
+    - **Count items, not lines.** The review header reads "45 items · 16 discounts", never a raw line count. Items are the non-discount lines; discounts are `is_discount` lines. A pure `countLines(lines)` in `spending.ts` returns `{ items, discounts }` and is unit-tested. Seam-flagged lines still count, so Remove visibly lowers the count.
+    - **Long-receipt notice, on any draft scanned from 2 or more parts** (create mode only, above the reconcile banner): *"Long receipts are still being tested. Check the lines against your receipt, and please tell us how it coped."*
+      - The wording and the on/off switch live in one exported constant, `LONG_RECEIPT_NOTICE`, in `receiptCapture.ts`, so taking it off is one line plus its test.
+      - It comes off only when the multi-photo re-run passes or tester reports show multi-part scans holding up (§3 rule 2).
+      - Tester reports go in `testing/` as usual. The testing round's brief asks each tester to scan one long receipt in parts and report the item count against the receipt.
   - **Checklist (Pixel 9):**
+    - [ ] The header shows items and discounts, not lines, and the two add up to the line count in SQL.
+    - [ ] The notice shows on a 2- and 3-part scan, not on a 1-part scan, and not in edit mode.
     - [ ] Edit a price and tap Save without blurring → the saved row has the edited value, **in create and in edit mode** (the PL-005/006 regression check).
     - [ ] Airplane mode → Save → error, and all edits still there, in both modes.
     - [ ] Unreadable total → NULL in SQL, "—" in the UI.

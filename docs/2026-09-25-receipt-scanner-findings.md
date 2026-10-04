@@ -1295,7 +1295,7 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
     - [x] The notice shows on 2+ part scans only.
     - [x] Edit a price and tap Save without blurring → the saved row has the edited value, **in create and in edit mode** (the PL-005/006 regression check).
     - [x] Airplane mode → Save → error, and all edits still there, in both modes.
-    - [ ] Unreadable total → an empty field reading "Unknown", and NULL in SQL; the banner says it can't check. **NOT RUN.**
+    - [x] Unreadable total → an empty field reading "Unknown", and NULL in SQL; the banner says it can't check. **Passed 2026-10-04 (MEASURED, Robbie, account A).** As run: a receipt was scanned, its total cleared on review and saved, and `printed_total_pence` was NULL. A receipt the scan itself couldn't read, and the banner wording, weren't reported separately.
     - [ ] An unread currency → "Currency not read: choose one", and Save refuses until a currency is tapped. **NOT RUN.**
     - [ ] An unread date → `purchased_on_estimated` true. **NOT RUN.**
     - [ ] **Edit with the same date → still true; change the date → false** (SQL). **NOT RUN** as specified, since it needs a receipt whose date wasn't read. Seen on `11b7d878…`: the date was read, and changing it 2026-09-28 → 2026-10-01 left `purchased_on_estimated` false.
@@ -1304,7 +1304,7 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
       - exactly that set afterwards, positions 0–46 contiguous;
       - `updated_at` 15:20:03 → 15:45:29.
     - [ ] Edit a multi-quantity line's total (e.g. "2 × £1.00" to 2.50): the line shows "2 ×" alone as you type, and back to "2 × £1.00" if you type 2.00 again. Save → SQL shows `unit_price_pence` NULL, with `qty` unchanged. **NOT RUN:** no "N ×" lines on the receipts used.
-    - [ ] Delete → confirm → the row and lines are gone in SQL, and the dev box's "Newest saved" line moves on. **NOT RUN** (in-app Delete).
+    - [x] Delete → confirm → the row and lines are gone in SQL, and the dev box's "Newest saved" line moves on. **Passed 2026-10-04 (MEASURED, Robbie, account A):** a saved receipt deleted from the phone; its row and lines were gone in SQL. (The dev box no longer exists; it was removed in commit 6.)
     - [x] Open a receipt in edit mode, delete it in the SQL editor (`delete from public.receipts where id = '<id>';` — the editor has no auth.uid(), so not the RPC), then Save here → "This receipt no longer exists", OK closes, and no row is resurrected. Receipt `a965d62a…` (M&S, 14 lines): afterwards receipts 0, lines 0.
     - [ ] A 3-part scan with a seam echo → the flag shows, the banner quotes the matching amount, and Remove fixes the reconcile and lowers the item count. **NOT RUN.**
     - [x] Back from a fresh scan asks "Discard this receipt?"; Keep editing keeps everything.
@@ -1346,7 +1346,7 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
   - [x] The 3-way control fits at 360 dp without truncation.
   - [x] Week/Month totals match a hand sum in SQL (below). Hand-sum SQL: week GBP 7278 pence, 1 receipt, 0 unknown; month GBP 7278 pence, 1 receipt, 0 unknown. The app headline matched on both This week and This month (£72.78 · 1 receipt).
   - [ ] A € receipt shows on its own line, not added. **NOT RUN.**
-  - [ ] Unknown-total receipts are listed and not counted. **NOT RUN.**
+  - [x] Unknown-total receipts are listed and not counted. **Passed 2026-10-04 (MEASURED, Robbie, account A):** the receipt with no readable total was listed as not counted on Spending.
   - [x] After an edit or delete, totals update on return.
   - [x] A row whose lines don't add up shows "Doesn't add up"; tapping a row opens it in edit mode.
   - [x] "Scan a receipt" works from the header.

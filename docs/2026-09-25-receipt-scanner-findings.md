@@ -1182,7 +1182,7 @@ It grew from one RPC with 6 checks and 5 sabotages to three RPCs, a trigger, 11 
     - [x] no JWT → 401, from the gateway (`verify_jwt`).
     - [x] the 21st scan in an hour → 429: 5 counted already, then 15 fake-image scans (each a 502 `model_error`, each counted), then the 21st → 429. Meal scans share the same count (it's one table and one query); the run didn't include one.
     - [x] **one `ai_extractions` row for the 3-part scan.**
-    - [ ] the dashboard logs contain no receipt text. **Owed:** not reported with the run.
+    - [x] the dashboard logs contain no receipt text. **MEASURED 2026-10-04:** 63 entries exported. They are only boot and shutdown lines plus 15 "anthropic 400: Could not process image" errors with request IDs, matching the 15 fake-image scans. No store names, line text or amounts anywhere; the real scans logged nothing beyond boot and shutdown.
 - **Sabotage:**
   - (1) Remove the `stop_reason` guard → the truncation test goes red.
   - (2) Remove the tender-line drop → the redaction test goes red.

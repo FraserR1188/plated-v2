@@ -1290,22 +1290,30 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
     - **Results:** suite 1365 passing, 6 expected-red (the CSV additions, until commit 6). `tsc` 0. Runtime versions unchanged (`c1907ba4…` / `5359dcce…`): JS only, OTA-able.
   - **Follow-up 2026-10-04 (Robbie): unknown beats a stored contradiction.** qty and unit price aren't editable, so when a line's total is edited to something other than qty × unit price (rounded to the penny, for weighed lines), `unit_price_pence` saves as NULL and qty is kept. v2 matching will read a stored unit price as fact. An untouched line keeps what was read, even if it doesn't multiply out; an edit that matches, or corrects a misread total to match, keeps it. Same in both modes. The line's quantity label follows the same rule as you type (`lineQtyLabel`, unit-tested against `parseReview`), so the screen shows what will be saved. MEASURED: red first (3 contradiction cases failed, the 3 keep cases already passed); sabotage "keep the stale unit price" → 3 red, restored byte-identical; suite 1371 passing, 6 expected-red; `tsc` 0.
   - **Checklist (Pixel 9).** Dev client on `feat/receipts`, Settings → DEV box. Spending doesn't exist until commit 6, so the dev box's "Newest saved" line and SQL stand in for it.
-    - [ ] The header shows items and discounts, not lines, and the two add up to the line count in SQL.
-    - [ ] The notice shows on a 2- and 3-part scan, not on a 1-part scan, and not in edit mode.
-    - [ ] Edit a price and tap Save without blurring → the saved row has the edited value, **in create and in edit mode** (the PL-005/006 regression check).
-    - [ ] Airplane mode → Save → error, and all edits still there, in both modes.
-    - [ ] Unreadable total → an empty field reading "Unknown", and NULL in SQL; the banner says it can't check.
-    - [ ] An unread currency → "Currency not read: choose one", and Save refuses until a currency is tapped.
-    - [ ] An unread date → `purchased_on_estimated` true.
-    - [ ] **Edit with the same date → still true; change the date → false** (SQL).
-    - [ ] Edit: remove a line and add one → SQL shows exactly the new set; `updated_at` moved.
-    - [ ] Edit a multi-quantity line's total (e.g. "2 × £1.00" to 2.50): the line shows "2 ×" alone as you type, and back to "2 × £1.00" if you type 2.00 again. Save → SQL shows `unit_price_pence` NULL, with `qty` unchanged.
-    - [ ] Delete → confirm → the row and lines are gone in SQL, and the dev box's "Newest saved" line moves on.
-    - [ ] Open a receipt in edit mode, delete it in the SQL editor (`delete from public.receipts where id = '<id>';` — the editor has no auth.uid(), so not the RPC), then Save here → "This receipt no longer exists", OK closes, and no row is resurrected.
-    - [ ] A 3-part scan with a seam echo → the flag shows, the banner quotes the matching amount, and Remove fixes the reconcile and lowers the item count.
-    - [ ] Back from a fresh scan asks "Discard this receipt?"; Keep editing keeps everything.
-    - [ ] SQL: `select count(*) from meal_entries` is unchanged across save, edit and delete.
-- **Sabotage (device, record once):** switch one price field to commit-on-blur → the "Save without blurring" step fails on device.
+    - **Device pass 2026-10-04 (MEASURED, Robbie), account A.** Ticked items passed; unticked items are **NOT RUN** and stay open.
+    - [x] The header shows items and discounts, not lines, and the two add up to the line count in SQL. Receipt `11b7d878…`, Q1: 45 items + 2 discounts = 47 lines.
+    - [x] The notice shows on 2+ part scans only.
+    - [x] Edit a price and tap Save without blurring → the saved row has the edited value, **in create and in edit mode** (the PL-005/006 regression check).
+    - [x] Airplane mode → Save → error, and all edits still there, in both modes.
+    - [ ] Unreadable total → an empty field reading "Unknown", and NULL in SQL; the banner says it can't check. **NOT RUN.**
+    - [ ] An unread currency → "Currency not read: choose one", and Save refuses until a currency is tapped. **NOT RUN.**
+    - [ ] An unread date → `purchased_on_estimated` true. **NOT RUN.**
+    - [ ] **Edit with the same date → still true; change the date → false** (SQL). **NOT RUN** as specified, since it needs a receipt whose date wasn't read. Seen on `11b7d878…`: the date was read, and changing it 2026-09-28 → 2026-10-01 left `purchased_on_estimated` false.
+    - [x] Edit: remove a line and add one → SQL shows exactly the new set; `updated_at` moved. Receipt `11b7d878…`, in one save:
+      - BROCCOLI LOOSE removed, Donuts (100) added, JS BKED BEANS 152 → 100, JS SWEET CORN X3 90 → 190;
+      - exactly that set afterwards, positions 0–46 contiguous;
+      - `updated_at` 15:20:03 → 15:45:29.
+    - [ ] Edit a multi-quantity line's total (e.g. "2 × £1.00" to 2.50): the line shows "2 ×" alone as you type, and back to "2 × £1.00" if you type 2.00 again. Save → SQL shows `unit_price_pence` NULL, with `qty` unchanged. **NOT RUN:** no "N ×" lines on the receipts used.
+    - [ ] Delete → confirm → the row and lines are gone in SQL, and the dev box's "Newest saved" line moves on. **NOT RUN** (in-app Delete).
+    - [x] Open a receipt in edit mode, delete it in the SQL editor (`delete from public.receipts where id = '<id>';` — the editor has no auth.uid(), so not the RPC), then Save here → "This receipt no longer exists", OK closes, and no row is resurrected. Receipt `a965d62a…` (M&S, 14 lines): afterwards receipts 0, lines 0.
+    - [ ] A 3-part scan with a seam echo → the flag shows, the banner quotes the matching amount, and Remove fixes the reconcile and lowers the item count. **NOT RUN.**
+    - [x] Back from a fresh scan asks "Discard this receipt?"; Keep editing keeps everything.
+    - [x] SQL: `meal_entries` count is unchanged across save, edit and delete. Account A: 919 before and after all saves, edits and deletes.
+    - **Observation, not pass/fail: a real-world single-photo reconcile miss.**
+      - Receipt `11b7d878…` (Sainsbury's, 1 photo, 47 lines) didn't reconcile as scanned: the lines summed to £80.49 against a printed £72.78, £7.71 over.
+      - The bake-off's single photos all added up, so this is the first single-photo miss seen. The banner caught it, as designed.
+      - **To check against the paper receipt:** which lines account for the £7.71 (a misread price, a repeated line, or a saving read as an item), and whether that's a prompt problem.
+- **Sabotage (device, record once):** switch one price field to commit-on-blur → the "Save without blurring" step fails on device. **NOT RUN.**
 
 ### Commit 6 — Data tab: Grocery spending segment
 

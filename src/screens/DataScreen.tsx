@@ -59,7 +59,7 @@ export function DataScreen() {
       </View>
 
       {segment === "history" ? (
-        <HistoryScreen embedded />
+        <HistoryScreen />
       ) : segment === "trends" ? (
         <TrendsPanel />
       ) : (

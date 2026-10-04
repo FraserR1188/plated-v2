@@ -32,6 +32,7 @@ import {
 } from "../lib/whoopConnectionCache";
 import { clearTrendsPrefs } from "../lib/trendsPrefs";
 import { fetchAllPages } from "../lib/paging";
+import type { ReceiptDraft } from "../lib/receipts";
 
 /**
  * PL-050. Rows per fetchEntries request. Must stay below PostgREST's
@@ -496,6 +497,18 @@ interface AppState {
   /** Returns the pending result AND clears it in the same call. */
   consumeManualEntryResult: () => FoodProduct | null;
 
+  /**
+   * The receipt being scanned, reviewed or edited (receipt scanner; findings
+   * §7). In the store, not route params: up to three photos and 150 lines is
+   * large for navigation state, and PL-046 already argues against
+   * non-serialisable params. Edit mode carries the receipt id in `mode`; the
+   * write itself takes it as a parameter (receipts.ts), never off this draft.
+   * Holds a person's shopping and their receipt photos, so reset() wipes it.
+   */
+  receiptDraft: ReceiptDraft | null;
+  setReceiptDraft: (draft: ReceiptDraft) => void;
+  clearReceiptDraft: () => void;
+
   saveIngredient: (product: FoodProduct) => Promise<SavedIngredientScored | null>;
   deleteIngredient: (id: string) => Promise<void>;
 
@@ -603,6 +616,7 @@ export const useStore = create<AppState>((set, get) => ({
   batchDraft: EMPTY_BATCH_DRAFT,
   compositionApplyDraft: null,
   manualEntryResult: null,
+  receiptDraft: null,
 
   setUserId: (id) => set({ userId: id }),
   setViewedDate: (date) => set({ viewedDate: date }),
@@ -634,6 +648,7 @@ export const useStore = create<AppState>((set, get) => ({
       batchDraft: EMPTY_BATCH_DRAFT,
       compositionApplyDraft: null,
       manualEntryResult: null,
+      receiptDraft: null,
     });
   },
 
@@ -1640,6 +1655,9 @@ export const useStore = create<AppState>((set, get) => ({
     })),
 
   resetBatchDraft: () => set({ batchDraft: EMPTY_BATCH_DRAFT }),
+
+  setReceiptDraft: (draft) => set({ receiptDraft: draft }),
+  clearReceiptDraft: () => set({ receiptDraft: null }),
 
   setManualEntryResult: (product) => set({ manualEntryResult: product }),
   consumeManualEntryResult: () => {

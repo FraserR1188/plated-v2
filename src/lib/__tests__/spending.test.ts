@@ -1,7 +1,6 @@
 // ============================================================
-// Receipt scanner, commit 2 — RED. src/lib/spending.ts doesn't exist yet
-// (findings §2, §6). Every test here must fail with "module not found:
-// spending" until commit 4b; see helpers/redImports.ts.
+// Receipt scanner, written red in commit 2, green from commit 4b: src/lib/spending.ts
+// (findings §2, §6).
 //
 // The suite runs pinned to Europe/London (vitest.setup.ts). That matters
 // for the week cases: BST ends on Sunday 25 Oct 2026 and starts on Sunday
@@ -14,7 +13,7 @@
 // ============================================================
 
 import { describe, it, expect, afterEach } from "vitest";
-import { requireExports } from "./helpers/redImports";
+import { receiptAmount, weekRange, monthRange, summariseSpending, reconcile } from "../spending";
 
 type Range = { start: string; end: string };
 type Line = { line_total_pence: number | null };
@@ -26,39 +25,6 @@ type SpendReceipt = {
   printed_total_pence: number | null;
   lines: Line[];
 };
-type Amount = { pence: number; source: "total" | "lines" } | null;
-type Summary = {
-  byCurrency: Record<string, { pence: number; receipts: number }>;
-  unknownTotals: number;
-  byStore: { store: string; currency: string; pence: number; receipts: number }[];
-};
-type Reconcile = {
-  status: "equal" | "over" | "under" | "unknown";
-  diffPence: number | null;
-  message: string | null;
-};
-type Spending = {
-  receiptAmount: (r: Pick<SpendReceipt, "printed_total_pence" | "lines">) => Amount;
-  weekRange: (todayKey: string) => Range;
-  monthRange: (todayKey: string) => Range;
-  summariseSpending: (receipts: SpendReceipt[], range: Range) => Summary;
-  reconcile: (
-    lines: Line[],
-    printedTotalPence: number | null,
-    currency: string,
-    flaggedPence?: number,
-  ) => Reconcile;
-};
-
-const SPENDING = "../spending";
-const spending = () =>
-  requireExports<Spending>(() => import(/* @vite-ignore */ SPENDING), "spending", [
-    "receiptAmount",
-    "weekRange",
-    "monthRange",
-    "summariseSpending",
-    "reconcile",
-  ]);
 
 function receipt(over: Partial<SpendReceipt> = {}): SpendReceipt {
   return {
@@ -74,14 +40,12 @@ function receipt(over: Partial<SpendReceipt> = {}): SpendReceipt {
 
 describe("receiptAmount — total, then lines, then unknown (never 0)", () => {
   it("uses the printed total when there is one", async () => {
-    const { receiptAmount } = await spending();
     expect(
       receiptAmount({ printed_total_pence: 1234, lines: [{ line_total_pence: 1 }] }),
     ).toEqual({ pence: 1234, source: "total" });
   });
 
   it("falls back to the sum of lines when every line total is known", async () => {
-    const { receiptAmount } = await spending();
     expect(
       receiptAmount({
         printed_total_pence: null,
@@ -91,7 +55,6 @@ describe("receiptAmount — total, then lines, then unknown (never 0)", () => {
   });
 
   it("is unknown when the total is unreadable and any line total is too", async () => {
-    const { receiptAmount } = await spending();
     expect(
       receiptAmount({
         printed_total_pence: null,
@@ -101,12 +64,10 @@ describe("receiptAmount — total, then lines, then unknown (never 0)", () => {
   });
 
   it("is unknown, not 0, with no total and no lines", async () => {
-    const { receiptAmount } = await spending();
     expect(receiptAmount({ printed_total_pence: null, lines: [] })).toBeNull();
   });
 
   it("a printed 0.00 is a real 0", async () => {
-    const { receiptAmount } = await spending();
     expect(receiptAmount({ printed_total_pence: 0, lines: [] })).toEqual({
       pence: 0,
       source: "total",
@@ -126,7 +87,6 @@ describe("weekRange — Monday to Sunday, local calendar", () => {
     // Across a month and a year end.
     ["2026-12-31", { start: "2026-12-28", end: "2027-01-03" }],
   ])("%s → %j", async (today, range) => {
-    const { weekRange } = await spending();
     expect(weekRange(today)).toEqual(range);
   });
 });
@@ -137,7 +97,6 @@ describe("monthRange — the calendar month to date", () => {
     ["2026-10-01", { start: "2026-10-01", end: "2026-10-01" }],
     ["2026-02-28", { start: "2026-02-01", end: "2026-02-28" }],
   ])("%s → %j", async (today, range) => {
-    const { monthRange } = await spending();
     expect(monthRange(today)).toEqual(range);
   });
 });
@@ -146,7 +105,6 @@ describe("summariseSpending", () => {
   const week: Range = { start: "2026-10-19", end: "2026-10-25" };
 
   it("counts total, then lines, and lists unknown totals instead of adding £0", async () => {
-    const { summariseSpending } = await spending();
     const s = summariseSpending(
       [
         receipt({ id: "a", printed_total_pence: 1000 }),
@@ -164,7 +122,6 @@ describe("summariseSpending", () => {
   });
 
   it("never adds one currency to another", async () => {
-    const { summariseSpending } = await spending();
     const s = summariseSpending(
       [
         receipt({ id: "a", printed_total_pence: 1000, currency: "GBP" }),
@@ -179,7 +136,6 @@ describe("summariseSpending", () => {
   });
 
   it("includes both ends of the range and nothing outside it", async () => {
-    const { summariseSpending } = await spending();
     const s = summariseSpending(
       [
         receipt({ id: "before", purchased_on: "2026-10-18", printed_total_pence: 1 }),
@@ -193,7 +149,6 @@ describe("summariseSpending", () => {
   });
 
   it("groups by store, sorted by total, with a null store as \"Unknown store\"", async () => {
-    const { summariseSpending } = await spending();
     const s = summariseSpending(
       [
         receipt({ id: "a", store: "Tesco", printed_total_pence: 300 }),
@@ -217,7 +172,6 @@ describe("summariseSpending", () => {
     });
 
     it("summarising and ranging work with a Date that refuses date-only strings", async () => {
-      const { summariseSpending, weekRange } = await spending();
       // Installed after loading, so only the functions' own calls see it.
       globalThis.Date = class extends RealDate {
         constructor(...args: ConstructorParameters<typeof Date> | []) {
@@ -237,13 +191,11 @@ describe("summariseSpending", () => {
 
 describe("reconcile — lines against the printed total", () => {
   it("equal", async () => {
-    const { reconcile } = await spending();
     const r = reconcile([{ line_total_pence: 150 }, { line_total_pence: -50 }], 100, "GBP");
     expect(r).toEqual({ status: "equal", diffPence: 0, message: null });
   });
 
   it("over", async () => {
-    const { reconcile } = await spending();
     const r = reconcile([{ line_total_pence: 600 }], 500, "GBP");
     expect(r.status).toBe("over");
     expect(r.diffPence).toBe(100);
@@ -251,7 +203,6 @@ describe("reconcile — lines against the printed total", () => {
   });
 
   it("under — a line dropped at a seam shows here", async () => {
-    const { reconcile } = await spending();
     const r = reconcile([{ line_total_pence: 400 }], 500, "GBP");
     expect(r.status).toBe("under");
     expect(r.diffPence).toBe(-100);
@@ -259,13 +210,11 @@ describe("reconcile — lines against the printed total", () => {
   });
 
   it("unknown when the total or any line total is unreadable", async () => {
-    const { reconcile } = await spending();
     expect(reconcile([{ line_total_pence: 100 }], null, "GBP").status).toBe("unknown");
     expect(reconcile([{ line_total_pence: null }], 100, "GBP").status).toBe("unknown");
   });
 
   it("over by exactly the flagged seam lines names them (findings §3)", async () => {
-    const { reconcile } = await spending();
     const r = reconcile(
       [{ line_total_pence: 500 }, { line_total_pence: 85 }],
       500,
@@ -279,7 +228,6 @@ describe("reconcile — lines against the printed total", () => {
   });
 
   it("over by a different amount than the flagged lines doesn't blame them", async () => {
-    const { reconcile } = await spending();
     const r = reconcile([{ line_total_pence: 700 }], 500, "GBP", 85);
     expect(r.message).toBe("Lines are £2.00 over the total");
   });

@@ -29,6 +29,7 @@ import { MealEntry, Goals } from "../types";
 import { GoalsState } from "../store/useStore";
 import { DayBucket, getDaySummary } from "./entries";
 import { dateKey, parseDateKey } from "./time";
+import { withThousands } from "./numberFormat";
 
 /** The eight tracked nutrients, keyed as DayBucket and Goals key them. */
 export type TrendNutrient = keyof Omit<DayBucket, "count">;
@@ -688,11 +689,7 @@ export function buildChartLayout({
 // no vote. A chart that says 2,800 in one place and 2.800 in another is
 // showing a different number, not a different style.
 
-function withThousands(n: number | string): string {
-  // Takes a string as well as a number so a tick label keeps the decimal
-  // places its step calls for: String(0.30) is "0.3", but "0.30".
-  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-}
+// withThousands lives in numberFormat.ts, shared with money.ts.
 
 /** Rounds for DISPLAY only. The stored value is never rounded -- rounding
  *  to display precision on a write was the defect in PL-028. */

@@ -20,19 +20,34 @@ import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useStore } from "../store/useStore";
 import { fetchReceipts, type ReceiptListRow } from "../lib/receipts";
-import { spendingOverview, weekRange, monthRange, UNKNOWN_STORE, type ReceiptAmount } from "../lib/spending";
+import {
+  spendingOverview,
+  spendingBuckets,
+  periodRange,
+  UNKNOWN_STORE,
+  type ReceiptAmount,
+  type SpendPeriod,
+} from "../lib/spending";
 import { formatPence } from "../lib/money";
 import { exportSpendingCSV } from "../lib/csv";
 import { dateKey, formatDayLabel } from "../lib/time";
 import { Colors, Spacing, Radius, Typography, withDefaultFont } from "../theme/tokens";
 import { RootStackParamList } from "../types";
 import { RangeControl } from "./RangeControl";
+import { SpendingChart } from "./SpendingChart";
 
-type Period = "week" | "month";
-const PERIODS: { value: Period; label: string }[] = [
+const PERIODS: { value: SpendPeriod; label: string }[] = [
   { value: "week", label: "This week" },
   { value: "month", label: "This month" },
+  // 13 Mon–Sun weeks, so every bar is a whole week (commit 8b).
+  { value: "3months", label: "3 months" },
 ];
+
+const PERIOD_WORDS: Record<SpendPeriod, string> = {
+  week: "this week",
+  month: "this month",
+  "3months": "in the last 13 weeks",
+};
 
 const amountText = (amount: ReceiptAmount, currency: string) =>
   amount == null ? "—" : formatPence(amount.pence, currency);
@@ -40,7 +55,7 @@ const amountText = (amount: ReceiptAmount, currency: string) =>
 export function SpendingPanel() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const userId = useStore((s) => s.userId);
-  const [period, setPeriod] = useState<Period>("week");
+  const [period, setPeriod] = useState<SpendPeriod>("week");
   const [receipts, setReceipts] = useState<ReceiptListRow[] | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -65,7 +80,7 @@ export function SpendingPanel() {
   // Today is read per render, so the period rolls over at local midnight.
   const today = dateKey();
   const overview = useMemo(
-    () => (receipts ? spendingOverview(receipts, period === "week" ? weekRange(today) : monthRange(today)) : null),
+    () => (receipts ? spendingOverview(receipts, periodRange(period, today)) : null),
     [receipts, period, today],
   );
 
@@ -131,7 +146,7 @@ export function SpendingPanel() {
   }
 
   const o = overview!;
-  const periodWord = period === "week" ? "this week" : "this month";
+  const periodWord = PERIOD_WORDS[period];
 
   return (
     <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -156,6 +171,15 @@ export function SpendingPanel() {
           </>
         ) : (
           <Text style={styles.cardSub}>No receipts with a total {periodWord}</Text>
+        )}
+        {o.headline && receipts && (
+          <View style={styles.chart}>
+            <SpendingChart
+              buckets={spendingBuckets(receipts, period, today, o.headline.currency)}
+              currency={o.headline.currency}
+              otherCurrencies={o.otherCurrencies.map((c) => c.currency)}
+            />
+          </View>
         )}
         {o.unknown.length > 0 && (
           <View style={styles.unknownBox}>
@@ -256,6 +280,7 @@ const styles = StyleSheet.create(
     cardSub: { fontSize: Typography.sm, color: Colors.textSub },
     otherCurrency: { fontSize: Typography.base, fontWeight: Typography.semibold, color: Colors.text },
     unknownBox: { marginTop: Spacing.sm, gap: 2 },
+    chart: { marginTop: Spacing.sm },
     unknownTitle: { fontSize: Typography.sm, color: Colors.warning },
     unknownLine: { fontSize: Typography.sm, color: Colors.textSub },
 

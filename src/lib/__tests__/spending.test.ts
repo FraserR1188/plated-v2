@@ -20,6 +20,8 @@ import {
   summariseSpending,
   reconcile,
   spendingOverview,
+  periodRange,
+  spendingBuckets,
 } from "../spending";
 
 type Range = { start: string; end: string };
@@ -328,5 +330,115 @@ describe("spendingOverview — what the Spending segment shows", () => {
       ["cant", false],
       ["nolines", false],
     ]);
+  });
+});
+
+// ============================================================
+// Commit 8b — spending charts and the 3-month period (2026-10-04, Robbie).
+// This week: a bar per day. This month: a bar per week (clipped to the
+// month and to today). 3 months: a bar per week for the last 13 weeks.
+// Same rules as the totals: one currency per chart, unknown totals counted
+// per bucket and never added as £0. Wed 21 Oct 2026; BST ends Sun 25 Oct.
+// ============================================================
+
+describe("periodRange", () => {
+  it("week and month are weekRange and monthRange", () => {
+    expect(periodRange("week", "2026-10-21")).toEqual(weekRange("2026-10-21"));
+    expect(periodRange("month", "2026-10-21")).toEqual(monthRange("2026-10-21"));
+  });
+
+  it("3 months is the last 13 Monday-to-Sunday weeks, ending this week", () => {
+    expect(periodRange("3months", "2026-10-21")).toEqual({ start: "2026-07-27", end: "2026-10-25" });
+  });
+
+  it("3 months across the spring clock change still starts on a Monday", () => {
+    // Wed 1 Apr 2026: this week is Mon 30 Mar – Sun 5 Apr; BST began Sun 29 Mar.
+    expect(periodRange("3months", "2026-04-01")).toEqual({ start: "2026-01-05", end: "2026-04-05" });
+  });
+});
+
+describe("spendingBuckets", () => {
+  const today = "2026-10-21";
+  const pence = (b: { pence: number }[]) => b.map((x) => x.pence);
+
+  it("this week: a bar per day, Mon to Sun, in the chart's currency only", () => {
+    const b = spendingBuckets(
+      [
+        receipt({ id: "mon", purchased_on: "2026-10-19", printed_total_pence: 500 }),
+        receipt({ id: "mon2", purchased_on: "2026-10-19", printed_total_pence: 250 }),
+        receipt({ id: "sun", purchased_on: "2026-10-25", printed_total_pence: 100 }),
+        receipt({ id: "eur", purchased_on: "2026-10-20", printed_total_pence: 999, currency: "EUR" }),
+        receipt({ id: "lastweek", purchased_on: "2026-10-18", printed_total_pence: 7777 }),
+      ],
+      "week",
+      today,
+      "GBP",
+    );
+    expect(b.map((x) => x.label)).toEqual(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]);
+    expect(pence(b)).toEqual([750, 0, 0, 0, 0, 0, 100]);
+    expect(b[0].receipts).toBe(2);
+  });
+
+  it("UNKNOWN TOTALS ARE COUNTED PER BAR, NEVER ADDED AS £0; the lines fallback counts", () => {
+    const b = spendingBuckets(
+      [
+        receipt({ id: "u", purchased_on: "2026-10-20", printed_total_pence: null, lines: [{ line_total_pence: null }] }),
+        receipt({ id: "l", purchased_on: "2026-10-20", printed_total_pence: null, lines: [{ line_total_pence: 300 }] }),
+      ],
+      "week",
+      today,
+      "GBP",
+    );
+    expect(b[1]).toMatchObject({ pence: 300, receipts: 1, unknown: 1 });
+  });
+
+  it("this month: a bar per week, clipped to the 1st and to today", () => {
+    const b = spendingBuckets(
+      [
+        receipt({ id: "a", purchased_on: "2026-10-01", printed_total_pence: 100 }),
+        receipt({ id: "b", purchased_on: "2026-10-11", printed_total_pence: 200 }),
+        receipt({ id: "c", purchased_on: "2026-10-21", printed_total_pence: 400 }),
+        receipt({ id: "sep", purchased_on: "2026-09-30", printed_total_pence: 9999 }),
+      ],
+      "month",
+      today,
+      "GBP",
+    );
+    expect(b.map((x) => [x.start, x.end, x.label])).toEqual([
+      ["2026-10-01", "2026-10-04", "1 Oct"],
+      ["2026-10-05", "2026-10-11", "5 Oct"],
+      ["2026-10-12", "2026-10-18", "12 Oct"],
+      ["2026-10-19", "2026-10-21", "19 Oct"],
+    ]);
+    expect(pence(b)).toEqual([100, 200, 0, 400]);
+  });
+
+  it("3 months: 13 weekly bars from the period's first Monday", () => {
+    const b = spendingBuckets(
+      [
+        receipt({ id: "first", purchased_on: "2026-07-27", printed_total_pence: 10 }),
+        receipt({ id: "before", purchased_on: "2026-07-26", printed_total_pence: 9999 }),
+        receipt({ id: "last", purchased_on: "2026-10-25", printed_total_pence: 20 }),
+      ],
+      "3months",
+      today,
+      "GBP",
+    );
+    expect(b).toHaveLength(13);
+    expect(b[0]).toMatchObject({ start: "2026-07-27", end: "2026-08-02", label: "27 Jul", pence: 10 });
+    expect(b[12]).toMatchObject({ start: "2026-10-19", end: "2026-10-25", label: "19 Oct", pence: 20 });
+  });
+
+  it("the bars add up to the period's total for that currency (the headline)", () => {
+    const receipts = [
+      receipt({ id: "a", purchased_on: "2026-08-03", printed_total_pence: 1234 }),
+      receipt({ id: "b", purchased_on: "2026-09-15", printed_total_pence: null, lines: [{ line_total_pence: 66 }] }),
+      receipt({ id: "c", purchased_on: "2026-10-21", printed_total_pence: 500 }),
+      receipt({ id: "d", purchased_on: "2026-10-02", printed_total_pence: 70, currency: "EUR" }),
+    ];
+    for (const period of ["week", "month", "3months"] as const) {
+      const total = summariseSpending(receipts, periodRange(period, today)).byCurrency.GBP?.pence ?? 0;
+      expect(spendingBuckets(receipts, period, today, "GBP").reduce((n, x) => n + x.pence, 0)).toBe(total);
+    }
   });
 });

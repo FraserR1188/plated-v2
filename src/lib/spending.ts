@@ -203,3 +203,83 @@ export function spendingOverview<R extends SpendReceipt>(
     rows,
   };
 }
+
+// ─── Periods and chart buckets (commit 8b) ──────────────────────────────────
+
+export type SpendPeriod = "week" | "month" | "3months";
+
+/** Weeks in the "3 months" period: the last 13 Monday-to-Sunday weeks. */
+export const THREE_MONTH_WEEKS = 13;
+
+export function periodRange(period: SpendPeriod, todayKey: string): DateRange {
+  if (period === "week") return weekRange(todayKey);
+  if (period === "month") return monthRange(todayKey);
+  const thisWeek = weekRange(todayKey);
+  return { start: addDays(thisWeek.start, -7 * (THREE_MONTH_WEEKS - 1)), end: thisWeek.end };
+}
+
+export type SpendBucket = {
+  start: string;
+  end: string;
+  label: string;
+  /** The bucket's countable spend in the chart's currency; 0 is a real 0. */
+  pence: number;
+  receipts: number;
+  /** Receipts in the bucket with no readable amount: counted, never added. */
+  unknown: number;
+};
+
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "5 Oct", built by hand: no toLocale* (the Trends precedent). */
+const dayMonth = (key: string) => `${Number(key.substring(8, 10))} ${MONTHS[Number(key.substring(5, 7)) - 1]}`;
+
+/**
+ * The chart's bars for a period, in ONE currency (never mixed):
+ *   week    — a bar per day, Mon to Sun;
+ *   month   — a bar per Mon–Sun week, clipped to the 1st and to today;
+ *   3months — a bar per week, the last 13 weeks.
+ * Amounts follow receiptAmount (total, else lines, else unknown), so the bars
+ * add up to summariseSpending's total for that currency.
+ */
+export function spendingBuckets(
+  receipts: SpendReceipt[],
+  period: SpendPeriod,
+  todayKey: string,
+  currency: string,
+): SpendBucket[] {
+  const range = periodRange(period, todayKey);
+  const spans: { start: string; end: string; label: string }[] = [];
+  if (period === "week") {
+    for (let i = 0; i < 7; i++) {
+      const day = addDays(range.start, i);
+      spans.push({ start: day, end: day, label: DAY_LABELS[i] });
+    }
+  } else {
+    // Mon–Sun weeks from the Monday on or before the range's start, each
+    // clipped to the range.
+    for (let monday = weekRange(range.start).start; monday <= range.end; monday = addDays(monday, 7)) {
+      const start = monday < range.start ? range.start : monday;
+      const sunday = addDays(monday, 6);
+      spans.push({ start, end: sunday > range.end ? range.end : sunday, label: dayMonth(start) });
+    }
+  }
+
+  return spans.map((span) => {
+    let pence = 0;
+    let count = 0;
+    let unknown = 0;
+    for (const r of receipts) {
+      if (r.currency !== currency || !inRange(r.purchased_on, span)) continue;
+      const amount = receiptAmount(r);
+      if (amount == null) {
+        unknown++;
+      } else {
+        pence += amount.pence;
+        count++;
+      }
+    }
+    return { ...span, pence, receipts: count, unknown };
+  });
+}

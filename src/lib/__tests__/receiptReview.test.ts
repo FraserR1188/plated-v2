@@ -247,6 +247,60 @@ describe("parseReview — Save uses exactly what's shown", () => {
     expect(r.ok && r.lines[0]).toMatchObject({ qty: 3, qtyUnit: "each", unitPricePence: 100 });
   });
 
+  // 5b follow-up: a stored unit price is read as fact later (v2 matching), so
+  // an edited total that contradicts qty × unit price saves the unit price
+  // as unknown. Unknown beats a stored contradiction. qty is kept.
+  describe("an edited total that contradicts qty × unit price", () => {
+    const one = (l: ReceiptDraft["lines"][number]) => fieldsFromDraft({ ...SCANNED, lines: [l] });
+    const saved = (f: ReviewFields) => {
+      const r = parseReview(f);
+      if (!r.ok) throw new Error("expected ok");
+      return r.lines[0];
+    };
+    const apples = one(line("APPLES", 300, { qty: 3, qtyUnit: "each", unitPricePence: 100 }));
+    const k = apples.lines[0].key;
+
+    it("SAVES THE UNIT PRICE AS NULL, keeping qty", () => {
+      expect(saved(updateLine(apples, k, { totalText: "2.50" }))).toMatchObject({
+        qty: 3,
+        qtyUnit: "each",
+        unitPricePence: null,
+        lineTotalPence: 250,
+      });
+    });
+
+    it("an edit that still equals qty × unit price keeps it (same value, other text)", () => {
+      expect(saved(updateLine(apples, k, { totalText: "3" })).unitPricePence).toBe(100);
+    });
+
+    it("an edit that corrects a misread total to match keeps it", () => {
+      const misread = one(line("APPLES", 250, { qty: 3, qtyUnit: "each", unitPricePence: 100 }));
+      expect(saved(updateLine(misread, misread.lines[0].key, { totalText: "3.00" })).unitPricePence).toBe(100);
+    });
+
+    it("by weight, qty × unit price is rounded to the penny before comparing", () => {
+      const bananas = one(line("BANANAS", 91, { qty: 0.456, qtyUnit: "kg", unitPricePence: 199 }));
+      const kb = bananas.lines[0].key;
+      expect(saved(updateLine(bananas, kb, { totalText: "0.91" })).unitPricePence).toBe(199);
+      expect(saved(updateLine(bananas, kb, { totalText: "1.00" }))).toMatchObject({ qty: 0.456, unitPricePence: null });
+    });
+
+    it("an untouched line keeps what was read, even if it doesn't multiply out", () => {
+      const odd = one(line("APPLES", 250, { qty: 3, qtyUnit: "each", unitPricePence: 100 }));
+      expect(saved(odd).unitPricePence).toBe(100);
+    });
+
+    it("applies in edit mode too", () => {
+      const edit = fieldsFromDraft({
+        ...SCANNED,
+        mode: { kind: "edit", receiptId: "r1" },
+        parts: [],
+        lines: [line("APPLES", 300, { part: null, qty: 3, qtyUnit: "each", unitPricePence: 100 })],
+      });
+      expect(saved(updateLine(edit, edit.lines[0].key, { totalText: "2.00" })).unitPricePence).toBeNull();
+    });
+  });
+
   it("never carries a line's part or seam flag into what's saved", () => {
     const r = parseReview(fields());
     expect(r.ok && Object.keys(r.lines[2]).sort()).toEqual(

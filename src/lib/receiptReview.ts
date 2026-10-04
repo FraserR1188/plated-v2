@@ -17,6 +17,11 @@
 // `part` and `possibleSeamDuplicate` are review-only (findings §3): they
 // drive the part tags and the seam flags, and parseReview never passes them
 // on to the write.
+//
+// UNKNOWN BEATS A CONTRADICTION. qty and unit price aren't editable. When the
+// user edits a line's total so it no longer equals qty × unit price, the
+// unit price is saved as NULL (qty kept): v2 matching will read a stored
+// unit price as fact. A line whose total wasn't edited keeps what was read.
 // ============================================================
 
 import { parsePenceInput } from "./money";
@@ -38,6 +43,9 @@ export type ReviewLine = Pick<
   key: string;
   rawText: string;
   totalText: string;
+  /** The total as read or saved, to tell an edited total from an untouched
+   *  one. null for an added line. */
+  readTotalPence: number | null;
 };
 
 export type ReviewFields = {
@@ -96,6 +104,14 @@ const isBlank = (l: ReviewLine) => l.rawText.trim() === "" && l.totalText.trim()
  *  negative); an unknown one keeps the flag it was read with. */
 const discountFor = (l: ReviewLine, pence: number | null) => (pence != null ? pence < 0 : l.isDiscount);
 
+/** The unit price to save: NULL when the user edited the total to something
+ *  other than qty × unit price (rounded to the penny, for weighed lines). */
+function unitPriceFor(l: ReviewLine, totalPence: number | null): number | null {
+  const edited = totalPence !== l.readTotalPence;
+  if (!edited || l.unitPricePence == null || l.qty == null || totalPence == null) return l.unitPricePence;
+  return Math.round(l.qty * l.unitPricePence) === totalPence ? l.unitPricePence : null;
+}
+
 // ─── Draft → fields ─────────────────────────────────────────────────────────
 
 export function fieldsFromDraft(draft: ReceiptDraft): ReviewFields {
@@ -110,6 +126,7 @@ export function fieldsFromDraft(draft: ReceiptDraft): ReviewFields {
       part: l.part,
       rawText: l.rawText,
       totalText: penceText(l.lineTotalPence),
+      readTotalPence: l.lineTotalPence,
       qty: l.qty,
       qtyUnit: l.qtyUnit,
       unitPricePence: l.unitPricePence,
@@ -164,6 +181,7 @@ export function addLine(fields: ReviewFields): ReviewFields {
     part: null,
     rawText: "",
     totalText: "",
+    readTotalPence: null,
     qty: null,
     qtyUnit: null,
     unitPricePence: null,
@@ -212,7 +230,7 @@ export function parseReview(fields: ReviewFields): ParsedReview {
       rawText,
       qty: l.qty,
       qtyUnit: l.qtyUnit,
-      unitPricePence: l.unitPricePence,
+      unitPricePence: unitPriceFor(l, amount.pence),
       lineTotalPence: amount.pence,
       isDiscount: discountFor(l, amount.pence),
     });

@@ -20,6 +20,11 @@
 // resolves against the file containing the import), so callers pass a
 // loader: () => import(/* @vite-ignore */ PATH), with PATH a variable so
 // neither Vite's import analysis nor tsc tries to resolve it ahead of time.
+//
+// STATUS (receipt scanner commit 3): every receipt red test written against
+// this has gone green and switched to a normal import, except the spending
+// CSV additions in csv.test.ts. They go green in commit 6 (the Grocery
+// spending segment); delete this file then if nothing else uses it.
 // ============================================================
 
 const NOT_FOUND = /Failed to load url|Cannot find module|does not exist|ERR_MODULE_NOT_FOUND/i;

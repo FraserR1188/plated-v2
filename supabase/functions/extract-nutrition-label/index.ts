@@ -43,8 +43,18 @@ const ANTHROPIC_VERSION = "2023-06-01";
 
 // Haiku 4.5 is the right default: this is a bounded extraction task with
 // a forced tool schema, which is exactly what Haiku is for. ~$0.004 a
-// scan. Set the MODEL secret to claude-sonnet-5 if real-world labels
-// prove harder than expected — no redeploy needed.
+// scan.
+//
+// ⚠ THE MODEL SECRET IS SHARED by scan-meal-photo, extract-nutrition-label
+// and scan-recipe: setting it changes all three at once, with no redeploy
+// and no review. Check the model against this function first:
+//   • tool_choice is FORCED below, which is a 400 on Claude Opus 5.5 and
+//     Claude Fable 5.1 — every scan would fail.
+//   • Claude Sonnet 5 runs adaptive thinking when `thinking` is omitted (it
+//     is, below), and thinking counts toward max_tokens (2048 here), so a
+//     result can come back truncated. Set `thinking` in the request first.
+// (Receipt-scanner findings, candidate E. scan-receipt reads its own
+// RECEIPT_MODEL secret for this reason.)
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 
 // You are paying for every one of these. 20/hour is generous for a human

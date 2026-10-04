@@ -1,8 +1,6 @@
 // ============================================================
-// Receipt scanner, commit 2 — RED. supabase/functions/_shared/receipt.ts
-// doesn't exist yet (findings §3, Commit 2 as revised 2026-09-27). Every
-// test here must fail with "module not found: _shared/receipt" until
-// commit 3; see src/lib/__tests__/helpers/redImports.ts.
+// Receipt scanner: written red in commit 2 (findings, Commit 2 as revised
+// 2026-09-27), green from commit 3 — supabase/functions/_shared/receipt.ts.
 //
 // The house rule: the model TRANSCRIBES, the server CALCULATES. The model
 // returns every amount as the string printed; this module parses, redacts,
@@ -18,18 +16,22 @@
 //   flagSeamDuplicates(lines)             lines + possibleSeamDuplicate
 //   handleReceiptScan(req, deps)          the Edge Function, deps injected
 //
-// receipt.ts is Deno code; like whoop.ts it may read Deno.env at load, so
-// `Deno` is stubbed before the module is loaded (see whoop.test.ts).
+// receipt.ts is Deno code, but unlike whoop.ts it reads no Deno globals at
+// load (index.ts passes everything in through `deps`), so it imports
+// statically here with no Deno stub.
 // ============================================================
 
-import { describe, it, expect, vi, beforeAll } from "vitest";
-import { requireExports } from "../../../../src/lib/__tests__/helpers/redImports";
-
-beforeAll(() => {
-  (globalThis as unknown as { Deno: { env: { get: () => undefined } } }).Deno = {
-    env: { get: () => undefined },
-  };
-});
+import { describe, it, expect, vi } from "vitest";
+import {
+  parsePence,
+  redactLine,
+  cleanStoreName,
+  validatePurchaseDate,
+  partCountError,
+  normaliseScan,
+  flagSeamDuplicates,
+  handleReceiptScan,
+} from "../receipt.ts";
 
 // ─── The contract ───────────────────────────────────────────────────────────
 
@@ -85,32 +87,6 @@ type Deps = {
   env: { apiKey: string | undefined; model?: string };
   now: () => Date;
 };
-type Receipt = {
-  parsePence: (s: string | null, isDiscount?: boolean) => number | null;
-  redactLine: (text: string) => string | null;
-  cleanStoreName: (s: string | null) => string | null;
-  validatePurchaseDate: (s: string | null, today: Date) => string | null;
-  partCountError: (n: number) => { error: string; status: number } | null;
-  normaliseScan: (
-    tool: ToolInput,
-    ctx: { partCount: number; stopReason: string; today: Date },
-  ) => { ok: true; scan: Scan } | Failure;
-  flagSeamDuplicates: <T extends SeamLine>(lines: T[]) => (T & { possibleSeamDuplicate: boolean })[];
-  handleReceiptScan: (req: Request, deps: Deps) => Promise<Response>;
-};
-
-const RECEIPT = "../receipt.ts";
-const receipt = () =>
-  requireExports<Receipt>(() => import(/* @vite-ignore */ RECEIPT), "_shared/receipt", [
-    "parsePence",
-    "redactLine",
-    "cleanStoreName",
-    "validatePurchaseDate",
-    "partCountError",
-    "normaliseScan",
-    "flagSeamDuplicates",
-    "handleReceiptScan",
-  ]);
 
 const TODAY = new Date("2026-10-04T12:00:00Z");
 
@@ -155,7 +131,6 @@ describe("parsePence — strict, from the printed string", () => {
     ["0.29", 29], // no float arithmetic
     ["99999.99", 9999999], // five integer digits is the cap
   ])("%j → %d", async (s, pence) => {
-    const { parsePence } = await receipt();
     expect(parsePence(s)).toBe(pence);
   });
 
@@ -163,18 +138,15 @@ describe("parsePence — strict, from the printed string", () => {
   it.each(["12.3", "12.305", "", "abc", "-0.50-", "1,234.56", "123456.00", "12.30 A"])(
     "%j → null",
     async (s) => {
-      const { parsePence } = await receipt();
       expect(parsePence(s)).toBeNull();
     },
   );
 
   it("null in, null out", async () => {
-    const { parsePence } = await receipt();
     expect(parsePence(null)).toBeNull();
   });
 
   it("is_discount forces the sign to ≤ 0, whichever way it was printed", async () => {
-    const { parsePence } = await receipt();
     expect(parsePence("0.75", true)).toBe(-75);
     expect(parsePence("0.75-", true)).toBe(-75);
     expect(parsePence("-0.75", true)).toBe(-75);
@@ -198,7 +170,6 @@ describe("redactLine — defence in depth behind the prompt (findings §3, §7)"
     "NECTAR CARD 98261234",
     "NECTAR POINTS BALANCE 1234",
   ])("drops %j", async (text) => {
-    const { redactLine } = await receipt();
     expect(redactLine(text)).toBeNull();
   });
 
@@ -208,7 +179,6 @@ describe("redactLine — defence in depth behind the prompt (findings §3, §7)"
   it.each(["Nectar Price Saving", "Nectar Price Saving -0.75", "Clubcard Price", "Clubcard Price -0.50"])(
     "keeps %j unchanged",
     async (text) => {
-      const { redactLine } = await receipt();
       expect(redactLine(text)).toBe(text);
     },
   );
@@ -216,7 +186,6 @@ describe("redactLine — defence in depth behind the prompt (findings §3, §7)"
   it.each(["JS CHICKPEAS", "BRAIDED LOAF", "EXCHANGE RATE CARD", "POINTED CABBAGE"])(
     "keeps %j: keywords match whole words only (AID ⊄ BRAIDED)",
     async (text) => {
-      const { redactLine } = await receipt();
       expect(redactLine(text)).toBe(text);
     },
   );
@@ -228,7 +197,6 @@ describe("redactLine — defence in depth behind the prompt (findings §3, §7)"
     ["1234 5678 9012 3456", "1234 5678 9012 3456"], // 12+ digits with spaces
     ["RETURNS TO SW1A 1AA", "SW1A 1AA"], // postcode
   ])("masks the digits in %j", async (text, secret) => {
-    const { redactLine } = await receipt();
     const out = redactLine(text);
     expect(out).not.toBeNull();
     expect(out).not.toContain(secret);
@@ -237,18 +205,15 @@ describe("redactLine — defence in depth behind the prompt (findings §3, §7)"
 
 describe("cleanStoreName", () => {
   it("strips a postcode", async () => {
-    const { cleanStoreName } = await receipt();
     expect(cleanStoreName("Sainsbury's SW1A 1AA")).toBe("Sainsbury's");
   });
 
   it("is at most 60 characters", async () => {
-    const { cleanStoreName } = await receipt();
     const out = cleanStoreName("A".repeat(80));
     expect(out === null || out.length <= 60).toBe(true);
   });
 
   it("null and blank are null", async () => {
-    const { cleanStoreName } = await receipt();
     expect(cleanStoreName(null)).toBeNull();
     expect(cleanStoreName("   ")).toBeNull();
   });
@@ -263,7 +228,6 @@ describe("validatePurchaseDate — today is 2026-10-04 (server UTC)", () => {
     ["2024-10-04", "2024-10-04"], // exactly two years ago is allowed
     ["2026-02-28", "2026-02-28"],
   ])("%j → %j", async (s, out) => {
-    const { validatePurchaseDate } = await receipt();
     expect(validatePurchaseDate(s, TODAY)).toBe(out);
   });
 
@@ -276,12 +240,10 @@ describe("validatePurchaseDate — today is 2026-10-04 (server UTC)", () => {
     "25/09/26", // the model must return ISO; anything else is unread
     "",
   ])("%j → null", async (s) => {
-    const { validatePurchaseDate } = await receipt();
     expect(validatePurchaseDate(s, TODAY)).toBeNull();
   });
 
   it("accepts a real leap day", async () => {
-    const { validatePurchaseDate } = await receipt();
     expect(validatePurchaseDate("2024-02-29", new Date("2025-01-10T12:00:00Z"))).toBe(
       "2024-02-29",
     );
@@ -292,7 +254,6 @@ describe("validatePurchaseDate — today is 2026-10-04 (server UTC)", () => {
 
 describe("parts", () => {
   it("0 parts is bad_request (400); 4 is too_long (413); 1–3 are fine", async () => {
-    const { partCountError } = await receipt();
     expect(partCountError(0)).toEqual({ error: "bad_request", status: 400 });
     expect(partCountError(4)).toEqual({ error: "too_long", status: 413 });
     expect(partCountError(1)).toBeNull();
@@ -300,7 +261,6 @@ describe("parts", () => {
   });
 
   it("a line's part outside 1..n becomes null", async () => {
-    const { normaliseScan } = await receipt();
     const r = normaliseScan(
       tool({ total_printed_part: 3, lines: [line({ part: 0 }), line({ part: 4 }), line({ part: 2 })] }),
       ctx(3),
@@ -310,7 +270,6 @@ describe("parts", () => {
   });
 
   it("parts going backwards down the list add a note", async () => {
-    const { normaliseScan } = await receipt();
     const r = normaliseScan(
       tool({ total_printed_part: 2, lines: [line({ part: 2 }), line({ part: 1 })] }),
       ctx(2),
@@ -320,7 +279,6 @@ describe("parts", () => {
   });
 
   it("a total read from before the last part adds a note", async () => {
-    const { normaliseScan } = await receipt();
     const r = normaliseScan(
       tool({ total_printed_part: 1, lines: [line({ part: 1 }), line({ part: 3 })] }),
       ctx(3),
@@ -330,7 +288,6 @@ describe("parts", () => {
   });
 
   it("same_receipt: false is no_receipt (422)", async () => {
-    const { normaliseScan } = await receipt();
     expect(normaliseScan(tool({ same_receipt: false }), ctx(2))).toMatchObject({
       ok: false,
       error: "no_receipt",
@@ -339,7 +296,6 @@ describe("parts", () => {
   });
 
   it("recognisable: false is no_receipt (422)", async () => {
-    const { normaliseScan } = await receipt();
     expect(normaliseScan(tool({ recognisable: false }), ctx(1))).toMatchObject({
       ok: false,
       error: "no_receipt",
@@ -348,7 +304,6 @@ describe("parts", () => {
   });
 
   it("more than 150 lines is too_long", async () => {
-    const { normaliseScan } = await receipt();
     const lines = Array.from({ length: 151 }, (_, i) => line({ raw_text: `ITEM ${i}` }));
     expect(normaliseScan(tool({ lines }), ctx(1))).toMatchObject({ ok: false, error: "too_long" });
   });
@@ -358,7 +313,6 @@ describe("parts", () => {
 
 describe("stop_reason: max_tokens (candidate D)", () => {
   it("is a failure, never a truncated line list", async () => {
-    const { normaliseScan } = await receipt();
     const r = normaliseScan(tool(), ctx(1, "max_tokens"));
     expect(r.ok).toBe(false);
     expect(r).toMatchObject({ error: "too_long" });
@@ -370,7 +324,6 @@ describe("stop_reason: max_tokens (candidate D)", () => {
 
 describe("normaliseScan — lines", () => {
   it("parses amounts, and a discount is never positive", async () => {
-    const { normaliseScan } = await receipt();
     const r = normaliseScan(
       tool({
         total_printed: "1.00",
@@ -390,7 +343,6 @@ describe("normaliseScan — lines", () => {
   });
 
   it("a void stays as two lines — the item and its negative cancel line — and still reconciles", async () => {
-    const { normaliseScan } = await receipt();
     const r = normaliseScan(
       tool({
         total_printed: "0.41",
@@ -410,7 +362,6 @@ describe("normaliseScan — lines", () => {
   });
 
   it("drops tender lines and blank lines, keeps loyalty price savings", async () => {
-    const { normaliseScan } = await receipt();
     const r = normaliseScan(
       tool({
         lines: [
@@ -427,7 +378,6 @@ describe("normaliseScan — lines", () => {
   });
 
   it("an unreadable total or line total stays null, never 0", async () => {
-    const { normaliseScan } = await receipt();
     const r = normaliseScan(
       tool({ total_printed: null, lines: [line({ line_total: null }), line({ line_total: "1,234.56" })] }),
       ctx(1),
@@ -449,7 +399,6 @@ describe("flagSeamDuplicates — flag, never delete", () => {
   const flags = (out: { possibleSeamDuplicate: boolean }[]) => out.map((l) => l.possibleSeamDuplicate);
 
   it("a one-line echo across a join flags the part k+1 copy only", async () => {
-    const { flagSeamDuplicates } = await receipt();
     const out = flagSeamDuplicates([
       s(1, "MILK", 150),
       s(1, "GREEN LENTILS", 50),
@@ -461,7 +410,6 @@ describe("flagSeamDuplicates — flag, never delete", () => {
   });
 
   it("a two-line echo flags both part k+1 copies", async () => {
-    const { flagSeamDuplicates } = await receipt();
     const out = flagSeamDuplicates([
       s(1, "MILK", 150),
       s(1, "EGGS", 200),
@@ -474,25 +422,21 @@ describe("flagSeamDuplicates — flag, never delete", () => {
   });
 
   it("identical adjacent lines within one part are a real repeat, never flagged", async () => {
-    const { flagSeamDuplicates } = await receipt();
     const out = flagSeamDuplicates([s(1, "BANANAS", 85), s(1, "BANANAS", 85), s(1, "MILK", 150)]);
     expect(flags(out)).toEqual([false, false, false]);
   });
 
   it("same text with a different total is not flagged", async () => {
-    const { flagSeamDuplicates } = await receipt();
     const out = flagSeamDuplicates([s(1, "CANINI BEANS", 50), s(2, "CANINI BEANS", 45)]);
     expect(flags(out)).toEqual([false, false]);
   });
 
   it("a null total is not flagged", async () => {
-    const { flagSeamDuplicates } = await receipt();
     const out = flagSeamDuplicates([s(1, "CHICKPEAS", null), s(2, "CHICKPEAS", null)]);
     expect(flags(out)).toEqual([false, false]);
   });
 
   it("matching ignores case, spacing and trailing VAT letters", async () => {
-    const { flagSeamDuplicates } = await receipt();
     const out = flagSeamDuplicates([s(1, "Green  Lentils A", 50), s(2, "GREEN LENTILS", 50)]);
     expect(flags(out)).toEqual([false, true]);
   });
@@ -557,7 +501,6 @@ function deps(admin: FakeAdmin, fetchImpl: Deps["fetch"]): Deps {
 
 describe("handleReceiptScan — one ai_extractions row per request", () => {
   it("a 3-part scan makes one model call and inserts exactly one row", async () => {
-    const { handleReceiptScan } = await receipt();
     const admin = fakeAdmin();
     const fetchMock = vi.fn(async () =>
       modelResponse(
@@ -588,7 +531,6 @@ describe("handleReceiptScan — one ai_extractions row per request", () => {
   });
 
   it("a 4-part request is too_long (413): no model call, no row", async () => {
-    const { handleReceiptScan } = await receipt();
     const admin = fakeAdmin();
     const fetchMock = vi.fn(async () => modelResponse(tool()));
     const res = await handleReceiptScan(scanRequest(4), deps(admin, fetchMock));
@@ -600,7 +542,6 @@ describe("handleReceiptScan — one ai_extractions row per request", () => {
   });
 
   it("a max_tokens stop is a failure with no lines, logged once as model_error", async () => {
-    const { handleReceiptScan } = await receipt();
     const admin = fakeAdmin();
     const fetchMock = vi.fn(async () => modelResponse(tool(), "max_tokens"));
     const res = await handleReceiptScan(scanRequest(2), deps(admin, fetchMock));

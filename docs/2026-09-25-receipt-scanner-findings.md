@@ -1401,6 +1401,16 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
     - [x] History's top rows read Today and Yesterday on the right days. Tapping a day lands Today on that date.
     - [ ] Optional: the same after midnight, or with the phone's date moved, the newest row is still today. (Optional; not confirmed separately by "All Passed".)
 
+### Commit 8 — Data control size, spending charts and 3 months (added 2026-10-04, Robbie)
+
+- **8a** `feat(data): a bigger History | Trends | Spending control on its own row`
+  - The segmented control leaves the 220 dp cap beside the "Data" title for its own full-width row under it. Labels go `Typography.sm` → `base`, and `minHeight` 36 → 42 dp.
+  - **MEASURED:** a new `trendsUi` test (no `maxWidth`, control in `styles.controlRow`) was red first, then green. Suite 1391 / 1391, `tsc` 0, runtime versions unchanged.
+  - **Checklist (Pixel 9):**
+    - [ ] The control spans the width under "Data", with larger labels that don't truncate at 360 dp or at the largest system font.
+    - [ ] History, Trends and Spending switch as before, and the range control sits top right below it.
+- **8b** `feat(data): spending charts by day, week and 13 weeks, and a 3-month range`. See below once built.
+
 ### Revised commit list
 
 | # | Commit | Status vs the first version |

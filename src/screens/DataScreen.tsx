@@ -48,14 +48,14 @@ export function DataScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <View style={styles.header}>
         <Text style={styles.title}>Data</Text>
-        <View style={styles.controlWrap}>
-          <SegmentedControl
-            options={SEGMENTS}
-            value={segment}
-            onChange={setSegment}
-            accessibilityLabel="History, Trends or Spending"
-          />
-        </View>
+      </View>
+      <View style={styles.controlRow}>
+        <SegmentedControl
+          options={SEGMENTS}
+          value={segment}
+          onChange={setSegment}
+          accessibilityLabel="History, Trends or Spending"
+        />
       </View>
 
       {segment === "history" ? (
@@ -76,10 +76,6 @@ const styles = StyleSheet.create(
       backgroundColor: Colors.bg,
     },
     header: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: Spacing.sm,
       paddingHorizontal: Spacing.md,
       paddingTop: Spacing.md,
       paddingBottom: Spacing.sm,
@@ -90,12 +86,11 @@ const styles = StyleSheet.create(
       color: Colors.text,
       letterSpacing: -0.5,
     },
-    // Capped rather than flex:1 so the control keeps its shape beside the
-    // title at 360dp, and doesn't stretch across a tablet width.
-    controlWrap: {
-      flexShrink: 1,
-      maxWidth: 220,
-      minWidth: 160,
+    // Its own full-width row under the title (2026-10-04): three labels in
+    // a 220 dp cap beside the title were cramped.
+    controlRow: {
+      paddingHorizontal: Spacing.md,
+      paddingBottom: Spacing.sm,
     },
   }),
 );

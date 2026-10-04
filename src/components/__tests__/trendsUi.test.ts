@@ -49,6 +49,13 @@ describe("DataScreen", () => {
     expect(code).toContain("<SpendingPanel />");
   });
 
+  // 2026-10-04 (Robbie): the control was capped at 220 dp beside the title,
+  // and three labels made it cramped. It now has its own full-width row.
+  it("gives the segmented control its own full-width row, not a 220 dp cap beside the title", () => {
+    expect(code).not.toMatch(/maxWidth/);
+    expect(code).toMatch(/<View style=\{styles\.controlRow\}>\s*<SegmentedControl/);
+  });
+
   it("does not persist which segment was last open", () => {
     // Deliberate: the tab must always open where you expect. The nutrient
     // selection inside Trends IS remembered, which is a different thing.

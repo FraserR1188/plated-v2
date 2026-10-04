@@ -1271,20 +1271,39 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
       - The wording and the on/off switch live in one exported constant, `LONG_RECEIPT_NOTICE`, in `receiptCapture.ts`, so taking it off is one line plus its test.
       - It comes off only when the multi-photo re-run passes or tester reports show multi-part scans holding up (§3 rule 2).
       - Tester reports go in `testing/` as usual. The testing round's brief asks each tester to scan one long receipt in parts and report the item count against the receipt.
-  - **Checklist (Pixel 9):**
+  - **Built 2026-10-04 (MEASURED unless marked):**
+    - **Pure logic in `lib/receiptReview.ts`:**
+      - fields as live text, plus add, edit and remove;
+      - `parseReview`: exactly what's shown. Text that doesn't parse refuses the save and marks the field, never a last-good value or 0;
+      - `reviewSummary`: items and discounts and the reconcile, over the lines as they are now;
+      - `reconcileBanner`: equal / over / under / can't check.
+      - A known amount sets `is_discount` by its sign; an empty amount keeps the read flag. A line added and left empty is dropped.
+    - **Currency, Revised: never a silent GBP.** `draftFromScan` no longer defaults an unread currency to GBP; the draft's currency is `string | null`. The screen shows "Currency not read: choose one", and Save refuses until it's chosen. `saveReceipt` / `updateReceipt` take a `ReceiptHeader`, whose currency is a string, so a null can't reach the RPC. `formatPence(x, "")` shows no symbol, so the banner never implies £ before a choice.
+    - **Keep-input contract, in the store:** `saveReceiptReview` / `deleteReviewedReceipt` leave the draft as the same object on every failure; only success clears it. The screen reseeds its fields only when the draft object changes (the edit-mode load), so a failure can't touch what's typed.
+    - **Entry:** ReceiptScan now replaces itself with `ReceiptReview { mode: "create" }`. The `__DEV__` entry adds "Edit the newest saved receipt" (edit mode, via `fetchReceipts`, refreshed on focus). `receiptDevEntry.test.ts` now counts a `navigate("ReceiptReview")` from anywhere else as a real entry too.
+    - **Leaving** a fresh scan, or an edit with changes, asks before discarding; nothing leaves mid-save. Every exit clears the draft.
+    - **Red first:** 2 suites failed on the missing `receiptReview` module, 1 on the GBP default, and 1 on the dev entry's missing reopen.
+    - **Sabotages, all red and restored byte-identical:**
+      - Remove leaves a seam-flagged line counted → 2 red (removeLine; the item-count and reconcile test).
+      - A save failure refreshes the draft (the screen would reseed) → 3 red (both keep-input tests and the P0002 one).
+      - Not yet run: a price field committing on blur. It's a screen-level bug, so it's a device step, below.
+    - **Results:** suite 1365 passing, 6 expected-red (the CSV additions, until commit 6). `tsc` 0. Runtime versions unchanged (`c1907ba4…` / `5359dcce…`): JS only, OTA-able.
+  - **Checklist (Pixel 9).** Dev client on `feat/receipts`, Settings → DEV box. Spending doesn't exist until commit 6, so the dev box's "Newest saved" line and SQL stand in for it.
     - [ ] The header shows items and discounts, not lines, and the two add up to the line count in SQL.
     - [ ] The notice shows on a 2- and 3-part scan, not on a 1-part scan, and not in edit mode.
     - [ ] Edit a price and tap Save without blurring → the saved row has the edited value, **in create and in edit mode** (the PL-005/006 regression check).
     - [ ] Airplane mode → Save → error, and all edits still there, in both modes.
-    - [ ] Unreadable total → NULL in SQL, "—" in the UI.
+    - [ ] Unreadable total → an empty field reading "Unknown", and NULL in SQL; the banner says it can't check.
+    - [ ] An unread currency → "Currency not read: choose one", and Save refuses until a currency is tapped.
     - [ ] An unread date → `purchased_on_estimated` true.
     - [ ] **Edit with the same date → still true; change the date → false** (SQL).
     - [ ] Edit: remove a line and add one → SQL shows exactly the new set; `updated_at` moved.
-    - [ ] Delete → the row and lines are gone, and Spending updates.
-    - [ ] Delete on a second device first, then Save here → "no longer exists", with no row resurrected.
-    - [ ] A 3-part scan with a seam echo → the flag shows, the banner quotes the matching amount, and Remove fixes the reconcile.
+    - [ ] Delete → confirm → the row and lines are gone in SQL, and the dev box's "Newest saved" line moves on.
+    - [ ] Open a receipt in edit mode, delete it in the SQL editor (`delete from public.receipts where id = '<id>';` — the editor has no auth.uid(), so not the RPC), then Save here → "This receipt no longer exists", OK closes, and no row is resurrected.
+    - [ ] A 3-part scan with a seam echo → the flag shows, the banner quotes the matching amount, and Remove fixes the reconcile and lowers the item count.
+    - [ ] Back from a fresh scan asks "Discard this receipt?"; Keep editing keeps everything.
     - [ ] SQL: `select count(*) from meal_entries` is unchanged across save, edit and delete.
-- **Sabotage:** switch one price field to commit-on-blur → the "Save without blurring" step fails on device (record it once).
+- **Sabotage (device, record once):** switch one price field to commit-on-blur → the "Save without blurring" step fails on device.
 
 ### Commit 6 — Data tab: Grocery spending segment
 

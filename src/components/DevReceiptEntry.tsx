@@ -1,9 +1,10 @@
 // ============================================================
 // src/components/DevReceiptEntry.tsx — TEMPORARY, DEV BUILDS ONLY
 //
-// Opens ReceiptScan and shows the last scan's draft, so receipt commit 5a can
-// be device-tested before its real entry (Data → Spending, commit 6) and
-// its destination (the review screen, commit 5b) exist.
+// Opens ReceiptScan, and reopens the newest saved receipt in ReceiptReview's
+// edit mode, so receipt commits 5a and 5b can be device-tested before their
+// real entries (Data → Spending's scan button and receipt rows, commit 6)
+// exist.
 //
 // IT CANNOT SHIP:
 //   • SettingsScreen renders it only as `{__DEV__ && <DevReceiptEntry />}`.
@@ -12,30 +13,45 @@
 //     its own when !__DEV__, as a second lock.
 //   • receiptDevEntry.test.ts fails if it's rendered anywhere except under
 //     __DEV__ in SettingsScreen — and fails outright once any non-dev
-//     navigate("ReceiptScan") exists (commit 6's Spending entry), until this
-//     file and its one use are deleted.
+//     navigate("ReceiptScan") or navigate("ReceiptReview") exists (commit
+//     6's Spending entries), until this file and its one use are deleted.
 // ============================================================
 
-import React from "react";
+import React, { useCallback, useState } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
-import { useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useStore } from "../store/useStore";
+import { fetchReceipts, type ReceiptListRow } from "../lib/receipts";
 import { formatPence } from "../lib/money";
 import { Colors, Spacing, Radius, Typography, withDefaultFont } from "../theme/tokens";
 import { RootStackParamList } from "../types";
 
 export function DevReceiptEntry() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const draft = useStore((s) => s.receiptDraft);
-  if (!__DEV__) return null;
+  const userId = useStore((s) => s.userId);
+  const [newest, setNewest] = useState<ReceiptListRow | null>(null);
 
-  const scanned = draft && draft.lines.length > 0 ? draft : null;
-  const flagged = scanned ? scanned.lines.filter((l) => l.possibleSeamDuplicate).length : 0;
+  // The newest saved receipt, refreshed on every return to Settings, so a
+  // save, edit or delete in review shows here at once.
+  useFocusEffect(
+    useCallback(() => {
+      if (!__DEV__ || !userId) return;
+      let live = true;
+      fetchReceipts(userId)
+        .then((rows) => live && setNewest(rows[0] ?? null))
+        .catch(() => live && setNewest(null));
+      return () => {
+        live = false;
+      };
+    }, [userId]),
+  );
+
+  if (!__DEV__) return null;
 
   return (
     <View style={styles.box}>
-      <Text style={styles.tag}>DEV ONLY · receipt 5a</Text>
+      <Text style={styles.tag}>DEV ONLY · receipt 5a/5b</Text>
       <Pressable
         style={({ pressed }) => [styles.btn, pressed && { opacity: 0.75 }]}
         onPress={() => navigation.navigate("ReceiptScan")}
@@ -43,17 +59,24 @@ export function DevReceiptEntry() {
       >
         <Text style={styles.btnText}>Scan a receipt</Text>
       </Pressable>
-      {scanned && (
-        <Text style={styles.summary}>
-          Last scan: {scanned.parts.length} part{scanned.parts.length === 1 ? "" : "s"},{" "}
-          {scanned.lines.length} lines, {flagged} flagged · total{" "}
-          {scanned.header.printedTotalPence == null
-            ? "—"
-            : formatPence(scanned.header.printedTotalPence, scanned.header.currency)}{" "}
-          · {scanned.header.purchasedOn}
-          {scanned.header.purchasedOnEstimated ? " (estimated)" : ""}
-          {scanned.header.store ? ` · ${scanned.header.store}` : ""}
-        </Text>
+      {newest ? (
+        <>
+          <Pressable
+            style={({ pressed }) => [styles.btn, pressed && { opacity: 0.75 }]}
+            onPress={() => navigation.navigate("ReceiptReview", { mode: "edit", receiptId: newest.id })}
+            accessibilityRole="button"
+          >
+            <Text style={styles.btnText}>Edit the newest saved receipt</Text>
+          </Pressable>
+          <Text style={styles.summary}>
+            Newest saved: {newest.purchased_on}
+            {newest.purchased_on_estimated ? " (estimated)" : ""} · {newest.store ?? "no store"} · total{" "}
+            {newest.printed_total_pence == null ? "—" : formatPence(newest.printed_total_pence, newest.currency)} ·{" "}
+            {newest.lines.length} lines
+          </Text>
+        </>
+      ) : (
+        <Text style={styles.summary}>No saved receipts yet.</Text>
       )}
     </View>
   );

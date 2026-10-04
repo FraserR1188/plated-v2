@@ -10,9 +10,12 @@
 //      is the right-hand side of `__DEV__ && …` — dead code in release and
 //      preview builds, where __DEV__ is compiled to false.
 //   2. The component also returns null on its own when !__DEV__.
-//   3. Once ANY other navigate("ReceiptScan") exists in src/ (the real entry),
-//      the dev entry must be gone: the file, its import and its render. This
-//      test fails at commit 6 until it's deleted.
+//   3. Once ANY other navigate("ReceiptScan") or navigate("ReceiptReview")
+//      exists in src/ (the real entries: Spending's scan button and its
+//      receipt rows), the dev entry must be gone: the file, its import and
+//      its render. This test fails at commit 6 until it's deleted.
+//      (ReceiptScan's own replace("ReceiptReview") after a scan is the flow,
+//      not an entry, so only navigate() counts.)
 // ============================================================
 
 import { describe, it, expect } from "vitest";
@@ -23,6 +26,8 @@ import { SRC_ROOT, readNormalized, walkTsFiles } from "./helpers/astWrites";
 
 const DEV_FILE = "components/DevReceiptEntry.tsx";
 const COMPONENT = "DevReceiptEntry";
+/** The receipt screens an entry can open (5a: capture; 5b: review/edit). */
+const ENTRY_SCREENS = ["ReceiptScan", "ReceiptReview"];
 
 const rel = (f: string) => path.relative(SRC_ROOT, f).replace(/\\/g, "/");
 const files = walkTsFiles(SRC_ROOT).map((f) => ({ file: rel(f), text: readNormalized(f) }));
@@ -45,8 +50,8 @@ function visitAll(sf: ts.SourceFile, fn: (n: ts.Node) => void) {
   visit(sf);
 }
 
-/** Every `navigate("ReceiptScan")` call, by file. */
-function receiptScanEntries(): string[] {
+/** Every `navigate("ReceiptScan" | "ReceiptReview", …)` call, as "file → screen". */
+function receiptEntries(): string[] {
   const out: string[] = [];
   for (const { file, text } of files) {
     visitAll(parse(file, text), (n) => {
@@ -56,9 +61,9 @@ function receiptScanEntries(): string[] {
         n.expression.name.text === "navigate" &&
         n.arguments[0] &&
         ts.isStringLiteral(n.arguments[0]) &&
-        n.arguments[0].text === "ReceiptScan"
+        ENTRY_SCREENS.includes(n.arguments[0].text)
       ) {
-        out.push(file);
+        out.push(`${file} → ${n.arguments[0].text}`);
       }
     });
   }
@@ -81,7 +86,8 @@ function isUnderDevGuard(node: ts.Node): boolean {
 }
 
 const devFileExists = fs.existsSync(path.join(SRC_ROOT, DEV_FILE));
-const realEntries = receiptScanEntries().filter((f) => f !== DEV_FILE);
+const entries = receiptEntries();
+const realEntries = entries.filter((e) => !e.startsWith(`${DEV_FILE} →`));
 
 describe("the dev entry to ReceiptScan (temporary, receipt 5a)", () => {
   it("is gone once a real ReceiptScan entry exists (commit 6: delete DevReceiptEntry and its use)", () => {
@@ -124,9 +130,11 @@ describe("the dev entry to ReceiptScan (temporary, receipt 5a)", () => {
     expect(text).toMatch(/if\s*\(\s*!__DEV__\s*\)\s*return null;/);
   });
 
-  it("is today the only way into ReceiptScan (until commit 6)", () => {
+  it("is today the only way into ReceiptScan and ReceiptReview (until commit 6)", () => {
     // Informational pin: if this fails because a real entry appeared, the
     // first test above is the one that matters.
-    expect(receiptScanEntries()).toEqual(devFileExists ? [DEV_FILE] : realEntries);
+    expect(entries).toEqual(
+      devFileExists ? [`${DEV_FILE} → ReceiptScan`, `${DEV_FILE} → ReceiptReview`] : realEntries,
+    );
   });
 });

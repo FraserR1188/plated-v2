@@ -22,6 +22,22 @@ import {
 
 export type ReceiptPart = PreparedImage;
 
+/**
+ * The long-receipt notice (findings §3 rule 2, revised 2026-10-04): the
+ * multi-photo re-run hasn't passed, so a scan of 2+ parts ships to testers
+ * with this on the review screen. THE ONE SWITCH: set it to null when the
+ * re-run passes or tester reports show multi-part scans holding up (and
+ * update its test).
+ */
+export const LONG_RECEIPT_NOTICE: string | null =
+  "Long receipts are still being tested. Check the lines against your receipt, and please tell us how it coped.";
+
+/** A fresh scan of 2 or more parts, while the notice is on. Not in edit
+ *  mode: a saved receipt has already been checked. */
+export function showLongReceiptNotice(draft: Pick<ReceiptDraft, "mode" | "parts">): boolean {
+  return LONG_RECEIPT_NOTICE != null && draft.mode.kind === "create" && draft.parts.length >= 2;
+}
+
 /** Fewer than 3 parts so far. At 3 the screen says "3 parts is the most". */
 export function canAddPart(parts: readonly ReceiptPart[]): boolean {
   return parts.length < MAX_RECEIPT_PARTS;
@@ -55,9 +71,9 @@ export function scanParts(parts: readonly ReceiptPart[]): Promise<ReceiptScanRes
  *
  * purchased_on_estimated (PL-048's meaning): true iff the date wasn't read
  * from the receipt — then it defaults to today's dateKey(), and the review
- * screen lets the user set it. An unread currency defaults to GBP because
- * the review screen shows it for the user to confirm; an unread total stays
- * null, never 0.
+ * screen lets the user set it. An unread currency stays null — the review
+ * screen won't save until one is chosen, so it can't save silently as GBP
+ * (5b). An unread total stays null, never 0.
  */
 export function draftFromScan(
   scan: ReceiptScanSuccess,
@@ -72,7 +88,7 @@ export function draftFromScan(
       purchasedOn: scan.purchasedOn ?? todayKey,
       purchasedOnEstimated: scan.purchasedOn == null,
       printedTotalPence: scan.printedTotalPence,
-      currency: scan.currency ?? "GBP",
+      currency: scan.currency,
     },
     lines: scan.lines.map((l) => ({
       part: l.part,

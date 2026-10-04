@@ -54,6 +54,17 @@ export type Reconcile = {
 
 export const UNKNOWN_STORE = "Unknown store";
 
+export type LineCounts = { items: number; discounts: number };
+
+/** What the review header shows instead of a line count (5b, revised
+ *  2026-10-04: 61 lines read for 45 items bought). Items are the
+ *  non-discount lines; discounts — multibuy savings, loyalty prices, void
+ *  cancels — are counted separately. */
+export function countLines(lines: { isDiscount: boolean }[]): LineCounts {
+  const discounts = lines.filter((l) => l.isDiscount).length;
+  return { items: lines.length - discounts, discounts };
+}
+
 /** The printed total, else the sum of lines if every line total is known. */
 export function receiptAmount(
   r: Pick<SpendReceipt, "printed_total_pence" | "lines">,

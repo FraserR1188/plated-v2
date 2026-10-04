@@ -135,8 +135,11 @@ describe("draftFromScan", () => {
     expect(d.header.purchasedOnEstimated).toBe(true);
   });
 
-  it("an unread currency defaults to GBP (the review screen shows it for the user to confirm)", () => {
-    expect(draftFromScan({ ...SCAN, currency: null }, [p(1)], "2026-10-04").header.currency).toBe("GBP");
+  // Revised 5b: it used to default to GBP for the review screen to show. A
+  // default can be saved without anyone looking at it, so it stays unset
+  // and the review screen won't save until it's chosen.
+  it("an unread currency stays unset (null), never a silent GBP", () => {
+    expect(draftFromScan({ ...SCAN, currency: null }, [p(1)], "2026-10-04").header.currency).toBeNull();
   });
 
   it("an unread total stays null, never 0", () => {

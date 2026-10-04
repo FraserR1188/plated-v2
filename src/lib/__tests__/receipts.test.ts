@@ -25,14 +25,14 @@ import {
   fetchReceipt,
   ReceiptNotFoundError,
   RECEIPTS_PAGE_SIZE,
-  type ReceiptHeaderDraft,
+  type ReceiptHeader,
   type ReceiptLineDraft,
 } from "../receipts";
 import { fakeCappedTable, type FakeRow } from "../../store/__tests__/helpers/fakePostgrest";
 
 const USER = "a8435663-72e9-4d33-9c3f-803c4cbda393";
 
-const HEADER: ReceiptHeaderDraft = {
+const HEADER: ReceiptHeader = {
   store: "Sainsbury's",
   purchasedOn: "2026-09-20",
   purchasedOnEstimated: false,

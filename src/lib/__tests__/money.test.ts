@@ -45,6 +45,8 @@ describe("formatPence — locale-free", () => {
     [0, "GBP", "£0.00"],
     [123456789, "GBP", "£1,234,567.89"], // thousands separator done by hand
     [1230, "XYZ", "12.30 XYZ"], // unknown code: amount, then the code
+    [1230, "", "12.30"], // no code chosen yet: no symbol, no trailing space
+    [-50, "", "−0.50"],
   ])("%d %s → %j", async (pence, currency, text) => {
     expect(formatPence(pence, currency)).toBe(text);
   });

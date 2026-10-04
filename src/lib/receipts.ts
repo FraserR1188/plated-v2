@@ -84,8 +84,14 @@ export type ReceiptHeaderDraft = {
    *  Sent on save only; on update the server decides it. */
   purchasedOnEstimated: boolean;
   printedTotalPence: number | null;
-  currency: string;
+  /** null = not read from the receipt and not yet chosen. Never defaulted:
+   *  the review screen won't save until the user picks one (5b), so an
+   *  unread currency can't be saved silently as GBP. */
+  currency: string | null;
 };
+
+/** A header ready to write: the currency has been chosen. */
+export type ReceiptHeader = Omit<ReceiptHeaderDraft, "currency"> & { currency: string };
 
 export type ReceiptLineDraft = {
   rawText: string;
@@ -158,7 +164,7 @@ function linesPayload(lines: ReceiptLineDraft[]) {
 }
 
 export async function saveReceipt(
-  header: ReceiptHeaderDraft,
+  header: ReceiptHeader,
   lines: ReceiptLineDraft[],
 ): Promise<ReceiptRow> {
   const { data, error } = await supabase.rpc("save_receipt", {
@@ -178,7 +184,7 @@ export async function saveReceipt(
 
 export async function updateReceipt(
   id: string,
-  header: ReceiptHeaderDraft,
+  header: ReceiptHeader,
   lines: ReceiptLineDraft[],
 ): Promise<ReceiptRow> {
   const { data, error } = await supabase.rpc("update_receipt", {

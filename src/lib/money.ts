@@ -38,13 +38,16 @@ const SYMBOLS: Record<string, string> = { GBP: "£", EUR: "€" };
 const MINUS = "−";
 
 /** 1230 GBP → "£12.30"; -50 GBP → "−£0.50"; 300 EUR → "€3.00";
- *  an unknown code → "12.30 XYZ". Thousands separated by hand. */
+ *  an unknown code → "12.30 XYZ"; no code yet ("", a currency the user
+ *  hasn't chosen) → "12.30", never a symbol that implies one. Thousands
+ *  separated by hand. */
 export function formatPence(pence: number, currency: string): string {
   const sign = pence < 0 ? MINUS : "";
   const abs = Math.abs(pence);
   const amount = `${withThousands(Math.floor(abs / 100))}.${String(abs % 100).padStart(2, "0")}`;
   const symbol = SYMBOLS[currency];
-  return symbol ? `${sign}${symbol}${amount}` : `${sign}${amount} ${currency}`;
+  if (symbol) return `${sign}${symbol}${amount}`;
+  return currency ? `${sign}${amount} ${currency}` : `${sign}${amount}`;
 }
 
 /** The sum of the known values; null only if NONE is known (an empty list

@@ -13,7 +13,7 @@
 //     capture), so a retry never means re-photographing.
 //   • Leaving the screen any other way (back, hardware back, swipe) clears
 //     the draft: a stale set of photos must not greet the next scan. Only a
-//     successful scan keeps it, for the review screen.
+//     successful scan keeps it, and hands over to ReceiptReview (5b).
 // ============================================================
 
 import React, { useEffect, useRef, useState } from "react";
@@ -124,9 +124,9 @@ export function ReceiptScanScreen() {
       }
       keepDraft.current = true;
       setReceiptDraft(draftFromScan(result, toSend, dateKey()));
-      // The review screen (commit 5b) takes over from here; until it
-      // exists, return to the opener with the scanned draft in the store.
-      navigation.goBack();
+      // Replace, not push: back from review returns to the opener, not to
+      // a capture screen whose draft review now owns.
+      navigation.replace("ReceiptReview", { mode: "create" });
     } finally {
       setBusy(false);
     }

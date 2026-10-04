@@ -27,6 +27,7 @@ import {
   reviewSummary,
   itemCountLabel,
   reconcileBanner,
+  lineQtyLabel,
   type ReviewFields,
 } from "../receiptReview";
 import { countLines } from "../spending";
@@ -481,5 +482,52 @@ describe("the long-receipt notice — one source", () => {
     expect(showLongReceiptNotice(three)).toBe(true);
     expect(showLongReceiptNotice(one)).toBe(false);
     expect(showLongReceiptNotice({ ...SCANNED, mode: { kind: "edit", receiptId: "r1" } })).toBe(false);
+  });
+});
+
+// 5b UI follow-up: the line shows what will be saved. Once an edited total
+// contradicts qty × unit price (which then saves NULL), the unit price is
+// dropped from the line and the quantity shows alone.
+describe("lineQtyLabel — the line's quantity, as it will be saved", () => {
+  const apples = fieldsFromDraft({
+    ...SCANNED,
+    lines: [line("APPLES", 200, { qty: 2, qtyUnit: "each", unitPricePence: 100 })],
+  });
+  const bananas = fieldsFromDraft({
+    ...SCANNED,
+    lines: [line("BANANAS", 91, { qty: 0.456, qtyUnit: "kg", unitPricePence: 199 })],
+  });
+  const label = (f: ReviewFields, totalText?: string, currency: string | null = "GBP") =>
+    lineQtyLabel(totalText == null ? f.lines[0] : updateLine(f, f.lines[0].key, { totalText }).lines[0], currency);
+
+  it("as read: qty and unit price", () => {
+    expect(label(apples)).toBe("2 × £1.00");
+    expect(label(bananas)).toBe("0.456 kg @ £1.99/kg");
+  });
+
+  it("AN EDITED TOTAL THAT CONTRADICTS IT: the quantity alone", () => {
+    expect(label(apples, "2.50")).toBe("2 ×");
+    expect(label(bananas, "1.00")).toBe("0.456 kg");
+  });
+
+  it("an edit that still matches keeps the unit price", () => {
+    expect(label(apples, "2")).toBe("2 × £1.00");
+    expect(label(bananas, "0.91")).toBe("0.456 kg @ £1.99/kg");
+  });
+
+  it("matches parseReview for the same text", () => {
+    for (const t of ["2.50", "2.00", "", "1.9x"]) {
+      const f = updateLine(apples, apples.lines[0].key, { totalText: t });
+      const r = parseReview(f);
+      const savedUnit = r.ok ? r.lines[0]?.unitPricePence : undefined;
+      if (savedUnit === undefined) continue; // the text doesn't save as is
+      expect(lineQtyLabel(f.lines[0], "GBP")).toBe(savedUnit == null ? "2 ×" : "2 × £1.00");
+    }
+  });
+
+  it("no symbol before a currency is chosen; nothing without a qty", () => {
+    expect(label(apples, undefined, null)).toBe("2 × 1.00");
+    const plain = fieldsFromDraft({ ...SCANNED, lines: [line("MILK", 120)] });
+    expect(lineQtyLabel(plain.lines[0], "GBP")).toBeNull();
   });
 });

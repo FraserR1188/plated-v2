@@ -55,12 +55,12 @@ import {
   reviewSummary,
   itemCountLabel,
   reconcileBanner,
+  lineQtyLabel,
   type ReviewFields,
   type ReviewLine,
   type BannerTone,
 } from "../lib/receiptReview";
 import { LONG_RECEIPT_NOTICE, showLongReceiptNotice } from "../lib/receiptCapture";
-import { formatPence } from "../lib/money";
 import type { ReceiptDraft } from "../lib/receipts";
 import { dateKey, formatDayLabel, parseDateKey } from "../lib/time";
 import { Colors, Spacing, Radius, Typography, withDefaultFont } from "../theme/tokens";
@@ -456,12 +456,9 @@ function LineRow({
   onChange: (patch: Partial<Pick<ReviewLine, "rawText" | "totalText">>) => void;
   onRemove: () => void;
 }) {
-  const unit =
-    line.unitPricePence != null && line.qty != null
-      ? line.qtyUnit === "kg"
-        ? `${line.qty} kg @ ${formatPence(line.unitPricePence, currency ?? "")}/kg`
-        : `${line.qty} × ${formatPence(line.unitPricePence, currency ?? "")}`
-      : null;
+  // As it will be saved: an edited total that contradicts qty × unit price
+  // drops the unit price (lib/receiptReview.ts).
+  const unit = lineQtyLabel(line, currency);
   return (
     <View style={[styles.line, showFlag && styles.lineFlagged]}>
       {(showPart || showFlag || unit) && (

@@ -24,7 +24,7 @@
 // unit price as fact. A line whose total wasn't edited keeps what was read.
 // ============================================================
 
-import { parsePenceInput } from "./money";
+import { formatPence, parsePenceInput } from "./money";
 import { countLines, reconcile, type LineCounts, type Reconcile } from "./spending";
 import type {
   ReceiptDraft,
@@ -292,6 +292,23 @@ export function reviewSummary(fields: ReviewFields): ReviewSummary {
 export function itemCountLabel({ items, discounts }: LineCounts): string {
   const itemPart = `${items} ${items === 1 ? "item" : "items"}`;
   return discounts === 0 ? itemPart : `${itemPart} · ${discounts} ${discounts === 1 ? "discount" : "discounts"}`;
+}
+
+/**
+ * The quantity under a line, as it will be saved: "2 × £1.00",
+ * "0.456 kg @ £1.99/kg". Once the shown total contradicts qty × unit price
+ * (the unit price then saves NULL — unitPriceFor), the quantity shows alone:
+ * "2 ×", "0.456 kg". null with no qty. Text that doesn't parse yet is
+ * treated as no total, like the reconcile.
+ */
+export function lineQtyLabel(line: ReviewLine, currency: string | null): string | null {
+  if (line.qty == null) return null;
+  const amount = readAmount(line.totalText);
+  const unit = unitPriceFor(line, amount.ok ? amount.pence : null);
+  const kg = line.qtyUnit === "kg";
+  if (unit == null) return kg ? `${line.qty} kg` : `${line.qty} ×`;
+  const price = formatPence(unit, currency ?? "");
+  return kg ? `${line.qty} kg @ ${price}/kg` : `${line.qty} × ${price}`;
 }
 
 export type BannerTone = "ok" | "warn" | "info";

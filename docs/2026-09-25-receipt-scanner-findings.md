@@ -1238,13 +1238,17 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
 
 - **5a** `feat(receipts): multi-part capture — add, reorder and remove up to three parts`
   - The `ReceiptScan` modal (§4): parts list, ↑/↓/✕, full-screen view, "Add another part" up to 3, hint, Scan.
-  - **Checklist (Pixel 9):**
-    - [ ] Camera and library each add a part.
-    - [ ] Reorder with ↑/↓, and the order is what's sent (check the part labels on review).
-    - [ ] ✕ removes.
-    - [ ] A 4th add is not offered.
-    - [ ] Cancel at each step returns cleanly.
-    - [ ] Airplane mode → Scan fails → **all parts still on screen**, and a retry works once online.
+  - **Checklist (Pixel 9):** passed 2026-10-04 (MEASURED, Robbie), dev client on `045d5ab`. 5b doesn't exist yet, so the entry was the `__DEV__`-only `DevReceiptEntry` in Settings, and the result was checked on its one-line summary, not on review. That entry is deleted at commit 6; `receiptDevEntry.test.ts` enforces it.
+    - [x] Camera and library each add a part.
+    - [x] Reorder with ↑/↓, and the order is what's sent (checked on the dev summary; recheck the part labels on review at 5b).
+    - [x] ✕ removes.
+    - [x] A 4th add is not offered.
+    - [x] Cancel at each step returns cleanly.
+    - [x] Airplane mode → Scan fails → **all parts still on screen**, and a retry works once online.
+    - **Observation, not a blocker:** a long receipt came back as **61 lines where 45 items were bought.** Not yet known whether that's the definition or over-reading:
+      - `lines` counts every printed line with a price, so discount and multibuy-saving lines count, which inflates it by design;
+      - but r08's 88 against about 80 (commit 3 smoke test) says multi-part scans may also over-read at the joins.
+      - Resolve on the review screen (5b), where discounts are tagged and seam flags show, and in the multi-photo re-run, which still gates the UI shipping.
 - **5b** `feat(receipts): review screen — create and edit modes, delete, reconcile and seam flags`
   - One `ReceiptReview` component with the route param `{ mode: "create" } | { mode: "edit", receiptId }`. Edit loads via `fetchReceipt(id)`.
   - Same live-text fields in both modes, using CopyConfirm's pattern ([CopyConfirmScreen.tsx:108-135](src/screens/CopyConfirmScreen.tsx#L108-L135)).

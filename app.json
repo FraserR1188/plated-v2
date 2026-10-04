@@ -41,15 +41,15 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "plated needs access to your photos so you can add a picture to a food you've created.",
-          "cameraPermission": "plated uses your camera to scan barcodes and photograph foods you create.",
+          "photosPermission": "plated uses your photos so you can scan a nutrition label, recipe or grocery receipt from your library, or add a picture to a food you've created.",
+          "cameraPermission": "plated uses your camera to scan barcodes, nutrition labels, recipes and grocery receipts, and to photograph meals and foods you create.",
           "microphonePermission": false
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "plated uses your camera to scan barcodes and photograph foods you create.",
+          "cameraPermission": "plated uses your camera to scan barcodes, nutrition labels, recipes and grocery receipts, and to photograph meals and foods you create.",
           "microphonePermission": false
         }
       ],

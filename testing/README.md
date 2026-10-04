@@ -53,6 +53,7 @@ P-TF IDs predate the PL- scheme; they keep their IDs and are never reused. New i
 
 | Date | Tester | Build / version | Device | Issues raised | Still open | Doc |
 |---|---|---|---|---|---|---|
+| 2026-10-04 | self (dev pass; receipt scanner v1 release) | master @ merge `e53afbe`; runtimes `c1907ba4…` / `5359dcce…` unchanged; `scan-receipt` v1 from `17707e9`; production OTA to be recorded after publish | Google Pixel 9, Android 15 (dev client, account A) | 0 | 0 | `testing/2026-10-04-internal.md` |
 | 2026-09-26 | self (dev pass; found in the receipt-scanner investigation, and PL-042's review of the staple seed) | investigation against master @ `177ed0a`; row counts measured on the live DB | none | 9 | 9 | `testing/2026-09-26-internal.md` |
 | 2026-09-25 | self (read-only investigation; PL-039 fix + device pass) | investigation against master @ `63be47c`, plus live OFF probes; PL-039 fixed at `ba9b8f8`, device-passed on a Pixel dev build | Pixel (PL-039 pass only) | 11 | 11 | `testing/2026-09-25-internal.md` |
 | 2026-09-21 | Kayce | Not recorded — the form has no build field and About can't show one (PL-043) | Samsung Galaxy S23 Ultra, Android version not recorded | 2 | 2 | `testing/2026-09-21-kayce.md` |

@@ -86,13 +86,13 @@ const styles = StyleSheet.create(
       justifyContent: "center",
       // The padding alone gets close to a comfortable touch target; this
       // guarantees it at the smallest font scale too.
-      minHeight: 36,
+      minHeight: 42,
     },
     segmentOn: {
       backgroundColor: Colors.surface2,
     },
     label: {
-      fontSize: Typography.sm,
+      fontSize: Typography.base,
       fontWeight: Typography.semibold,
       color: Colors.textDim,
     },

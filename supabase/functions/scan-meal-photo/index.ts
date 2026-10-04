@@ -45,8 +45,18 @@ const ANTHROPIC_VERSION = "2023-06-01";
 
 // Same default as the label scanner. Meal recognition leans harder on
 // visual judgement than label OCR does, but Haiku 4.5 is still the right
-// starting point — bump via the MODEL secret if real-world plates prove
-// harder than expected, no redeploy needed.
+// starting point.
+//
+// ⚠ THE MODEL SECRET IS SHARED by scan-meal-photo, extract-nutrition-label
+// and scan-recipe: setting it changes all three at once, with no redeploy
+// and no review. Check the model against this function first:
+//   • tool_choice is FORCED below, which is a 400 on Claude Opus 5.5 and
+//     Claude Fable 5.1 — every scan would fail.
+//   • Claude Sonnet 5 runs adaptive thinking when `thinking` is omitted (it
+//     is, below), and thinking counts toward max_tokens (1024 here), so a
+//     result can come back truncated. Set `thinking` in the request first.
+// (Receipt-scanner findings, candidate E. scan-receipt reads its own
+// RECEIPT_MODEL secret for this reason.)
 const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 
 const MAX_EXTRACTIONS_PER_HOUR = 20;

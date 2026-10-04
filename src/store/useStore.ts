@@ -32,6 +32,38 @@ import {
 } from "../lib/whoopConnectionCache";
 import { clearTrendsPrefs } from "../lib/trendsPrefs";
 import { fetchAllPages } from "../lib/paging";
+import {
+  saveReceipt,
+  updateReceipt,
+  deleteReceipt,
+  fetchReceipt,
+  ReceiptNotFoundError,
+  type ReceiptDraft,
+  type ReceiptRow,
+} from "../lib/receipts";
+import type { ReceiptPart } from "../lib/receiptCapture";
+import {
+  parseReview,
+  draftFromReceipt,
+  type ReviewFields,
+  type ReviewProblems,
+} from "../lib/receiptReview";
+
+/** What a review-screen save came to. Only "saved" clears the draft. */
+export type ReceiptSaveOutcome =
+  | { kind: "saved"; receipt: ReceiptRow }
+  | { kind: "invalid"; problems: ReviewProblems; message: string }
+  /** P0002: deleted on another device (or never this user's). */
+  | { kind: "gone" }
+  | { kind: "failed" }
+  | { kind: "no_draft" };
+
+export type ReceiptDeleteOutcome =
+  | { kind: "deleted" }
+  | { kind: "gone" }
+  | { kind: "failed" }
+  /** No draft, or a create-mode one: nothing saved to delete. */
+  | { kind: "no_draft" };
 
 /**
  * PL-050. Rows per fetchEntries request. Must stay below PostgREST's
@@ -496,6 +528,39 @@ interface AppState {
   /** Returns the pending result AND clears it in the same call. */
   consumeManualEntryResult: () => FoodProduct | null;
 
+  /**
+   * The receipt being scanned, reviewed or edited (receipt scanner; findings
+   * §7). In the store, not route params: up to three photos and 150 lines is
+   * large for navigation state, and PL-046 already argues against
+   * non-serialisable params. Edit mode carries the receipt id in `mode`; the
+   * write itself takes it as a parameter (receipts.ts), never off this draft.
+   * Holds a person's shopping and their receipt photos, so reset() wipes it.
+   */
+  receiptDraft: ReceiptDraft | null;
+  setReceiptDraft: (draft: ReceiptDraft) => void;
+  clearReceiptDraft: () => void;
+  /** Open an empty create-mode draft for ReceiptScan: no parts, dated
+   *  `todayKey` and marked estimated until a scan reads the date. */
+  startReceiptCapture: (todayKey: string) => void;
+  /** Replace the draft's photos (add, reorder, remove — see
+   *  lib/receiptCapture.ts). No-op with no draft open. */
+  setReceiptParts: (parts: ReceiptPart[]) => void;
+  /**
+   * Save the review screen's fields: save_receipt in create mode,
+   * update_receipt for the draft's receipt in edit mode. The fields are
+   * parsed exactly as shown (lib/receiptReview.ts); invalid ones send
+   * nothing. KEEP-INPUT CONTRACT: on anything but "saved" the draft is left
+   * as the same object, so the screen — which reseeds its fields only when
+   * the draft object changes — keeps every input. "saved" clears it.
+   */
+  saveReceiptReview: (fields: ReviewFields) => Promise<ReceiptSaveOutcome>;
+  /** Delete the edit-mode draft's receipt. Same contract: only "deleted"
+   *  clears the draft. */
+  deleteReviewedReceipt: () => Promise<ReceiptDeleteOutcome>;
+  /** Load a saved receipt into an edit-mode draft. "gone"/"failed" leave
+   *  no draft. */
+  openReceiptForEdit: (receiptId: string) => Promise<"ok" | "gone" | "failed">;
+
   saveIngredient: (product: FoodProduct) => Promise<SavedIngredientScored | null>;
   deleteIngredient: (id: string) => Promise<void>;
 
@@ -603,6 +668,7 @@ export const useStore = create<AppState>((set, get) => ({
   batchDraft: EMPTY_BATCH_DRAFT,
   compositionApplyDraft: null,
   manualEntryResult: null,
+  receiptDraft: null,
 
   setUserId: (id) => set({ userId: id }),
   setViewedDate: (date) => set({ viewedDate: date }),
@@ -634,6 +700,7 @@ export const useStore = create<AppState>((set, get) => ({
       batchDraft: EMPTY_BATCH_DRAFT,
       compositionApplyDraft: null,
       manualEntryResult: null,
+      receiptDraft: null,
     });
   },
 
@@ -1640,6 +1707,67 @@ export const useStore = create<AppState>((set, get) => ({
     })),
 
   resetBatchDraft: () => set({ batchDraft: EMPTY_BATCH_DRAFT }),
+
+  setReceiptDraft: (draft) => set({ receiptDraft: draft }),
+  clearReceiptDraft: () => set({ receiptDraft: null }),
+  startReceiptCapture: (todayKey) =>
+    set({
+      receiptDraft: {
+        mode: { kind: "create" },
+        parts: [],
+        header: {
+          store: null,
+          purchasedOn: todayKey,
+          purchasedOnEstimated: true,
+          printedTotalPence: null,
+          currency: null,
+        },
+        lines: [],
+      },
+    }),
+  setReceiptParts: (parts) =>
+    set((s) => (s.receiptDraft ? { receiptDraft: { ...s.receiptDraft, parts } } : {})),
+
+  saveReceiptReview: async (fields) => {
+    const draft = get().receiptDraft;
+    if (!draft) return { kind: "no_draft" };
+    const parsed = parseReview(fields);
+    if (!parsed.ok) return { kind: "invalid", problems: parsed.problems, message: parsed.message };
+    try {
+      const receipt =
+        draft.mode.kind === "edit"
+          ? await updateReceipt(draft.mode.receiptId, parsed.header, parsed.lines)
+          : await saveReceipt(parsed.header, parsed.lines);
+      // Clear only the draft that was saved, never one opened since.
+      if (get().receiptDraft === draft) set({ receiptDraft: null });
+      return { kind: "saved", receipt };
+    } catch (e) {
+      // receipts.ts has already reported a server error; the draft stays.
+      return e instanceof ReceiptNotFoundError ? { kind: "gone" } : { kind: "failed" };
+    }
+  },
+
+  deleteReviewedReceipt: async () => {
+    const draft = get().receiptDraft;
+    if (!draft || draft.mode.kind !== "edit") return { kind: "no_draft" };
+    try {
+      await deleteReceipt(draft.mode.receiptId);
+      if (get().receiptDraft === draft) set({ receiptDraft: null });
+      return { kind: "deleted" };
+    } catch (e) {
+      return e instanceof ReceiptNotFoundError ? { kind: "gone" } : { kind: "failed" };
+    }
+  },
+
+  openReceiptForEdit: async (receiptId) => {
+    try {
+      const { receipt, lines } = await fetchReceipt(receiptId);
+      set({ receiptDraft: draftFromReceipt(receipt, lines) });
+      return "ok";
+    } catch (e) {
+      return e instanceof ReceiptNotFoundError ? "gone" : "failed";
+    }
+  },
 
   setManualEntryResult: (product) => set({ manualEntryResult: product }),
   consumeManualEntryResult: () => {

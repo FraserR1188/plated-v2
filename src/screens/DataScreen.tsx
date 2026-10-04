@@ -1,9 +1,10 @@
 // ============================================================
-// The Data tab — History and Trends, behind an in-screen segmented
-// control. Renamed from the History tab in Part 4.
+// The Data tab — History, Trends and Grocery spending, behind an in-screen
+// segmented control. Renamed from the History tab in Part 4; Spending
+// added by the receipt scanner (commit 6).
 //
-// NO NESTED NAVIGATOR, deliberately. The two segments are two views of the
-// same data, not two destinations: a navigator would give each its own
+// NO NESTED NAVIGATOR, deliberately. The segments are views, not
+// destinations: a navigator would give each its own
 // history stack, back behaviour and focus events, none of which this needs,
 // and it would add a dependency to a runtime fingerprint that has to stay
 // OTA-compatible.
@@ -21,6 +22,7 @@ import { View, Text, StyleSheet } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { HistoryScreen } from "./HistoryScreen";
 import { TrendsPanel } from "../components/TrendsPanel";
+import { SpendingPanel } from "../components/SpendingPanel";
 import { SegmentedControl } from "../components/SegmentedControl";
 import {
   Colors,
@@ -29,11 +31,14 @@ import {
   withDefaultFont,
 } from "../theme/tokens";
 
-type Segment = "history" | "trends";
+type Segment = "history" | "trends" | "spending";
 
 const SEGMENTS = [
   { value: "history" as const, label: "History" },
   { value: "trends" as const, label: "Trends" },
+  // "Spending", not "Grocery spending": the control is capped at 220 dp.
+  // The panel's own title says "Grocery spending" (findings decision 1).
+  { value: "spending" as const, label: "Spending" },
 ];
 
 export function DataScreen() {
@@ -43,17 +48,23 @@ export function DataScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <View style={styles.header}>
         <Text style={styles.title}>Data</Text>
-        <View style={styles.controlWrap}>
-          <SegmentedControl
-            options={SEGMENTS}
-            value={segment}
-            onChange={setSegment}
-            accessibilityLabel="History or Trends"
-          />
-        </View>
+      </View>
+      <View style={styles.controlRow}>
+        <SegmentedControl
+          options={SEGMENTS}
+          value={segment}
+          onChange={setSegment}
+          accessibilityLabel="History, Trends or Spending"
+        />
       </View>
 
-      {segment === "history" ? <HistoryScreen embedded /> : <TrendsPanel />}
+      {segment === "history" ? (
+        <HistoryScreen />
+      ) : segment === "trends" ? (
+        <TrendsPanel />
+      ) : (
+        <SpendingPanel />
+      )}
     </SafeAreaView>
   );
 }
@@ -65,10 +76,6 @@ const styles = StyleSheet.create(
       backgroundColor: Colors.bg,
     },
     header: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: Spacing.sm,
       paddingHorizontal: Spacing.md,
       paddingTop: Spacing.md,
       paddingBottom: Spacing.sm,
@@ -79,12 +86,11 @@ const styles = StyleSheet.create(
       color: Colors.text,
       letterSpacing: -0.5,
     },
-    // Capped rather than flex:1 so the control keeps its shape beside the
-    // title at 360dp, and doesn't stretch across a tablet width.
-    controlWrap: {
-      flexShrink: 1,
-      maxWidth: 220,
-      minWidth: 160,
+    // Its own full-width row under the title (2026-10-04): three labels in
+    // a 220 dp cap beside the title were cramped.
+    controlRow: {
+      paddingHorizontal: Spacing.md,
+      paddingBottom: Spacing.sm,
     },
   }),
 );

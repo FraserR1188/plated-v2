@@ -16,6 +16,8 @@
 //   ├── Scanner        (full-screen modal)
 //   ├── Product        (modal)
 //   ├── BatchEditor / BatchIngredientPicker / RecipeScan / RecipeConfirm (modals)
+//   ├── ReceiptScan (modal — photograph a till receipt in 1–3 parts)
+//   ├── ReceiptReview (modal — check and save a scan, or edit a saved receipt)
 //   ├── ConnectedUserLog  (push)
 //   ├── CopyConfirm       (push)
 //   └── BundleApplyReview (push — apply-time quantity review)
@@ -52,6 +54,8 @@ import { BundleApplyReviewScreen } from "../screens/BundleApplyReviewScreen";
 import { BatchIngredientPickerScreen } from "../screens/BatchIngredientPickerScreen";
 import { RecipeScanScreen } from "../screens/RecipeScanScreen";
 import { RecipeConfirmScreen } from "../screens/RecipeConfirmScreen";
+import { ReceiptScanScreen } from "../screens/ReceiptScanScreen";
+import { ReceiptReviewScreen } from "../screens/ReceiptReviewScreen";
 import { ConnectedUserLogScreen } from "../screens/ConnectedUserLogScreen";
 import { CopyConfirmScreen } from "../screens/CopyConfirmScreen";
 import { TabBar } from "../components/TabBar";
@@ -236,6 +240,22 @@ export function AppNavigator() {
         <Stack.Screen
           name="RecipeConfirm"
           component={RecipeConfirmScreen}
+          options={{
+            presentation: "modal",
+            headerShown: false, // screen draws its own header
+          }}
+        />
+        <Stack.Screen
+          name="ReceiptScan"
+          component={ReceiptScanScreen}
+          options={{
+            presentation: "modal",
+            headerShown: false, // screen draws its own header
+          }}
+        />
+        <Stack.Screen
+          name="ReceiptReview"
+          component={ReceiptReviewScreen}
           options={{
             presentation: "modal",
             headerShown: false, // screen draws its own header

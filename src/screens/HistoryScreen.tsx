@@ -1,11 +1,12 @@
 import React, { useState } from "react";
 import { View, Text, ScrollView, StyleSheet, Pressable } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
 import { useNavigation } from "@react-navigation/native";
 import { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import { useStore } from "../store/useStore";
 import { BottomTabParamList } from "../types";
 import { dailyAverages, KnownAverage } from "../lib/historyAverages";
+import { dateKey, addDays } from "../lib/time";
+import { RangeControl } from "../components/RangeControl";
 import {
   Colors,
   Spacing,
@@ -18,35 +19,34 @@ import {
 
 type Range = "7d" | "30d";
 
+const RANGES: { value: Range; label: string }[] = [
+  { value: "7d", label: "7 days" },
+  { value: "30d", label: "30 days" },
+];
+
 // Today and History are sibling tabs under the same Tab.Navigator (see
 // AppNavigator.tsx) — navigating "to Today" is a same-navigator tab switch,
 // not a push onto RootStackParamList, so this is typed off BottomTabParamList
 // rather than the NativeStackNavigationProp every push-modal screen uses.
 type Nav = BottomTabNavigationProp<BottomTabParamList>;
 
-interface HistoryScreenProps {
-  /**
-   * Rendered inside the Data tab's segmented control rather than as a tab
-   * of its own. Two differences, both about not drawing a chrome twice:
-   * DataScreen already owns the SafeAreaView and the screen title, so an
-   * embedded History skips its own safe-area inset and its own "History"
-   * heading. Everything below the header is identical.
-   */
-  embedded?: boolean;
-}
-
-export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
+/**
+ * The Data tab's History segment, rendered by DataScreen only (it was once a
+ * tab of its own). DataScreen owns the safe-area inset and the screen title,
+ * so this draws neither: a second inset pushed the list down by the status
+ * bar, and a "History" heading under the segmented control was the same
+ * word twice.
+ */
+export function HistoryScreen() {
   const { goals, getDaySummaryForDate, setViewedDate } = useStore();
   const navigation = useNavigation<Nav>();
   const [range, setRange] = useState<Range>("7d");
   const days = range === "7d" ? 7 : 30;
 
-  // Build day array newest → oldest
-  const dayArray = Array.from({ length: days }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  });
+  // Build day array newest → oldest, in local calendar days (dateKey and
+  // addDays, never a hand-built or UTC key).
+  const todayKey = dateKey();
+  const dayArray = Array.from({ length: days }, (_, i) => addDays(todayKey, -i));
 
   // Headline figures (calories/macros/count/"logged") are EATEN only — what
   // actually happened that day. Previously this filtered `entries` by date
@@ -86,13 +86,8 @@ export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
 
   const fmtDate = (ds: string) => {
     const d = new Date(ds + "T12:00:00");
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    const yd = new Date(now);
-    yd.setDate(yd.getDate() - 1);
-    const ydStr = `${yd.getFullYear()}-${String(yd.getMonth() + 1).padStart(2, "0")}-${String(yd.getDate()).padStart(2, "0")}`;
-    if (ds === todayStr) return "Today";
-    if (ds === ydStr) return "Yesterday";
+    if (ds === todayKey) return "Today";
+    if (ds === addDays(todayKey, -1)) return "Yesterday";
     return d.toLocaleDateString("en-GB", {
       weekday: "short",
       day: "numeric",
@@ -109,42 +104,16 @@ export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
     ? Math.round((adherent / logged.length) * 100)
     : 0;
 
-  // A plain View when embedded: DataScreen's SafeAreaView has already
-  // applied the top inset, and applying it twice pushes the list down by
-  // the status-bar height for no reason.
-  const Frame = embedded ? View : SafeAreaView;
-  const frameProps = embedded
-    ? {}
-    : ({ edges: ["top", "left", "right"] } as const);
-
   return (
-    <Frame style={styles.safe} {...frameProps}>
+    <View style={styles.safe}>
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
       >
         {/* ── Header ─────────────────────────────────────── */}
-        <View style={[styles.header, embedded && styles.headerEmbedded]}>
-          {/* The segmented control above already says "History" -- a second
-              heading directly under it is the same word twice. */}
-          {!embedded && <Text style={styles.heading}>History</Text>}
-
-          {/* Range picker — pill toggle */}
-          <View style={styles.rangePicker}>
-            {(["7d", "30d"] as Range[]).map((r) => (
-              <Pressable
-                key={r}
-                style={[styles.rangeBtn, range === r && styles.rangeBtnOn]}
-                onPress={() => setRange(r)}
-              >
-                <Text
-                  style={[styles.rangeTxt, range === r && styles.rangeTxtOn]}
-                >
-                  {r === "7d" ? "7 days" : "30 days"}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+        <View style={styles.header}>
+          {/* The Data tab's shared range control, top right */}
+          <RangeControl options={RANGES} value={range} onChange={setRange} />
         </View>
 
         {/* ── Average stats card ──────────────────────────── */}
@@ -335,7 +304,7 @@ export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
 
         <View style={{ height: Spacing.xxl }} />
       </ScrollView>
-    </Frame>
+    </View>
   );
 }
 
@@ -438,46 +407,8 @@ const styles = StyleSheet.create(
   header: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: Spacing.lg,
-  },
-  // With the heading gone, space-between would leave the range picker
-  // pinned left against nothing. Push it to the right where it was.
-  headerEmbedded: {
     justifyContent: "flex-end",
     marginBottom: Spacing.md,
-  },
-  heading: {
-    fontSize: Typography.xl,
-    fontWeight: Typography.bold,
-    color: Colors.text,
-    letterSpacing: -0.5,
-  },
-  rangePicker: {
-    flexDirection: "row",
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.pill,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 3,
-  },
-  rangeBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: Spacing.md,
-    borderRadius: Radius.pill,
-    alignItems: "center",
-  },
-  rangeBtnOn: {
-    backgroundColor: Colors.green,
-  },
-  rangeTxt: {
-    fontSize: Typography.xs,
-    color: Colors.textSub,
-    fontWeight: Typography.medium,
-  },
-  rangeTxtOn: {
-    color: Colors.bg,
-    fontWeight: Typography.bold,
   },
 
   // Average card

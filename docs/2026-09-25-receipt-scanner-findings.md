@@ -293,6 +293,16 @@ lines: Array<{
    - **List every physical item line exactly once.** A line that appears in the overlap of two parts is listed once, from the part where it is fully legible, with that `part`.
    - If the parts don't look like the same receipt, set `same_receipt: false`.
    - **Revised 2026-09-27, unproven, so it's settled before commit 3.** On multi-photo receipts Sonnet 5's lines added up in 3 of 8 reads, against 13 of 14 per arm on single photos. But six of the eight reads are r08, whose ground truth is in doubt, and the other two are r10, whose photo order is in doubt (commit 0). So this rule isn't shown to fail, and it isn't shown to work either. Commit 3's prompt may need more about overlap. For example: "Before listing the first lines of part k+1, find the last line you listed from part k in it, and continue after it." Settle it by re-running the multi-photo arm on about four new multi-photo receipts, with clean inputs.
+   - **DRAFT — Revised 2026-10-04, shipped in commit 3 pending the multi-photo re-run.** Commit 3 went ahead before the extra multi-photo receipts, because the prompt can be redeployed without an OTA and nothing calls the function until the UI ships. So `SYSTEM_PROMPT` rule 2 in `supabase/functions/_shared/receipt.ts` carries the overlap guidance above as a first draft: *"Before you list the first lines of part k+1, find in part k+1 the last line you listed from part k, and continue after it: the lines before it in part k+1 are the overlap and were already listed."* Re-run the bake-off's multi-photo arm with this exact prompt on the new receipts, then keep, revise or drop it, and redeploy `scan-receipt` if it changes.
+   - **First reading, MEASURED 2026-10-04 (the deployed function's smoke test):**
+     - r08 in 3 parts came back as 88 lines, against about 80 in every bake-off run without this guidance. The total was right, and the seam flag caught none of the extra lines.
+     - That's one read of one receipt whose ground truth is in doubt, so it doesn't settle anything. It points the wrong way: the guidance didn't reduce over-reading at the joins and may have added to it.
+     - **Still DRAFT.** ~~The multi-photo re-run is the gate before the UI ships.~~
+     - **Revised 2026-10-04 (Robbie): the gate moves from "before the UI ships" to "before the long-receipt notice comes off".** Long receipts are rare for Robbie, so the re-run could wait months. The UI ships to the testing group with a notice on multi-part scans, and testers' reports count as re-run evidence. Why that's safe:
+       - every save goes through the review screen, where the reconcile banner shows when the lines don't add up to the printed total, and seam flags can be removed in one tap;
+       - so an over-read is visible and fixable before save, not a silent wrong number.
+       - Notice spec: see commit 5b.
+   - The same prompt also carries rule 4's loyalty-price-saving clause and rule 5's voids clause (both Revised 2026-09-27). Those are measured: every bake-off arm already behaved that way.
 3. **Header and total.**
    - Store and date come from part 1: the header.
    - `total_printed` comes from **the last part that shows one**, with its part number in `total_printed_part`.
@@ -395,7 +405,7 @@ lines: Array<{
   - `prepareImage("receipt")` re-encodes once at quality 0.7 if a part exceeds it, then fails with `prep_failed`.
 - **Total:** `MAX_TOTAL_BASE64_CHARS = 9,000,000`, checked on the client before invoking and again in the function (413).
 - **Neither quality nor edge needs to drop for 3 parts.** The heaviest realistic 3-part request is 2.4M chars at 2268 px, 27% of the total cap. Only three pure-noise frames at 2576 px (11.9M) would exceed it, and 2576 is above the useful size anyway.
-- **The undocumented Supabase body limit must be MEASURED, not assumed.** Commit 3's smoke test posts a 9.0M-char body to the deployed function and must get the function's own response (200 or its own 413), not a platform 413 or 502.
+- **The undocumented Supabase body limit must be MEASURED, not assumed.** Commit 3's smoke test posts a 9.0M-char body to the deployed function and must get the function's own response (200 or its own 413), not a platform 413 or 502. **MEASURED 2026-10-04: the function's own 413 came back for a 9,000,003-char body, so the platform limit is ≥ 9 MB.**
 - The CPU limit is **PREDICTED** not to bind: `req.json()` on 9 MB is I/O-dominated and the model call is async. That's confirmed only by the same smoke test.
 
 **Tokens, `max_tokens` and timeout — PREDICTED, confirmed by the bake-off:**
@@ -889,7 +899,7 @@ The raw `@expo/fingerprint` library hash (`444e5488…`) differs because expo-up
 **Deploy order — Revised 2026-09-26:**
 
 1. `npx supabase db push` (schema; one migration, or two if commit 1 is split, pushed together) → run the verify file.
-2. `npm run check:functions`, then `npx supabase functions deploy scan-receipt`, then the smoke test:
+2. `npm run check:functions`, then `npx supabase functions deploy scan-receipt --use-api` (`--use-api` is required on the dev machine: local bundling fails TLS to jsr.io), then the smoke test:
    - a real 1-part and 3-part receipt from a dev client;
    - **the 9.0M-char body probe** for the undocumented Supabase body limit (§3);
    - 4 parts → `too_long`.
@@ -1160,18 +1170,23 @@ It grew from one RPC with 6 checks and 5 sabotages to three RPCs, a trigger, 11 
 - Commit 2's function tests go green.
 - **Same commit:** the three "bump via the MODEL secret, no redeploy" comments are replaced with the §3 warning. Comment-only, so those functions aren't redeployed.
 - **Checklist:**
-  - [ ] `npm run check:functions` (deno check). `functions deploy` doesn't type-check.
-  - [ ] `npx vitest run`: all green. Record the count (baseline **1033/1033, 54 files, MEASURED at `eec75b9`**; **1055/1055, 58 files at `9ed4956`**, Revised 2026-09-27).
-  - [ ] After deploy, when asked:
-    - [ ] a real 1-part and 3-part receipt → 200 with the expected shape;
-    - [ ] a non-receipt → 422 `no_receipt`;
-    - [ ] two parts from different receipts → 422;
-    - [ ] 4 parts → 413 `too_long`;
-    - [ ] **a 9.0M-char body → the function's own response, not a platform error** (records the undocumented Supabase limit as MEASURED);
-    - [ ] no JWT → 401;
-    - [ ] the 21st scan in an hour → 429, counted together with meal scans;
-    - [ ] **one `ai_extractions` row for the 3-part scan**;
-    - [ ] the dashboard logs contain no receipt text.
+  - [x] `npm run check:functions` (deno check). `functions deploy` doesn't type-check. Clean at `17707e9`.
+  - [x] `npx vitest run`: 1275 passing, 6 expected-red (the spending-CSV additions, until commit 6), MEASURED at `17707e9`. (Earlier baselines: 1033/1033 at `eec75b9`; 1055/1055 at `9ed4956`.)
+  - **Deployed 2026-10-04** as version 1 from `feat/receipts` @ `17707e9`, with `npx supabase functions deploy scan-receipt --use-api`. A plain deploy fails on this machine: local bundling can't fetch jsr.io ("invalid peer certificate: UnknownIssuer", the same TLS interception as the `db push` warning). `--use-api` bundles on Supabase's side instead.
+  - **Smoke test, MEASURED 2026-10-04, account B,** called from the terminal with a user JWT:
+    - [x] **1-part (r07):** 200; total 6643, date 2026-09-20, 38 lines, 0 flagged. `ai_extractions`: success, `claude-sonnet-5`, 6,724 in / 2,929 out, 18.7 s.
+    - [x] **3-part (r08):** 200; total 12373 (correct), date 2026-07-28, **88 lines**, 0 flagged, note "Total read from part 2 of 3". 16,240 in / 6,115 out, 37.1 s.
+      - **The DRAFT overlap guidance (rule 2) didn't reduce over-reading at the joins, and may have added to it.** The bake-off read r08 at about 80 lines in every run, and the seam flag caught none of the extra lines.
+      - **Rule 2 stays DRAFT.** The multi-photo re-run gates removing the long-receipt notice, not shipping the UI (Revised 2026-10-04, §3 rule 2).
+    - [x] a non-receipt → 422.
+    - [x] two parts from different receipts (r01 + r07) → 422.
+      - The 422s are recorded by status only: PowerShell 5's `Invoke-WebRequest` drops error bodies, so the `no_receipt` code wasn't seen.
+    - [x] 4 parts → 413 `too_long`, no model call.
+    - [x] **the 9.0M-char body probe → the function's own 413 JSON** ("too_long", "Those photos are too large…"), so Supabase accepted the body. **The platform's request-body limit is ≥ 9 MB, MEASURED 2026-10-04.**
+    - [x] no JWT → 401, from the gateway (`verify_jwt`).
+    - [x] the 21st scan in an hour → 429: 5 counted already, then 15 fake-image scans (each a 502 `model_error`, each counted), then the 21st → 429. Meal scans share the same count (it's one table and one query); the run didn't include one.
+    - [x] **one `ai_extractions` row for the 3-part scan.**
+    - [x] the dashboard logs contain no receipt text. **MEASURED 2026-10-04:** 63 entries exported. They are only boot and shutdown lines plus 15 "anthropic 400: Could not process image" errors with request IDs, matching the 15 fake-image scans. No store names, line text or amounts anywhere; the real scans logged nothing beyond boot and shutdown.
 - **Sabotage:**
   - (1) Remove the `stop_reason` guard → the truncation test goes red.
   - (2) Remove the tender-line drop → the redaction test goes red.
@@ -1191,10 +1206,12 @@ It now carries a refactor of a shipped flow (recipe capture), the vision-fit siz
   - the `"receipt"` `PrepareKind`, plus `fitToVisionBudget` and `MAX_PART_BASE64_CHARS` with one re-encode;
   - the header comment fix (candidate H).
   - **Checklist:**
-    - [ ] `tsc` 0 and vitest green;
-    - [ ] **device:** the recipe scan by camera and by library still previews and scans;
-    - [ ] meal-photo capture unchanged.
-  - **Sabotage:** make `fitToVisionBudget` ignore the token cap → the 3:4 high-res case goes red (2576 > 2212).
+    - [x] `tsc` 0 and vitest green (the receipt red tests aside): MEASURED 2026-10-04 at `f1bf2af`, 1083 passing, 129 expected-red.
+    - [x] **device:** the recipe scan by camera and by library still previews and scans; cancel from either returns cleanly.
+    - [x] meal-photo capture unchanged: from Add Ingredient and from the batch picker, camera only, results as before.
+    - [x] label and front-of-pack photos in Create Food unchanged (they share `prepareImage`).
+    - **Device pass 2026-10-04**, Robbie, Pixel dev client on `f1bf2af`: all passed.
+  - **Sabotage:** make `fitToVisionBudget` ignore the token cap → the 3:4 high-res case goes red (2576 > 2212). **MEASURED 2026-10-04:** 6 red, 1932×2576 instead of 1659×2212; restored byte-identical.
 - **4b** `feat(receipts): scan client, save/update/delete RPCs, paged reads, draft slice and the write-site guard`
   - `receiptScan.ts`, with its shape check including `part` and `possibleSeamDuplicate`;
   - `receipts.ts`: three RPC wrappers that **return the row or throw**, with `P0002` mapped to a typed "no longer exists" error, plus paged `fetchReceipts` and `fetchReceiptLinesForExport`, and single-receipt `fetchReceipt(id)`;
@@ -1225,13 +1242,22 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
 
 - **5a** `feat(receipts): multi-part capture — add, reorder and remove up to three parts`
   - The `ReceiptScan` modal (§4): parts list, ↑/↓/✕, full-screen view, "Add another part" up to 3, hint, Scan.
-  - **Checklist (Pixel 9):**
-    - [ ] Camera and library each add a part.
-    - [ ] Reorder with ↑/↓, and the order is what's sent (check the part labels on review).
-    - [ ] ✕ removes.
-    - [ ] A 4th add is not offered.
-    - [ ] Cancel at each step returns cleanly.
-    - [ ] Airplane mode → Scan fails → **all parts still on screen**, and a retry works once online.
+  - **Checklist (Pixel 9):** passed 2026-10-04 (MEASURED, Robbie), dev client on `045d5ab`. 5b doesn't exist yet, so the entry was the `__DEV__`-only `DevReceiptEntry` in Settings, and the result was checked on its one-line summary, not on review. That entry was deleted in commit 6; `receiptDevEntry.test.ts` enforces it.
+    - [x] Camera and library each add a part.
+    - [x] Reorder with ↑/↓, and the order is what's sent (checked on the dev summary; recheck the part labels on review at 5b).
+    - [x] ✕ removes.
+    - [x] A 4th add is not offered.
+    - [x] Cancel at each step returns cleanly.
+    - [x] Airplane mode → Scan fails → **all parts still on screen**, and a retry works once online.
+    - Added from the 5a hand-back checklist, all passed on the same run:
+      - [x] Empty state shows the overlap hint, with Take photo and Choose from library.
+      - [x] Tapping a thumbnail opens it full screen; a tap closes it.
+      - [x] A successful scan returns to Settings, and the dev summary shows parts, lines, flagged count, total and date.
+      - [x] Settings is unchanged apart from the dashed dev box.
+    - **Observation, not a blocker:** a long receipt came back as **61 lines where 45 items were bought.** Not yet known whether that's the definition or over-reading:
+      - `lines` counts every printed line with a price, so discount and multibuy-saving lines count, which inflates it by design;
+      - but r08's 88 against about 80 (commit 3 smoke test) says multi-part scans may also over-read at the joins.
+      - Resolve on the review screen (5b), where discounts are tagged and seam flags show, and through tester reports and the multi-photo re-run (they gate removing the long-receipt notice).
 - **5b** `feat(receipts): review screen — create and edit modes, delete, reconcile and seam flags`
   - One `ReceiptReview` component with the route param `{ mode: "create" } | { mode: "edit", receiptId }`. Edit loads via `fetchReceipt(id)`.
   - Same live-text fields in both modes, using CopyConfirm's pattern ([CopyConfirmScreen.tsx:108-135](src/screens/CopyConfirmScreen.tsx#L108-L135)).
@@ -1239,33 +1265,123 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
   - Delete in edit mode, with a confirm.
   - Keep-input-on-failure in both modes. `P0002` → "This receipt no longer exists", and the screen closes on acknowledgement.
   - Wrapped in `KeyboardScreen` (PL-004 guard).
-  - **Checklist (Pixel 9):**
-    - [ ] Edit a price and tap Save without blurring → the saved row has the edited value, **in create and in edit mode** (the PL-005/006 regression check).
-    - [ ] Airplane mode → Save → error, and all edits still there, in both modes.
-    - [ ] Unreadable total → NULL in SQL, "—" in the UI.
-    - [ ] An unread date → `purchased_on_estimated` true.
-    - [ ] **Edit with the same date → still true; change the date → false** (SQL).
-    - [ ] Edit: remove a line and add one → SQL shows exactly the new set; `updated_at` moved.
-    - [ ] Delete → the row and lines are gone, and Spending updates.
-    - [ ] Delete on a second device first, then Save here → "no longer exists", with no row resurrected.
-    - [ ] A 3-part scan with a seam echo → the flag shows, the banner quotes the matching amount, and Remove fixes the reconcile.
-    - [ ] SQL: `select count(*) from meal_entries` is unchanged across save, edit and delete.
-- **Sabotage:** switch one price field to commit-on-blur → the "Save without blurring" step fails on device (record it once).
+  - **Revised 2026-10-04 (Robbie), after the 5a device pass read 61 lines for 45 items bought:**
+    - **Count items, not lines.** The review header reads "45 items · 16 discounts", never a raw line count. Items are the non-discount lines; discounts are `is_discount` lines. A pure `countLines(lines)` in `spending.ts` returns `{ items, discounts }` and is unit-tested. Seam-flagged lines still count, so Remove visibly lowers the count.
+    - **Long-receipt notice, on any draft scanned from 2 or more parts** (create mode only, above the reconcile banner): *"Long receipts are still being tested. Check the lines against your receipt, and please tell us how it coped."*
+      - The wording and the on/off switch live in one exported constant, `LONG_RECEIPT_NOTICE`, in `receiptCapture.ts`, so taking it off is one line plus its test.
+      - It comes off only when the multi-photo re-run passes or tester reports show multi-part scans holding up (§3 rule 2).
+      - Tester reports go in `testing/` as usual. The testing round's brief asks each tester to scan one long receipt in parts and report the item count against the receipt.
+  - **Built 2026-10-04 (MEASURED unless marked):**
+    - **Pure logic in `lib/receiptReview.ts`:**
+      - fields as live text, plus add, edit and remove;
+      - `parseReview`: exactly what's shown. Text that doesn't parse refuses the save and marks the field, never a last-good value or 0;
+      - `reviewSummary`: items and discounts and the reconcile, over the lines as they are now;
+      - `reconcileBanner`: equal / over / under / can't check.
+      - A known amount sets `is_discount` by its sign; an empty amount keeps the read flag. A line added and left empty is dropped.
+    - **Currency, Revised: never a silent GBP.** `draftFromScan` no longer defaults an unread currency to GBP; the draft's currency is `string | null`. The screen shows "Currency not read: choose one", and Save refuses until it's chosen. `saveReceipt` / `updateReceipt` take a `ReceiptHeader`, whose currency is a string, so a null can't reach the RPC. `formatPence(x, "")` shows no symbol, so the banner never implies £ before a choice.
+    - **Keep-input contract, in the store:** `saveReceiptReview` / `deleteReviewedReceipt` leave the draft as the same object on every failure; only success clears it. The screen reseeds its fields only when the draft object changes (the edit-mode load), so a failure can't touch what's typed.
+    - **Entry:** ReceiptScan now replaces itself with `ReceiptReview { mode: "create" }`. The `__DEV__` entry adds "Edit the newest saved receipt" (edit mode, via `fetchReceipts`, refreshed on focus). `receiptDevEntry.test.ts` now counts a `navigate("ReceiptReview")` from anywhere else as a real entry too.
+    - **Leaving** a fresh scan, or an edit with changes, asks before discarding; nothing leaves mid-save. Every exit clears the draft.
+    - **Red first:** 2 suites failed on the missing `receiptReview` module, 1 on the GBP default, and 1 on the dev entry's missing reopen.
+    - **Sabotages, all red and restored byte-identical:**
+      - Remove leaves a seam-flagged line counted → 2 red (removeLine; the item-count and reconcile test).
+      - A save failure refreshes the draft (the screen would reseed) → 3 red (both keep-input tests and the P0002 one).
+      - Not yet run: a price field committing on blur. It's a screen-level bug, so it's a device step, below.
+    - **Results:** suite 1365 passing, 6 expected-red (the CSV additions, until commit 6). `tsc` 0. Runtime versions unchanged (`c1907ba4…` / `5359dcce…`): JS only, OTA-able.
+  - **Follow-up 2026-10-04 (Robbie): unknown beats a stored contradiction.** qty and unit price aren't editable, so when a line's total is edited to something other than qty × unit price (rounded to the penny, for weighed lines), `unit_price_pence` saves as NULL and qty is kept. v2 matching will read a stored unit price as fact. An untouched line keeps what was read, even if it doesn't multiply out; an edit that matches, or corrects a misread total to match, keeps it. Same in both modes. The line's quantity label follows the same rule as you type (`lineQtyLabel`, unit-tested against `parseReview`), so the screen shows what will be saved. MEASURED: red first (3 contradiction cases failed, the 3 keep cases already passed); sabotage "keep the stale unit price" → 3 red, restored byte-identical; suite 1371 passing, 6 expected-red; `tsc` 0.
+  - **Checklist (Pixel 9).** Dev client on `feat/receipts`, Settings → DEV box. Spending doesn't exist until commit 6, so the dev box's "Newest saved" line and SQL stand in for it.
+    - **Device pass 2026-10-04 (MEASURED, Robbie), account A.** Ticked items passed; unticked items are **NOT RUN** and stay open.
+    - [x] The header shows items and discounts, not lines, and the two add up to the line count in SQL. Receipt `11b7d878…`, Q1: 45 items + 2 discounts = 47 lines.
+    - [x] The notice shows on 2+ part scans only.
+    - [x] Edit a price and tap Save without blurring → the saved row has the edited value, **in create and in edit mode** (the PL-005/006 regression check).
+    - [x] Airplane mode → Save → error, and all edits still there, in both modes.
+    - [x] Unreadable total → an empty field reading "Unknown", and NULL in SQL; the banner says it can't check. **Passed 2026-10-04 (MEASURED, Robbie, account A).** As run: a receipt was scanned, its total cleared on review and saved, and `printed_total_pence` was NULL. A receipt the scan itself couldn't read, and the banner wording, weren't reported separately.
+    - [ ] An unread currency → "Currency not read: choose one", and Save refuses until a currency is tapped. **NOT RUN.**
+    - [ ] An unread date → `purchased_on_estimated` true. **NOT RUN.**
+    - [ ] **Edit with the same date → still true; change the date → false** (SQL). **NOT RUN** as specified, since it needs a receipt whose date wasn't read. Seen on `11b7d878…`: the date was read, and changing it 2026-09-28 → 2026-10-01 left `purchased_on_estimated` false.
+    - [x] Edit: remove a line and add one → SQL shows exactly the new set; `updated_at` moved. Receipt `11b7d878…`, in one save:
+      - BROCCOLI LOOSE removed, Donuts (100) added, JS BKED BEANS 152 → 100, JS SWEET CORN X3 90 → 190;
+      - exactly that set afterwards, positions 0–46 contiguous;
+      - `updated_at` 15:20:03 → 15:45:29.
+    - [ ] Edit a multi-quantity line's total (e.g. "2 × £1.00" to 2.50): the line shows "2 ×" alone as you type, and back to "2 × £1.00" if you type 2.00 again. Save → SQL shows `unit_price_pence` NULL, with `qty` unchanged. **NOT RUN:** no "N ×" lines on the receipts used.
+    - [x] Delete → confirm → the row and lines are gone in SQL, and the dev box's "Newest saved" line moves on. **Passed 2026-10-04 (MEASURED, Robbie, account A):** a saved receipt deleted from the phone; its row and lines were gone in SQL. (The dev box no longer exists; it was removed in commit 6.)
+    - [x] Open a receipt in edit mode, delete it in the SQL editor (`delete from public.receipts where id = '<id>';` — the editor has no auth.uid(), so not the RPC), then Save here → "This receipt no longer exists", OK closes, and no row is resurrected. Receipt `a965d62a…` (M&S, 14 lines): afterwards receipts 0, lines 0.
+    - [ ] A 3-part scan with a seam echo → the flag shows, the banner quotes the matching amount, and Remove fixes the reconcile and lowers the item count. **NOT RUN.**
+    - [x] Back from a fresh scan asks "Discard this receipt?"; Keep editing keeps everything.
+    - [x] SQL: `meal_entries` count is unchanged across save, edit and delete. Account A: 919 before and after all saves, edits and deletes.
+    - **Observation, not pass/fail: a real-world single-photo reconcile miss.**
+      - Receipt `11b7d878…` (Sainsbury's, 1 photo, 47 lines) didn't reconcile as scanned: the lines summed to £80.49 against a printed £72.78, £7.71 over.
+      - The bake-off's single photos all added up, so this is the first single-photo miss seen. The banner caught it, as designed.
+      - **To check against the paper receipt:** which lines account for the £7.71 (a misread price, a repeated line, or a saving read as an item), and whether that's a prompt problem.
+- **Sabotage (device, record once):** switch one price field to commit-on-blur → the "Save without blurring" step fails on device. **NOT RUN.**
 
 ### Commit 6 — Data tab: Grocery spending segment
 
 `feat(data): Spending segment — grocery spending by week, month and store, receipts, CSV`
 
 - The segment described in §2, titled "Grocery spending". The entry point is here, Batches is untouched, and a receipt row tap opens 5b in edit mode.
-- **Checklist:**
-  - [ ] The 3-way control fits at 360 dp without truncation.
-  - [ ] Week/Month totals match a hand sum in SQL.
-  - [ ] A € receipt shows on its own line, not added.
-  - [ ] Unknown-total receipts are listed and not counted.
-  - [ ] After an edit or delete, totals update on return.
-  - [ ] The CSV opens in Sheets with empty cells for NULL and correct dates.
-  - [ ] `tabStructure.test.ts` unchanged and green.
-- **Sabotage:** coalesce an unknown total to 0 in `spending.ts` → the null-rule test goes red.
+- **Built 2026-10-04 (MEASURED unless marked):**
+  - **`spendingOverview` in `spending.ts`:**
+    - the headline is the currency with the most receipts in the period; every other currency is its own line, never added;
+    - in-period receipts with no readable amount are listed, not counted;
+    - by store comes from `summariseSpending`;
+    - **rows are every receipt, newest first**, not only the period's, so an older receipt can still be opened and edited. Each row's amount is total, else lines, else "—". A "Doesn't add up" badge shows when known lines disagree with the printed total.
+  - **`SpendingPanel`**, the Data tab's third segment ("Spending" on the control; titled "Grocery spending"):
+    - This week / This month;
+    - "Scan a receipt" in the header and in the empty state;
+    - headline card, unknown-total list, By store, Receipts (tap → `ReceiptReview` edit), Export spending (CSV).
+    - It reads through `fetchReceipts` (PL-050 pager) on every focus, so returning from review refreshes it.
+  - **CSV:** `SPENDING_CSV_HEADER`, `buildSpendingCsv`, `spendingCsvFilename`, `exportSpendingCSV(userId)`, the last joining the two paged reads.
+    - `line_no` is position + 1; booleans are `true` / `false`.
+    - `penceText` moved to `money.ts`, so the CSV and the review fields share one formatter.
+    - The 6 CSV tests switched to normal imports, and `redImports.ts` is deleted.
+  - **The `__DEV__` entry is deleted** (`DevReceiptEntry.tsx` and its render). `SettingsScreen.tsx` is byte-identical to its pre-5a state (empty diff against `045d5ab~1`).
+    - With the Spending entries added and the dev entry still present, `receiptDevEntry.test.ts` went red ("DevReceiptEntry.tsx still exists alongside SpendingPanel.tsx → ReceiptScan, SpendingPanel.tsx → ReceiptReview"). It went green only once the dev entry was gone.
+    - The guard stays, so a dev entry can't come back beside the real one.
+  - **Red first:** 15 failed. That's 7 `spendingOverview`, 6 CSV (export missing), and 2 DataScreen (the third label, `<SpendingPanel />`).
+  - **Sabotage:** coalescing an unknown total to 0 in `receiptAmount` → 5 red (both receiptAmount null rules, summariseSpending, and two `spendingOverview` tests). Restored byte-identical.
+  - **Results:** suite **1389 / 1389, 0 expected-red** (the CSV additions are green). `tsc` 0. Runtime versions unchanged (`c1907ba4…` / `5359dcce…`): JS only.
+  - **NOT YET (separate):** the long-receipt notice still gates on the multi-photo re-run or tester reports (§3 rule 2). Merging `feat/receipts` to master is a separate step; the privacy-notice website change (§7) is outside the repo.
+- **Checklist (Pixel 9, dev client).** **Device pass 2026-10-04 (MEASURED, Robbie)**, `feat/receipts` @ `0c7424d`, account A. Ticked items passed; unticked items are **NOT RUN** and stay open.
+  - [x] The 3-way control fits at 360 dp without truncation.
+  - [x] Week/Month totals match a hand sum in SQL (below). Hand-sum SQL: week GBP 7278 pence, 1 receipt, 0 unknown; month GBP 7278 pence, 1 receipt, 0 unknown. The app headline matched on both This week and This month (£72.78 · 1 receipt).
+  - [ ] A € receipt shows on its own line, not added. **NOT RUN.**
+  - [x] Unknown-total receipts are listed and not counted. **Passed 2026-10-04 (MEASURED, Robbie, account A):** the receipt with no readable total was listed as not counted on Spending.
+  - [x] After an edit or delete, totals update on return.
+  - [x] A row whose lines don't add up shows "Doesn't add up"; tapping a row opens it in edit mode.
+  - [x] "Scan a receipt" works from the header.
+  - [ ] "Scan a receipt" works from the empty state (an account with no receipts). **NOT RUN.**
+  - [x] The CSV opens in Sheets with empty cells for NULL and correct dates.
+  - [x] Settings no longer shows the dashed DEV box.
+  - [x] `tabStructure.test.ts` unchanged and green. MEASURED: unchanged file, passing in the 1389.
+- **Hand-sum SQL** (dashboard editor, one query; set the user id). It applies the app's rule: the printed total, else the sum of lines when every line total is known, else unknown. The week is Monday–Sunday and the month runs to date, both in the London calendar.
+  ```sql
+  with today as (select (now() at time zone 'Europe/London')::date as d),
+  amounts as (
+    select r.id, r.currency, r.purchased_on,
+           coalesce(r.printed_total_pence,
+                    case when count(l.id) > 0 and count(l.id) = count(l.line_total_pence)
+                         then sum(l.line_total_pence) end) as pence
+    from public.receipts r
+    left join public.receipt_lines l on l.receipt_id = r.id
+    where r.user_id = '<user_id>'
+    group by r.id
+  )
+  select p.period, a.currency,
+         sum(a.pence)                          as pence,
+         count(a.pence)                        as receipts_counted,
+         count(*) filter (where a.pence is null) as unknown_listed
+  from today t
+  cross join lateral (values
+    ('week',  date_trunc('week',  t.d)::date, date_trunc('week', t.d)::date + 6),
+    ('month', date_trunc('month', t.d)::date, t.d)
+  ) as p(period, start_d, end_d)
+  join amounts a on a.purchased_on between p.start_d and p.end_d
+  group by p.period, a.currency
+  order by p.period, a.currency;
+  ```
+  `pence` should equal the headline (or a currency line) for that period, and `receipts_counted` its "N receipts". `unknown_listed` should equal how many receipts the disclosure lists.
+- **Sabotage:** coalesce an unknown total to 0 in `spending.ts` → the null-rule test goes red. MEASURED above: 5 red.
 
 ### Commit 7 — Data tab tidy (separate, no behaviour change)
 
@@ -1273,6 +1389,48 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
 
 - Unchanged from the first version.
 - Candidate A, if you number it, gets its own red-test-then-fix pair. PL-026 (was B) likewise.
+- **Built 2026-10-04 (MEASURED), as `refactor(data): one range control and dateKey in History`:**
+  - **`components/RangeControl.tsx`:** one control for History (7/30 days), Trends (7/14, still from `RANGE_DAYS.map`) and Spending (this week / this month). It takes the Trends style. **History's control changes look:** green pill → grey, the one visible change. Placement stays top right.
+  - **History's three hand-rolled `padStart` date keys** (`dayArray`, today and yesterday in `fmtDate`) are now `dateKey()` and `addDays()`. Same local-calendar days, so no behaviour change.
+  - **Commit 7b (2026-10-04, MEASURED):** the standalone mode and the `embedded` prop are removed, and DataScreen renders `<HistoryScreen />`. The rendered layout is the old embedded one (a plain View, no heading, control top right). Test swap in `trendsUi.test.ts` only: the two standalone-mode tests and the `<HistoryScreen embedded />` assertion are replaced by three tests (no prop, no SafeAreaView, no heading) and a `<HistoryScreen />` assertion. Red first (4), then green. Every other test file is byte-identical. Suite 1390 / 1390, `tsc` 0, runtime versions unchanged.
+  - **The standalone HistoryScreen mode is NOT removed (Robbie, 2026-10-04).** `trendsUi.test.ts:60-71` pins it (the `embedded = false` default, the `Frame` switch, the heading), and line 47 pins `<HistoryScreen embedded />`. "Tests unchanged" won, so removing it is a separate later commit that swaps those tests.
+  - **Results:** 0 test files changed. Suite 1389 / 1389. `tsc` 0. Runtime versions unchanged (`c1907ba4…` / `5359dcce…`).
+  - **Checklist (Pixel 9):** passed 2026-10-04 (MEASURED, Robbie: "All Passed"), dev client at `0bbae1b`.
+    - [x] History, Trends and Spending all show the same grey range control at the top right. History looks otherwise unchanged (the average card, days logged, % on goal and day rows), and 7 / 30 days still switches the list.
+    - [x] Trends looks unchanged; 7 / 14 days still switches the charts, and the choice is still remembered after leaving and reopening the tab.
+    - [x] History's top rows read Today and Yesterday on the right days. Tapping a day lands Today on that date.
+    - [ ] Optional: the same after midnight, or with the phone's date moved, the newest row is still today. (Optional; not confirmed separately by "All Passed".)
+
+### Commit 8 — Data control size, spending charts and 3 months (added 2026-10-04, Robbie)
+
+- **8a** `feat(data): a bigger History | Trends | Spending control on its own row`
+  - The segmented control leaves the 220 dp cap beside the "Data" title for its own full-width row under it. Labels go `Typography.sm` → `base`, and `minHeight` 36 → 42 dp.
+  - **MEASURED:** a new `trendsUi` test (no `maxWidth`, control in `styles.controlRow`) was red first, then green. Suite 1391 / 1391, `tsc` 0, runtime versions unchanged.
+  - **Checklist (Pixel 9):** passed 2026-10-04 (MEASURED, Robbie: "I ran every item on both checklists and all passed"), dev client on `feat/receipts`.
+    - [x] The control spans the width under "Data", with larger labels that don't truncate at 360 dp or at the largest system font.
+    - [x] History, Trends and Spending switch as before, and the range control sits top right below it.
+- **8b** `feat(data): spending charts by day, week and 13 weeks, and a 3-month range`
+  - **`spending.ts`:**
+    - `periodRange(period, today)`: week, month, or **"3 months" = the last 13 Mon–Sun weeks, ending this Sunday**. Whole weeks, so every bar is comparable.
+    - `spendingBuckets(receipts, period, today, currency)`: a bar per day this week; a bar per week this month (clipped to the 1st and to today); a bar per week over 13 weeks.
+    - **One currency per chart** (the headline's). Amounts follow `receiptAmount`, so the bars add up to the headline. An unknown total is counted on its bar (`unknown`), never added as £0.
+  - **`SpendingChart`:** plain Views (no chart dependency, nothing native, OTA-able). It shows the highest bar's amount, a "?" over a bar holding an unreadable receipt, every 4th label on 13 bars, and a footnote naming any currency left out.
+  - **`SpendingPanel`:** "3 months" is the third option in the range control, and the sub-line says "in the last 13 weeks". The chart sits in the headline card, shown when there's a headline.
+  - **MEASURED:**
+    - **Red first:** 8 failed (export missing).
+    - **Sabotages, both restored byte-identical:** charts mixing currencies → 2 red; a bucket counting an unknown total → 1 red.
+    - **Results:** suite 1399 / 1399. `tsc` 0. Runtime versions unchanged (`c1907ba4…` / `5359dcce…`).
+  - **Checklist (Pixel 9):** passed 2026-10-04 (MEASURED, Robbie: every item run, including the optional one), dev client on `feat/receipts`.
+    - [x] The range control shows This week / This month / 3 months and fits.
+    - [x] This week: 7 bars Mon–Sun; your receipt's day has the bar.
+    - [x] This month: a bar per week from the 1st; labels are each week's first day.
+    - [x] 3 months: 13 bars, labelled every 4th; the headline matches the hand sum's `3months` row (SQL below).
+    - [x] The bar heights look right against "Highest £…", and a week with nothing is empty, not missing.
+    - [x] Optional, needs data: a € receipt adds the footnote and no € in the bars; an unreadable-total receipt puts "?" on its bar.
+  - **Hand sum for 3 months.** Add this row to the commit 6 hand-sum query's `values` list:
+    ```sql
+    ('3months', date_trunc('week', t.d)::date - 84, date_trunc('week', t.d)::date + 6)
+    ```
 
 ### Revised commit list
 
@@ -1293,6 +1451,6 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
 ### Deploy (only when you ask)
 
 1. `db push` of 1a and 1b together → verify file.
-2. Function deploy (3) → smoke test, including the 9.0M-char body probe.
+2. Function deploy (3), `npx supabase functions deploy scan-receipt --use-api` → smoke test, including the 9.0M-char body probe. **Done 2026-10-04**, version 1 from `17707e9` (see commit 3's checklist).
 3. `runtimeversion:resolve` unchanged (`c1907ba4…` / `5359dcce…`) → OTA of 4a–7.
 4. Record it all in `testing/` under the IDs you allocate.

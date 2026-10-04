@@ -34,18 +34,26 @@ describe("DataScreen", () => {
     expect(code).toMatch(/useState<Segment>\(\s*"history"\s*\)/);
   });
 
-  it("offers exactly History and Trends, in that order", () => {
+  it("offers exactly History, Trends and Spending, in that order", () => {
     const labels = [...code.matchAll(/label:\s*"([^"]+)"/g)].map((m) => m[1]);
-    expect(labels).toEqual(["History", "Trends"]);
+    expect(labels).toEqual(["History", "Trends", "Spending"]);
   });
 
-  it("renders both segments from one screen — no nested navigator", () => {
+  it("renders every segment from one screen — no nested navigator", () => {
     // A navigator here would give each segment its own history stack and
     // focus events, and would be a new dependency in a fingerprint that
     // has to stay OTA-compatible.
     expect(code).not.toMatch(/createBottomTabNavigator|createNativeStackNavigator|createMaterialTopTabNavigator/);
-    expect(code).toContain("<HistoryScreen embedded />");
+    expect(code).toContain("<HistoryScreen />");
     expect(code).toContain("<TrendsPanel />");
+    expect(code).toContain("<SpendingPanel />");
+  });
+
+  // 2026-10-04 (Robbie): the control was capped at 220 dp beside the title,
+  // and three labels made it cramped. It now has its own full-width row.
+  it("gives the segmented control its own full-width row, not a 220 dp cap beside the title", () => {
+    expect(code).not.toMatch(/maxWidth/);
+    expect(code).toMatch(/<View style=\{styles\.controlRow\}>\s*<SegmentedControl/);
   });
 
   it("does not persist which segment was last open", () => {
@@ -56,16 +64,24 @@ describe("DataScreen", () => {
   });
 });
 
-describe("HistoryScreen, embedded", () => {
+// Commit 7b: History is only ever a Data segment, so its standalone mode
+// (own safe-area inset, own "History" heading, the `embedded` switch) is
+// gone. These replace the two tests that pinned that mode.
+describe("HistoryScreen, a Data segment only", () => {
   const code = stripComments(historyScreen);
 
-  it("takes an `embedded` prop and skips its own safe-area inset with it", () => {
-    expect(code).toMatch(/embedded\s*=\s*false/);
-    expect(code).toMatch(/const Frame = embedded \? View : SafeAreaView/);
+  it("takes no `embedded` prop", () => {
+    expect(code).not.toMatch(/embedded/);
+    expect(code).toMatch(/export function HistoryScreen\(\)/);
   });
 
-  it("suppresses its own heading when embedded", () => {
-    expect(code).toMatch(/\{!embedded && <Text style=\{styles\.heading\}>History<\/Text>\}/);
+  it("draws no safe-area frame of its own (DataScreen owns it)", () => {
+    expect(code).not.toMatch(/SafeAreaView/);
+  });
+
+  it("draws no heading of its own (the segmented control says History)", () => {
+    expect(code).not.toMatch(/styles\.heading/);
+    expect(code).not.toMatch(/>History</);
   });
 });
 

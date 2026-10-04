@@ -1406,9 +1406,9 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
 - **8a** `feat(data): a bigger History | Trends | Spending control on its own row`
   - The segmented control leaves the 220 dp cap beside the "Data" title for its own full-width row under it. Labels go `Typography.sm` → `base`, and `minHeight` 36 → 42 dp.
   - **MEASURED:** a new `trendsUi` test (no `maxWidth`, control in `styles.controlRow`) was red first, then green. Suite 1391 / 1391, `tsc` 0, runtime versions unchanged.
-  - **Checklist (Pixel 9):**
-    - [ ] The control spans the width under "Data", with larger labels that don't truncate at 360 dp or at the largest system font.
-    - [ ] History, Trends and Spending switch as before, and the range control sits top right below it.
+  - **Checklist (Pixel 9):** passed 2026-10-04 (MEASURED, Robbie: "I ran every item on both checklists and all passed"), dev client on `feat/receipts`.
+    - [x] The control spans the width under "Data", with larger labels that don't truncate at 360 dp or at the largest system font.
+    - [x] History, Trends and Spending switch as before, and the range control sits top right below it.
 - **8b** `feat(data): spending charts by day, week and 13 weeks, and a 3-month range`
   - **`spending.ts`:**
     - `periodRange(period, today)`: week, month, or **"3 months" = the last 13 Mon–Sun weeks, ending this Sunday**. Whole weeks, so every bar is comparable.
@@ -1420,13 +1420,13 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
     - **Red first:** 8 failed (export missing).
     - **Sabotages, both restored byte-identical:** charts mixing currencies → 2 red; a bucket counting an unknown total → 1 red.
     - **Results:** suite 1399 / 1399. `tsc` 0. Runtime versions unchanged (`c1907ba4…` / `5359dcce…`).
-  - **Checklist (Pixel 9):**
-    - [ ] The range control shows This week / This month / 3 months and fits.
-    - [ ] This week: 7 bars Mon–Sun; your receipt's day has the bar.
-    - [ ] This month: a bar per week from the 1st; labels are each week's first day.
-    - [ ] 3 months: 13 bars, labelled every 4th; the headline matches the hand sum's `3months` row (SQL below).
-    - [ ] The bar heights look right against "Highest £…", and a week with nothing is empty, not missing.
-    - [ ] Optional, needs data: a € receipt adds the footnote and no € in the bars; an unreadable-total receipt puts "?" on its bar.
+  - **Checklist (Pixel 9):** passed 2026-10-04 (MEASURED, Robbie: every item run, including the optional one), dev client on `feat/receipts`.
+    - [x] The range control shows This week / This month / 3 months and fits.
+    - [x] This week: 7 bars Mon–Sun; your receipt's day has the bar.
+    - [x] This month: a bar per week from the 1st; labels are each week's first day.
+    - [x] 3 months: 13 bars, labelled every 4th; the headline matches the hand sum's `3months` row (SQL below).
+    - [x] The bar heights look right against "Highest £…", and a week with nothing is empty, not missing.
+    - [x] Optional, needs data: a € receipt adds the footnote and no € in the bars; an unreadable-total receipt puts "?" on its bar.
   - **Hand sum for 3 months.** Add this row to the commit 6 hand-sum query's `values` list:
     ```sql
     ('3months', date_trunc('week', t.d)::date - 84, date_trunc('week', t.d)::date + 6)

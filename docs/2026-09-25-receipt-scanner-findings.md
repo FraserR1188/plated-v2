@@ -1389,6 +1389,16 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
 
 - Unchanged from the first version.
 - Candidate A, if you number it, gets its own red-test-then-fix pair. PL-026 (was B) likewise.
+- **Built 2026-10-04 (MEASURED), as `refactor(data): one range control and dateKey in History`:**
+  - **`components/RangeControl.tsx`:** one control for History (7/30 days), Trends (7/14, still from `RANGE_DAYS.map`) and Spending (this week / this month). It takes the Trends style. **History's control changes look:** green pill → grey, the one visible change. Placement stays top right.
+  - **History's three hand-rolled `padStart` date keys** (`dayArray`, today and yesterday in `fmtDate`) are now `dateKey()` and `addDays()`. Same local-calendar days, so no behaviour change.
+  - **The standalone HistoryScreen mode is NOT removed (Robbie, 2026-10-04).** `trendsUi.test.ts:60-71` pins it (the `embedded = false` default, the `Frame` switch, the heading), and line 47 pins `<HistoryScreen embedded />`. "Tests unchanged" won, so removing it is a separate later commit that swaps those tests.
+  - **Results:** 0 test files changed. Suite 1389 / 1389. `tsc` 0. Runtime versions unchanged (`c1907ba4…` / `5359dcce…`).
+  - **Checklist (Pixel 9):**
+    - [ ] History, Trends and Spending all show the same grey range control at the top right. History looks otherwise unchanged (the average card, days logged, % on goal and day rows), and 7 / 30 days still switches the list.
+    - [ ] Trends looks unchanged; 7 / 14 days still switches the charts, and the choice is still remembered after leaving and reopening the tab.
+    - [ ] History's top rows read Today and Yesterday on the right days. Tapping a day lands Today on that date.
+    - [ ] Optional: the same after midnight, or with the phone's date moved, the newest row is still today.
 
 ### Revised commit list
 

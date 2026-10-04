@@ -29,6 +29,7 @@ import {
 } from "../lib/trends";
 import { readTrendsPrefs, writeTrendsPrefs } from "../lib/trendsPrefs";
 import { TrendChart } from "./TrendChart";
+import { RangeControl } from "./RangeControl";
 import {
   Colors,
   Radius,
@@ -126,23 +127,11 @@ export function TrendsPanel() {
     >
       {/* ── Range toggle ─────────────────────────────────── */}
       <View style={styles.rangeRow}>
-        <View style={styles.rangePicker}>
-          {RANGE_DAYS.map((r) => (
-            <Pressable
-              key={r}
-              onPress={() => onRange(r)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: range === r }}
-              style={[styles.rangeBtn, range === r && styles.rangeBtnOn]}
-            >
-              <Text
-                style={[styles.rangeText, range === r && styles.rangeTextOn]}
-              >
-                {r} days
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+        <RangeControl
+          options={RANGE_DAYS.map((r) => ({ value: r, label: `${r} days` }))}
+          value={range}
+          onChange={onRange}
+        />
       </View>
 
       {/* ── Nutrient picker ──────────────────────────────── */}
@@ -210,28 +199,6 @@ const styles = StyleSheet.create(
       flexDirection: "row",
       justifyContent: "flex-end",
       marginBottom: Spacing.sm,
-    },
-    rangePicker: {
-      flexDirection: "row",
-      backgroundColor: Colors.surface,
-      borderRadius: Radius.pill,
-      padding: 3,
-    },
-    rangeBtn: {
-      paddingVertical: 6,
-      paddingHorizontal: Spacing.sm,
-      borderRadius: Radius.pill,
-    },
-    rangeBtnOn: {
-      backgroundColor: Colors.surface2,
-    },
-    rangeText: {
-      fontSize: Typography.xs,
-      fontWeight: Typography.semibold,
-      color: Colors.textDim,
-    },
-    rangeTextOn: {
-      color: Colors.text,
     },
     pickerHead: {
       flexDirection: "row",

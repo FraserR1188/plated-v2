@@ -26,6 +26,7 @@ import { exportSpendingCSV } from "../lib/csv";
 import { dateKey, formatDayLabel } from "../lib/time";
 import { Colors, Spacing, Radius, Typography, withDefaultFont } from "../theme/tokens";
 import { RootStackParamList } from "../types";
+import { RangeControl } from "./RangeControl";
 
 type Period = "week" | "month";
 const PERIODS: { value: Period; label: string }[] = [
@@ -137,19 +138,7 @@ export function SpendingPanel() {
       {header}
 
       <View style={styles.rangeRow}>
-        <View style={styles.rangePicker}>
-          {PERIODS.map((p) => (
-            <Pressable
-              key={p.value}
-              onPress={() => setPeriod(p.value)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: period === p.value }}
-              style={[styles.rangeBtn, period === p.value && styles.rangeBtnOn]}
-            >
-              <Text style={[styles.rangeText, period === p.value && styles.rangeTextOn]}>{p.label}</Text>
-            </Pressable>
-          ))}
-        </View>
+        <RangeControl options={PERIODS} value={period} onChange={setPeriod} />
       </View>
 
       <View style={styles.card}>
@@ -254,11 +243,6 @@ const styles = StyleSheet.create(
     scanText: { fontSize: Typography.sm, fontWeight: Typography.bold, color: Colors.bg },
 
     rangeRow: { flexDirection: "row", justifyContent: "flex-end" },
-    rangePicker: { flexDirection: "row", backgroundColor: Colors.surface, borderRadius: Radius.pill, padding: 3 },
-    rangeBtn: { paddingVertical: 6, paddingHorizontal: Spacing.sm, borderRadius: Radius.pill },
-    rangeBtnOn: { backgroundColor: Colors.surface2 },
-    rangeText: { fontSize: Typography.xs, fontWeight: Typography.semibold, color: Colors.textDim },
-    rangeTextOn: { color: Colors.text },
 
     card: {
       backgroundColor: Colors.surface,

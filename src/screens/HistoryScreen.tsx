@@ -6,6 +6,8 @@ import { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import { useStore } from "../store/useStore";
 import { BottomTabParamList } from "../types";
 import { dailyAverages, KnownAverage } from "../lib/historyAverages";
+import { dateKey, addDays } from "../lib/time";
+import { RangeControl } from "../components/RangeControl";
 import {
   Colors,
   Spacing,
@@ -17,6 +19,11 @@ import {
 } from "../theme/tokens";
 
 type Range = "7d" | "30d";
+
+const RANGES: { value: Range; label: string }[] = [
+  { value: "7d", label: "7 days" },
+  { value: "30d", label: "30 days" },
+];
 
 // Today and History are sibling tabs under the same Tab.Navigator (see
 // AppNavigator.tsx) — navigating "to Today" is a same-navigator tab switch,
@@ -41,12 +48,10 @@ export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
   const [range, setRange] = useState<Range>("7d");
   const days = range === "7d" ? 7 : 30;
 
-  // Build day array newest → oldest
-  const dayArray = Array.from({ length: days }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  });
+  // Build day array newest → oldest, in local calendar days (dateKey and
+  // addDays, never a hand-built or UTC key).
+  const todayKey = dateKey();
+  const dayArray = Array.from({ length: days }, (_, i) => addDays(todayKey, -i));
 
   // Headline figures (calories/macros/count/"logged") are EATEN only — what
   // actually happened that day. Previously this filtered `entries` by date
@@ -86,13 +91,8 @@ export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
 
   const fmtDate = (ds: string) => {
     const d = new Date(ds + "T12:00:00");
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    const yd = new Date(now);
-    yd.setDate(yd.getDate() - 1);
-    const ydStr = `${yd.getFullYear()}-${String(yd.getMonth() + 1).padStart(2, "0")}-${String(yd.getDate()).padStart(2, "0")}`;
-    if (ds === todayStr) return "Today";
-    if (ds === ydStr) return "Yesterday";
+    if (ds === todayKey) return "Today";
+    if (ds === addDays(todayKey, -1)) return "Yesterday";
     return d.toLocaleDateString("en-GB", {
       weekday: "short",
       day: "numeric",
@@ -129,22 +129,8 @@ export function HistoryScreen({ embedded = false }: HistoryScreenProps = {}) {
               heading directly under it is the same word twice. */}
           {!embedded && <Text style={styles.heading}>History</Text>}
 
-          {/* Range picker — pill toggle */}
-          <View style={styles.rangePicker}>
-            {(["7d", "30d"] as Range[]).map((r) => (
-              <Pressable
-                key={r}
-                style={[styles.rangeBtn, range === r && styles.rangeBtnOn]}
-                onPress={() => setRange(r)}
-              >
-                <Text
-                  style={[styles.rangeTxt, range === r && styles.rangeTxtOn]}
-                >
-                  {r === "7d" ? "7 days" : "30 days"}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          {/* The Data tab's shared range control */}
+          <RangeControl options={RANGES} value={range} onChange={setRange} />
         </View>
 
         {/* ── Average stats card ──────────────────────────── */}
@@ -452,32 +438,6 @@ const styles = StyleSheet.create(
     fontWeight: Typography.bold,
     color: Colors.text,
     letterSpacing: -0.5,
-  },
-  rangePicker: {
-    flexDirection: "row",
-    backgroundColor: Colors.surface,
-    borderRadius: Radius.pill,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    padding: 3,
-  },
-  rangeBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: Spacing.md,
-    borderRadius: Radius.pill,
-    alignItems: "center",
-  },
-  rangeBtnOn: {
-    backgroundColor: Colors.green,
-  },
-  rangeTxt: {
-    fontSize: Typography.xs,
-    color: Colors.textSub,
-    fontWeight: Typography.medium,
-  },
-  rangeTxtOn: {
-    color: Colors.bg,
-    fontWeight: Typography.bold,
   },
 
   // Average card

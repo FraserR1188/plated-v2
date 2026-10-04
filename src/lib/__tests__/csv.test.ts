@@ -12,6 +12,7 @@ import { describe, it, expect } from "vitest";
 import { buildCsv, last30Days, CSV_HEADER } from "../csv";
 import { dateKey } from "../time";
 import { MealEntry } from "../../types";
+import { requireExports } from "./helpers/redImports";
 
 function makeEntry(overrides: Partial<MealEntry> = {}): MealEntry {
   return {
@@ -257,5 +258,142 @@ describe("last30Days", () => {
     const keys = kept.map((e) => e.date).sort();
     expect(keys[0]).toBe("2026-03-22");
     expect(keys[keys.length - 1]).toBe("2026-04-20");
+  });
+});
+
+// ============================================================
+// Receipt scanner, commit 2 — RED. The spending export doesn't exist in
+// csv.ts yet (findings §6). Every test below must fail with "export not
+// found: csv → …" until commit 4b; the meal-export tests above stay green.
+// See helpers/redImports.ts for why these load the module per test rather
+// than importing at the top.
+//
+// One row per receipt line; the receipt's columns repeat on each row. Money
+// is "12.30" with an EMPTY cell for NULL (PL-008), and purchased_on is
+// written as stored: it's already a local calendar date (PL-007).
+// ============================================================
+
+type SpendingCsvLine = {
+  position: number;
+  raw_text: string;
+  qty: number | null;
+  qty_unit: "each" | "kg" | null;
+  unit_price_pence: number | null;
+  line_total_pence: number | null;
+  is_discount: boolean;
+};
+type SpendingCsvReceipt = {
+  purchased_on: string;
+  purchased_on_estimated: boolean;
+  store: string | null;
+  currency: string;
+  printed_total_pence: number | null;
+  lines: SpendingCsvLine[];
+};
+type SpendingCsv = {
+  SPENDING_CSV_HEADER: string;
+  buildSpendingCsv: (receipts: SpendingCsvReceipt[]) => string;
+  spendingCsvFilename: (now: Date) => string;
+};
+
+const CSV_MODULE = "../csv";
+const spendingCsv = () =>
+  requireExports<SpendingCsv>(() => import(/* @vite-ignore */ CSV_MODULE), "csv", [
+    "SPENDING_CSV_HEADER",
+    "buildSpendingCsv",
+    "spendingCsvFilename",
+  ]);
+
+function spendLine(over: Partial<SpendingCsvLine> = {}): SpendingCsvLine {
+  return {
+    position: 0,
+    raw_text: "JS CHICKPEAS",
+    qty: null,
+    qty_unit: null,
+    unit_price_pence: null,
+    line_total_pence: 41,
+    is_discount: false,
+    ...over,
+  };
+}
+
+function spendReceipt(over: Partial<SpendingCsvReceipt> = {}): SpendingCsvReceipt {
+  return {
+    purchased_on: "2026-10-25",
+    purchased_on_estimated: false,
+    store: "Sainsbury's",
+    currency: "GBP",
+    printed_total_pence: 1230,
+    lines: [spendLine()],
+    ...over,
+  };
+}
+
+describe("spending CSV (receipt scanner)", () => {
+  it("pins the header", async () => {
+    const { SPENDING_CSV_HEADER } = await spendingCsv();
+    expect(SPENDING_CSV_HEADER).toBe(
+      "purchased_on,date_estimated,store,currency,receipt_total,line_no,item_text,qty,qty_unit,unit_price,line_total,is_discount",
+    );
+  });
+
+  it("starts with the header and writes one row per line, receipt columns repeated", async () => {
+    const { SPENDING_CSV_HEADER, buildSpendingCsv } = await spendingCsv();
+    const rows = buildSpendingCsv([
+      spendReceipt({
+        lines: [
+          spendLine({ position: 0, raw_text: "MILK", line_total_pence: 150 }),
+          spendLine({ position: 1, raw_text: "Nectar Price Saving", line_total_pence: -50, is_discount: true }),
+        ],
+      }),
+    ]).trimEnd().split("\n");
+    expect(rows[0]).toBe(SPENDING_CSV_HEADER);
+    expect(rows).toHaveLength(3);
+    for (const r of rows.slice(1)) {
+      const c = r.split(",");
+      expect(c[0]).toBe("2026-10-25"); // purchased_on as stored
+      expect(c[3]).toBe("GBP");
+      expect(c[4]).toBe("12.30"); // receipt_total
+    }
+    expect(rows[1].split(",")[10]).toBe("1.50");
+    expect(rows[2].split(",")[10]).toBe("-0.50");
+  });
+
+  it("writes NULL money as an empty cell, never 0.00", async () => {
+    const { buildSpendingCsv } = await spendingCsv();
+    const row = buildSpendingCsv([
+      spendReceipt({
+        printed_total_pence: null,
+        lines: [spendLine({ unit_price_pence: null, line_total_pence: null })],
+      }),
+    ]).trimEnd().split("\n")[1].split(",");
+    expect(row[4]).toBe(""); // receipt_total
+    expect(row[9]).toBe(""); // unit_price
+    expect(row[10]).toBe(""); // line_total
+  });
+
+  it("a receipt with no lines is one row, with empty line cells", async () => {
+    const { buildSpendingCsv } = await spendingCsv();
+    const rows = buildSpendingCsv([spendReceipt({ lines: [] })]).trimEnd().split("\n");
+    expect(rows).toHaveLength(2);
+    const c = rows[1].split(",");
+    expect(c).toHaveLength(12);
+    expect(c.slice(5)).toEqual(["", "", "", "", "", "", ""]);
+    expect(c[4]).toBe("12.30"); // the receipt's own total is still there
+  });
+
+  it("quotes item text containing a comma", async () => {
+    const { buildSpendingCsv } = await spendingCsv();
+    const out = buildSpendingCsv([
+      spendReceipt({ lines: [spendLine({ raw_text: "WINE, RED 75CL", line_total_pence: 650 })] }),
+    ]);
+    expect(out).toContain('"WINE, RED 75CL"');
+  });
+
+  it("names the file by LOCAL date: 00:30 BST on 25 Oct is the 25th, not the 24th", async () => {
+    const { spendingCsvFilename } = await spendingCsv();
+    expect(spendingCsvFilename(new Date(2026, 9, 25, 0, 30))).toBe(
+      "plated_spending_2026-10-25.csv",
+    );
   });
 });

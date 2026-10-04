@@ -293,7 +293,11 @@ lines: Array<{
    - **List every physical item line exactly once.** A line that appears in the overlap of two parts is listed once, from the part where it is fully legible, with that `part`.
    - If the parts don't look like the same receipt, set `same_receipt: false`.
    - **Revised 2026-09-27, unproven, so it's settled before commit 3.** On multi-photo receipts Sonnet 5's lines added up in 3 of 8 reads, against 13 of 14 per arm on single photos. But six of the eight reads are r08, whose ground truth is in doubt, and the other two are r10, whose photo order is in doubt (commit 0). So this rule isn't shown to fail, and it isn't shown to work either. Commit 3's prompt may need more about overlap. For example: "Before listing the first lines of part k+1, find the last line you listed from part k in it, and continue after it." Settle it by re-running the multi-photo arm on about four new multi-photo receipts, with clean inputs.
-   - **DRAFT — Revised 2026-10-04, shipped in commit 3 pending the multi-photo re-run.** Commit 3 went ahead before the extra multi-photo receipts, because the prompt can be redeployed without an OTA and nothing calls the function until the UI ships. So `SYSTEM_PROMPT` rule 2 in `supabase/functions/_shared/receipt.ts` carries the overlap guidance above as a first draft: *"Before you list the first lines of part k+1, find in part k+1 the last line you listed from part k, and continue after it: the lines before it in part k+1 are the overlap and were already listed."* It's unmeasured. Re-run the bake-off's multi-photo arm with this exact prompt on the new receipts, then keep, revise or drop it, and redeploy `scan-receipt` if it changes.
+   - **DRAFT — Revised 2026-10-04, shipped in commit 3 pending the multi-photo re-run.** Commit 3 went ahead before the extra multi-photo receipts, because the prompt can be redeployed without an OTA and nothing calls the function until the UI ships. So `SYSTEM_PROMPT` rule 2 in `supabase/functions/_shared/receipt.ts` carries the overlap guidance above as a first draft: *"Before you list the first lines of part k+1, find in part k+1 the last line you listed from part k, and continue after it: the lines before it in part k+1 are the overlap and were already listed."* Re-run the bake-off's multi-photo arm with this exact prompt on the new receipts, then keep, revise or drop it, and redeploy `scan-receipt` if it changes.
+   - **First reading, MEASURED 2026-10-04 (the deployed function's smoke test):**
+     - r08 in 3 parts came back as 88 lines, against about 80 in every bake-off run without this guidance. The total was right, and the seam flag caught none of the extra lines.
+     - That's one read of one receipt whose ground truth is in doubt, so it doesn't settle anything. It points the wrong way: the guidance didn't reduce over-reading at the joins and may have added to it.
+     - **Still DRAFT. The multi-photo re-run is the gate before the UI ships.**
    - The same prompt also carries rule 4's loyalty-price-saving clause and rule 5's voids clause (both Revised 2026-09-27). Those are measured: every bake-off arm already behaved that way.
 3. **Header and total.**
    - Store and date come from part 1: the header.
@@ -397,7 +401,7 @@ lines: Array<{
   - `prepareImage("receipt")` re-encodes once at quality 0.7 if a part exceeds it, then fails with `prep_failed`.
 - **Total:** `MAX_TOTAL_BASE64_CHARS = 9,000,000`, checked on the client before invoking and again in the function (413).
 - **Neither quality nor edge needs to drop for 3 parts.** The heaviest realistic 3-part request is 2.4M chars at 2268 px, 27% of the total cap. Only three pure-noise frames at 2576 px (11.9M) would exceed it, and 2576 is above the useful size anyway.
-- **The undocumented Supabase body limit must be MEASURED, not assumed.** Commit 3's smoke test posts a 9.0M-char body to the deployed function and must get the function's own response (200 or its own 413), not a platform 413 or 502.
+- **The undocumented Supabase body limit must be MEASURED, not assumed.** Commit 3's smoke test posts a 9.0M-char body to the deployed function and must get the function's own response (200 or its own 413), not a platform 413 or 502. **MEASURED 2026-10-04: the function's own 413 came back for a 9,000,003-char body, so the platform limit is ≥ 9 MB.**
 - The CPU limit is **PREDICTED** not to bind: `req.json()` on 9 MB is I/O-dominated and the model call is async. That's confirmed only by the same smoke test.
 
 **Tokens, `max_tokens` and timeout — PREDICTED, confirmed by the bake-off:**
@@ -891,7 +895,7 @@ The raw `@expo/fingerprint` library hash (`444e5488…`) differs because expo-up
 **Deploy order — Revised 2026-09-26:**
 
 1. `npx supabase db push` (schema; one migration, or two if commit 1 is split, pushed together) → run the verify file.
-2. `npm run check:functions`, then `npx supabase functions deploy scan-receipt`, then the smoke test:
+2. `npm run check:functions`, then `npx supabase functions deploy scan-receipt --use-api` (`--use-api` is required on the dev machine: local bundling fails TLS to jsr.io), then the smoke test:
    - a real 1-part and 3-part receipt from a dev client;
    - **the 9.0M-char body probe** for the undocumented Supabase body limit (§3);
    - 4 parts → `too_long`.
@@ -1162,18 +1166,23 @@ It grew from one RPC with 6 checks and 5 sabotages to three RPCs, a trigger, 11 
 - Commit 2's function tests go green.
 - **Same commit:** the three "bump via the MODEL secret, no redeploy" comments are replaced with the §3 warning. Comment-only, so those functions aren't redeployed.
 - **Checklist:**
-  - [ ] `npm run check:functions` (deno check). `functions deploy` doesn't type-check.
-  - [ ] `npx vitest run`: all green. Record the count (baseline **1033/1033, 54 files, MEASURED at `eec75b9`**; **1055/1055, 58 files at `9ed4956`**, Revised 2026-09-27).
-  - [ ] After deploy, when asked:
-    - [ ] a real 1-part and 3-part receipt → 200 with the expected shape;
-    - [ ] a non-receipt → 422 `no_receipt`;
-    - [ ] two parts from different receipts → 422;
-    - [ ] 4 parts → 413 `too_long`;
-    - [ ] **a 9.0M-char body → the function's own response, not a platform error** (records the undocumented Supabase limit as MEASURED);
-    - [ ] no JWT → 401;
-    - [ ] the 21st scan in an hour → 429, counted together with meal scans;
-    - [ ] **one `ai_extractions` row for the 3-part scan**;
-    - [ ] the dashboard logs contain no receipt text.
+  - [x] `npm run check:functions` (deno check). `functions deploy` doesn't type-check. Clean at `17707e9`.
+  - [x] `npx vitest run`: 1275 passing, 6 expected-red (the spending-CSV additions, until commit 6), MEASURED at `17707e9`. (Earlier baselines: 1033/1033 at `eec75b9`; 1055/1055 at `9ed4956`.)
+  - **Deployed 2026-10-04** as version 1 from `feat/receipts` @ `17707e9`, with `npx supabase functions deploy scan-receipt --use-api`. A plain deploy fails on this machine: local bundling can't fetch jsr.io ("invalid peer certificate: UnknownIssuer", the same TLS interception as the `db push` warning). `--use-api` bundles on Supabase's side instead.
+  - **Smoke test, MEASURED 2026-10-04, account B,** called from the terminal with a user JWT:
+    - [x] **1-part (r07):** 200; total 6643, date 2026-09-20, 38 lines, 0 flagged. `ai_extractions`: success, `claude-sonnet-5`, 6,724 in / 2,929 out, 18.7 s.
+    - [x] **3-part (r08):** 200; total 12373 (correct), date 2026-07-28, **88 lines**, 0 flagged, note "Total read from part 2 of 3". 16,240 in / 6,115 out, 37.1 s.
+      - **The DRAFT overlap guidance (rule 2) didn't reduce over-reading at the joins, and may have added to it.** The bake-off read r08 at about 80 lines in every run, and the seam flag caught none of the extra lines.
+      - **Rule 2 stays DRAFT, and the multi-photo re-run is the gate before the UI ships.**
+    - [x] a non-receipt → 422.
+    - [x] two parts from different receipts (r01 + r07) → 422.
+      - The 422s are recorded by status only: PowerShell 5's `Invoke-WebRequest` drops error bodies, so the `no_receipt` code wasn't seen.
+    - [x] 4 parts → 413 `too_long`, no model call.
+    - [x] **the 9.0M-char body probe → the function's own 413 JSON** ("too_long", "Those photos are too large…"), so Supabase accepted the body. **The platform's request-body limit is ≥ 9 MB, MEASURED 2026-10-04.**
+    - [x] no JWT → 401, from the gateway (`verify_jwt`).
+    - [x] the 21st scan in an hour → 429: 5 counted already, then 15 fake-image scans (each a 502 `model_error`, each counted), then the 21st → 429. Meal scans share the same count (it's one table and one query); the run didn't include one.
+    - [x] **one `ai_extractions` row for the 3-part scan.**
+    - [ ] the dashboard logs contain no receipt text. **Owed:** not reported with the run.
 - **Sabotage:**
   - (1) Remove the `stop_reason` guard → the truncation test goes red.
   - (2) Remove the tender-line drop → the redaction test goes red.
@@ -1297,6 +1306,6 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
 ### Deploy (only when you ask)
 
 1. `db push` of 1a and 1b together → verify file.
-2. Function deploy (3) → smoke test, including the 9.0M-char body probe.
+2. Function deploy (3), `npx supabase functions deploy scan-receipt --use-api` → smoke test, including the 9.0M-char body probe. **Done 2026-10-04**, version 1 from `17707e9` (see commit 3's checklist).
 3. `runtimeversion:resolve` unchanged (`c1907ba4…` / `5359dcce…`) → OTA of 4a–7.
 4. Record it all in `testing/` under the IDs you allocate.

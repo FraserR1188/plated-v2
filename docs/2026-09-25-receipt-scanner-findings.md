@@ -1342,17 +1342,18 @@ Multi-part capture and edit-after-save each doubled the screen work. They have s
   - **Sabotage:** coalescing an unknown total to 0 in `receiptAmount` → 5 red (both receiptAmount null rules, summariseSpending, and two `spendingOverview` tests). Restored byte-identical.
   - **Results:** suite **1389 / 1389, 0 expected-red** (the CSV additions are green). `tsc` 0. Runtime versions unchanged (`c1907ba4…` / `5359dcce…`): JS only.
   - **NOT YET (separate):** the long-receipt notice still gates on the multi-photo re-run or tester reports (§3 rule 2). Merging `feat/receipts` to master is a separate step; the privacy-notice website change (§7) is outside the repo.
-- **Checklist (Pixel 9, dev client):**
-  - [ ] The 3-way control fits at 360 dp without truncation.
-  - [ ] Week/Month totals match a hand sum in SQL (below). Check both periods, and a currency's receipt count too.
-  - [ ] A € receipt shows on its own line, not added.
-  - [ ] Unknown-total receipts are listed and not counted.
-  - [ ] After an edit or delete, totals update on return.
-  - [ ] A row whose lines don't add up shows "Doesn't add up"; tapping a row opens it in edit mode.
-  - [ ] "Scan a receipt" works from the header, and from the empty state (an account with no receipts).
-  - [ ] The CSV opens in Sheets with empty cells for NULL and correct dates.
-  - [ ] Settings no longer shows the dashed DEV box.
-  - [ ] `tabStructure.test.ts` unchanged and green. MEASURED: unchanged file, passing in the 1389.
+- **Checklist (Pixel 9, dev client).** **Device pass 2026-10-04 (MEASURED, Robbie)**, `feat/receipts` @ `0c7424d`, account A. Ticked items passed; unticked items are **NOT RUN** and stay open.
+  - [x] The 3-way control fits at 360 dp without truncation.
+  - [x] Week/Month totals match a hand sum in SQL (below). Hand-sum SQL: week GBP 7278 pence, 1 receipt, 0 unknown; month GBP 7278 pence, 1 receipt, 0 unknown. The app headline matched on both This week and This month (£72.78 · 1 receipt).
+  - [ ] A € receipt shows on its own line, not added. **NOT RUN.**
+  - [ ] Unknown-total receipts are listed and not counted. **NOT RUN.**
+  - [x] After an edit or delete, totals update on return.
+  - [x] A row whose lines don't add up shows "Doesn't add up"; tapping a row opens it in edit mode.
+  - [x] "Scan a receipt" works from the header.
+  - [ ] "Scan a receipt" works from the empty state (an account with no receipts). **NOT RUN.**
+  - [x] The CSV opens in Sheets with empty cells for NULL and correct dates.
+  - [x] Settings no longer shows the dashed DEV box.
+  - [x] `tabStructure.test.ts` unchanged and green. MEASURED: unchanged file, passing in the 1389.
 - **Hand-sum SQL** (dashboard editor, one query; set the user id). It applies the app's rule: the printed total, else the sum of lines when every line total is known, else unknown. The week is Monday–Sunday and the month runs to date, both in the London calendar.
   ```sql
   with today as (select (now() at time zone 'Europe/London')::date as d),

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Container rig for 20260930120000_receipts.sql (commit 1a)
+# Container rig for 20260930120000_receipts.sql (commit 1a) and
+# 20260930130000_update_receipt.sql (commit 1b)
 #
 # Executes the verification for real in a throwaway postgres:16-alpine
 # container — no Supabase CLI, no migration chain (CLAUDE.md pattern). Needs
@@ -8,7 +9,7 @@
 #
 # For each variant it creates a fresh database with a stub `auth` schema
 # (auth.users + auth.uid() reading request.jwt.claims, as PostgREST sets it),
-# applies the migration, applies the variant's sabotage patch (none for
+# applies both migrations, applies the variant's sabotage patch (none for
 # `clean`), and runs 20260930120000_rig_tests.sql.
 #
 #   clean       every check must PASS
@@ -22,7 +23,7 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-MIGRATION="$HERE/../20260930120000_receipts.sql"
+MIGRATIONS=("$HERE/../20260930120000_receipts.sql" "$HERE/../20260930130000_update_receipt.sql")
 TESTS="$HERE/20260930120000_rig_tests.sql"
 CONTAINER="plated-rig-receipts"
 
@@ -73,6 +74,17 @@ begin
   end if;
 end $$;
 grant usage on schema rig to anon, authenticated;
+
+-- V9's update path, as two steps that each run in their own savepoint
+-- (a plpgsql exception block). By default the whole update is one RPC call
+-- in step 1 and step 2 does nothing. Sabotage 7b replaces both to model a
+-- client that splits delete and insert into two requests: each step then
+-- succeeds or fails on its own, as two transactions would.
+create function rig.update_step1(p_id uuid, p_receipt jsonb, p_lines jsonb) returns void
+language plpgsql as $$
+begin perform public.update_receipt(p_id, p_receipt, p_lines); end $$;
+create function rig.update_step2(p_id uuid, p_receipt jsonb, p_lines jsonb) returns void
+language plpgsql as $$ begin null; end $$;
 SQL
 )
 
@@ -121,12 +133,110 @@ SQL
 )
 EXPECT[s9]="V11 deleting again"
 
+# ── 1b ──
+PATCH[s6]=$(cat <<'SQL'
+create or replace function public.update_receipt(p_id uuid, p_receipt jsonb, p_lines jsonb)
+returns public.receipts language plpgsql security invoker set search_path = '' as $$
+declare r public.receipts;
+begin
+  update public.receipts t
+     set store = p_receipt->>'store', purchased_on = (p_receipt->>'purchased_on')::date,
+         purchased_on_estimated = case when (p_receipt->>'purchased_on')::date is distinct from t.purchased_on
+                                       then false else t.purchased_on_estimated end,
+         printed_total_pence = (p_receipt->>'printed_total_pence')::integer,
+         currency = coalesce(p_receipt->>'currency', t.currency)
+   where t.id = p_id and t.user_id = auth.uid()
+  returning t.* into r;
+  -- sabotage 6: no `if not found` raise
+  delete from public.receipt_lines where receipt_id = p_id;
+  insert into public.receipt_lines (receipt_id, user_id, position, raw_text, qty, qty_unit, unit_price_pence, line_total_pence, is_discount)
+  select p_id, auth.uid(), x.position, x.raw_text, x.qty, x.qty_unit, x.unit_price_pence, x.line_total_pence, coalesce(x.is_discount, false)
+    from jsonb_to_recordset(coalesce(p_lines, '[]'::jsonb)) as x(position integer, raw_text text, qty numeric, qty_unit text, unit_price_pence integer, line_total_pence integer, is_discount boolean);
+  return r;
+end $$;
+SQL
+)
+EXPECT[s6]="V7 B updating A's receipt raises P0002"
+
+PATCH[s7a]=$(cat <<'SQL'
+create or replace function public.update_receipt(p_id uuid, p_receipt jsonb, p_lines jsonb)
+returns public.receipts language plpgsql security invoker set search_path = '' as $$
+declare r public.receipts;
+begin
+  update public.receipts t
+     set store = p_receipt->>'store', purchased_on = (p_receipt->>'purchased_on')::date,
+         purchased_on_estimated = case when (p_receipt->>'purchased_on')::date is distinct from t.purchased_on
+                                       then false else t.purchased_on_estimated end,
+         printed_total_pence = (p_receipt->>'printed_total_pence')::integer,
+         currency = coalesce(p_receipt->>'currency', t.currency)
+   where t.id = p_id and t.user_id = auth.uid()
+  returning t.* into r;
+  if not found then raise exception 'update_receipt: no receipt % for this user', p_id using errcode = 'P0002'; end if;
+  delete from public.receipt_lines where receipt_id = p_id;
+  -- sabotage 7a: a failing line is swallowed after the delete has run
+  begin
+  insert into public.receipt_lines (receipt_id, user_id, position, raw_text, qty, qty_unit, unit_price_pence, line_total_pence, is_discount)
+  select p_id, auth.uid(), x.position, x.raw_text, x.qty, x.qty_unit, x.unit_price_pence, x.line_total_pence, coalesce(x.is_discount, false)
+    from jsonb_to_recordset(coalesce(p_lines, '[]'::jsonb)) as x(position integer, raw_text text, qty numeric, qty_unit text, unit_price_pence integer, line_total_pence integer, is_discount boolean);
+  exception when others then
+    return r;
+  end;
+  return r;
+end $$;
+SQL
+)
+EXPECT[s7a]="V9 a failed update leaves the old receipt intact"
+
+# Sabotage 7b: the client-side split. Each step is its own request, so its
+# own transaction: a failing step 2 can't undo step 1.
+PATCH[s7b]=$(cat <<'SQL'
+create or replace function rig.update_step1(p_id uuid, p_receipt jsonb, p_lines jsonb) returns void
+language plpgsql as $$
+begin
+  delete from public.receipt_lines where receipt_id = p_id;   -- request 1: delete_receipt_lines(p_id)
+end $$;
+create or replace function rig.update_step2(p_id uuid, p_receipt jsonb, p_lines jsonb) returns void
+language plpgsql as $$
+begin                                                         -- request 2: insert_receipt_lines(...)
+  insert into public.receipt_lines (receipt_id, user_id, position, raw_text, qty, qty_unit, unit_price_pence, line_total_pence, is_discount)
+  select p_id, auth.uid(), x.position, x.raw_text, x.qty, x.qty_unit, x.unit_price_pence, x.line_total_pence, coalesce(x.is_discount, false)
+    from jsonb_to_recordset(coalesce(p_lines, '[]'::jsonb)) as x(position integer, raw_text text, qty numeric, qty_unit text, unit_price_pence integer, line_total_pence integer, is_discount boolean);
+end $$;
+SQL
+)
+EXPECT[s7b]="V9 a failed update leaves the old receipt intact"
+
+PATCH[s8]=$(cat <<'SQL'
+create or replace function public.update_receipt(p_id uuid, p_receipt jsonb, p_lines jsonb)
+returns public.receipts language plpgsql security invoker set search_path = '' as $$
+declare r public.receipts;
+begin
+  update public.receipts t
+     set user_id = (p_receipt->>'user_id')::uuid,   -- sabotage 8
+         store = p_receipt->>'store', purchased_on = (p_receipt->>'purchased_on')::date,
+         purchased_on_estimated = case when (p_receipt->>'purchased_on')::date is distinct from t.purchased_on
+                                       then false else t.purchased_on_estimated end,
+         printed_total_pence = (p_receipt->>'printed_total_pence')::integer,
+         currency = coalesce(p_receipt->>'currency', t.currency)
+   where t.id = p_id and t.user_id = auth.uid()
+  returning t.* into r;
+  if not found then raise exception 'update_receipt: no receipt % for this user', p_id using errcode = 'P0002'; end if;
+  delete from public.receipt_lines where receipt_id = p_id;
+  insert into public.receipt_lines (receipt_id, user_id, position, raw_text, qty, qty_unit, unit_price_pence, line_total_pence, is_discount)
+  select p_id, (p_receipt->>'user_id')::uuid, x.position, x.raw_text, x.qty, x.qty_unit, x.unit_price_pence, x.line_total_pence, coalesce(x.is_discount, false)
+    from jsonb_to_recordset(coalesce(p_lines, '[]'::jsonb)) as x(position integer, raw_text text, qty numeric, qty_unit text, unit_price_pence integer, line_total_pence integer, is_discount boolean);
+  return r;
+end $$;
+SQL
+)
+EXPECT[s8]="V8 payload user_id ignored on update"
+
 overall=0
-for v in clean s1 s2 s3 s4 s5 s9; do
+for v in clean s1 s2 s3 s4 s5 s9 s6 s7a s7b s8; do
   db="rig_$v"
   echo "create database $db;" | psql_in postgres >/dev/null
   echo "$BOOTSTRAP" | psql_in "$db" >/dev/null
-  mig_out=$(psql_in "$db" < "$MIGRATION")
+  mig_out=$(for m in "${MIGRATIONS[@]}"; do psql_in "$db" < "$m"; done)
   if echo "$mig_out" | grep -q 'ERROR'; then
     echo "[$v] MIGRATION ERROR:"; echo "$mig_out"; overall=1; continue
   fi

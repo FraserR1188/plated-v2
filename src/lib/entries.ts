@@ -30,7 +30,7 @@
 // ============================================================
 
 import { supabase } from "./supabase";
-import { DayTotals, EntryDraft, MealEntry, MealType } from "../types";
+import { DayTotals, EntryDraft, MealEntry, MealType, SmallFourKey } from "../types";
 import { dateKey, localHM, sameTimeOnDay, TimeOfDay } from "./time";
 import { reportError } from "./reportError";
 // Store → lib/entries already runs the other way (applyEntries etc. are
@@ -315,7 +315,21 @@ export type DayBucket = Omit<
   fibre: number | null;
   sugar: number | null;
   count: number;
+  /**
+   * PL-059. Small four (column names, column order) where at least one
+   * contributing row is a LOWER BOUND (listed in its incomplete_nutrients),
+   * so the bucket's sum is too — the day total shows "≥". A row that is
+   * merely NULL does not put a nutrient here; that is PL-061's question.
+   */
+  lowerBound: SmallFourKey[];
 };
+
+const SMALL_FOUR_ORDER: readonly SmallFourKey[] = ["sat_fat", "salt", "fibre", "sugar"];
+
+/** Union of two lowerBound lists, in column order. */
+function unionLowerBound(a: readonly SmallFourKey[], b: readonly SmallFourKey[]): SmallFourKey[] {
+  return SMALL_FOUR_ORDER.filter((k) => a.includes(k) || b.includes(k));
+}
 
 export interface DaySummary {
   /** Logged entries + confirmed planned entries. What actually went in you. */
@@ -345,6 +359,7 @@ function sumBucket(rows: MealEntry[]): DayBucket {
   let salt: number | null = null;
   let fibre: number | null = null;
   let sugar: number | null = null;
+  let lowerBound: SmallFourKey[] = [];
 
   for (const e of rows) {
     calories += e.calories;
@@ -355,6 +370,7 @@ function sumBucket(rows: MealEntry[]): DayBucket {
     if (e.salt != null) salt = (salt ?? 0) + e.salt;
     if (e.fibre != null) fibre = (fibre ?? 0) + e.fibre;
     if (e.sugar != null) sugar = (sugar ?? 0) + e.sugar;
+    if (e.incomplete_nutrients) lowerBound = unionLowerBound(lowerBound, e.incomplete_nutrients);
   }
 
   return {
@@ -367,6 +383,7 @@ function sumBucket(rows: MealEntry[]): DayBucket {
     fibre,
     sugar,
     count: rows.length,
+    lowerBound,
   };
 }
 
@@ -387,6 +404,7 @@ function addBuckets(a: DayBucket, b: DayBucket): DayBucket {
     fibre: addNullable(a.fibre, b.fibre),
     sugar: addNullable(a.sugar, b.sugar),
     count: a.count + b.count,
+    lowerBound: unionLowerBound(a.lowerBound, b.lowerBound),
   };
 }
 

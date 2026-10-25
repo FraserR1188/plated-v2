@@ -53,6 +53,7 @@ import { getSignedImageUrl } from "../lib/customFoodImages";
 import { reportError } from "../lib/reportError";
 import { SourceNotice } from "../components/SourceNotice";
 import { buildEditPatch } from "../lib/entryEdit";
+import { atLeast, isLowerBound, lowerBoundNote } from "../lib/incompleteNutrients";
 import { scanMealPhoto, mealScanToFoodProduct, MacroKey } from "../lib/mealRecognition";
 import {
   computeServingTotals,
@@ -650,6 +651,12 @@ export function ProductScreen() {
           image_url: draft.image_url ?? null,
           image_path: draft.image_path ?? null,
           custom_food_id: draft.custom_food_id ?? null,
+
+          // PL-059. A lower-bound rate stays a lower bound at any serving.
+          // Only mealEntryToProduct sets this, and that product goes to the
+          // edit branch above, so today this is always null — mapped anyway
+          // so a future create-from-entry path can't silently drop it.
+          incomplete_nutrients: draft.incomplete_nutrients ?? null,
         });
       } catch {
         // Not reported here: addEntry already reported an insert error, and a
@@ -739,6 +746,8 @@ export function ProductScreen() {
     unit: string;
     color: string;
     missing: boolean;
+    /** PL-059: a batch's known-ingredients sum — shown "≥". */
+    lowerBound?: boolean;
   }[] = [
     {
       label: "Calories",
@@ -776,6 +785,7 @@ export function ProductScreen() {
       // Orthogonal NULL-display fix: gated on this field's OWN nullness,
       // independent of the big-four detector above.
       missing: draft.sat_fat_per100 == null,
+      lowerBound: isLowerBound(draft.incomplete_nutrients, "sat_fat"),
     },
     {
       label: "Salt",
@@ -783,6 +793,7 @@ export function ProductScreen() {
       unit: "g",
       color: MacroColor.salt,
       missing: draft.salt_per100 == null,
+      lowerBound: isLowerBound(draft.incomplete_nutrients, "salt"),
     },
     {
       label: "Fibre",
@@ -790,6 +801,7 @@ export function ProductScreen() {
       unit: "g",
       color: MacroColor.fibre,
       missing: draft.fibre_per100 == null,
+      lowerBound: isLowerBound(draft.incomplete_nutrients, "fibre"),
     },
     {
       label: "Sugar",
@@ -797,6 +809,7 @@ export function ProductScreen() {
       unit: "g",
       color: MacroColor.sugar,
       missing: draft.sugar_per100 == null,
+      lowerBound: isLowerBound(draft.incomplete_nutrients, "sugar"),
     },
   ];
 
@@ -1231,7 +1244,7 @@ export function ProductScreen() {
                     <Text style={styles.previewCellValMissing}>—</Text>
                   ) : (
                     <Text style={[styles.previewCellVal, { color: m.color }]}>
-                      {m.value}
+                      {atLeast(m.value, !!m.lowerBound)}
                       <Text style={styles.previewCellUnit}>{m.unit}</Text>
                     </Text>
                   )}
@@ -1239,6 +1252,12 @@ export function ProductScreen() {
                 </View>
               ))}
             </View>
+            {/* PL-059: one muted line naming the lower-bound nutrients. */}
+            {lowerBoundNote(draft.incomplete_nutrients) && (
+              <Text style={styles.noDataCaption}>
+                {lowerBoundNote(draft.incomplete_nutrients)}
+              </Text>
+            )}
             {bigFourMissing && (
               <>
                 <Text style={styles.noDataCaption}>

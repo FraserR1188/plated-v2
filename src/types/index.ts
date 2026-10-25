@@ -77,6 +77,12 @@ export interface FoodProduct {
   serving_label?: string;
   serving_g?: number;
   source?: ProductSource; // undefined = OFF (legacy paths)
+  /**
+   * PL-059. Set only by mealEntryToProduct, from a logged entry's
+   * incomplete_nutrients: these small-four rates were rebuilt from a lower
+   * bound, so the edit screen shows "≥". Absent = nothing incomplete.
+   */
+  incomplete_nutrients?: SmallFourKey[];
   custom_food_id?: string; // set when source === "custom"
   unique_scans_n?: number; // OFF popularity — used as a ranking tiebreaker
 

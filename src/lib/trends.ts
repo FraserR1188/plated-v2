@@ -32,7 +32,7 @@ import { dateKey, parseDateKey } from "./time";
 import { withThousands } from "./numberFormat";
 
 /** The eight tracked nutrients, keyed as DayBucket and Goals key them. */
-export type TrendNutrient = keyof Omit<DayBucket, "count">;
+export type TrendNutrient = keyof Omit<DayBucket, "count" | "lowerBound">;
 
 /** The ranges the toggle offers, in the order it offers them. */
 export const RANGE_DAYS = [7, 14] as const;

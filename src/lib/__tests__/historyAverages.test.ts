@@ -29,6 +29,7 @@ function day(over: Partial<DayBucket> = {}): DayBucket {
     fibre: 25,
     sugar: 50,
     count: 5,
+    lowerBound: [],
     ...over,
   };
 }

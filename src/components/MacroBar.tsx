@@ -32,6 +32,8 @@ type Props = {
   goal: number;
   unit?: string; // 'g' | 'mg' | 'kcal'
   compact?: boolean; // smaller variant for dense lists
+  /** PL-059: consumed is a lower bound (a batch with unknown ingredients) — shown "≥". */
+  atLeast?: boolean;
 };
 
 export function MacroBar({
@@ -41,6 +43,7 @@ export function MacroBar({
   goal,
   unit = "g",
   compact = false,
+  atLeast = false,
 }: Props) {
   const color = MacroColor[macro] ?? Colors.green;
   const trackColor = MacroColorSoft[macro] ?? `${Colors.green}18`;
@@ -79,7 +82,7 @@ export function MacroBar({
               { color: showWarning ? Colors.coral : Colors.text },
             ]}
           >
-            {consumed}
+            {atLeast ? `≥ ${consumed}` : consumed}
           </Text>
           <Text style={styles.valueMuted}>
             {" / "}

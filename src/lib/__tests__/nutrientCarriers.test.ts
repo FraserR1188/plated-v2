@@ -410,8 +410,10 @@ const CARRIERS: Carrier[] = [
         sugar: p.sugar_per100,
       });
     },
+    // FoodProduct spells "nothing incomplete" as absent (undefined), like its
+    // other optional fields; normalised to null here so the shared check reads.
     flag: {
-      none: "FoodProduct gains the flag in PL-059's UI commit (edit-screen tile)",
+      carry: (f) => mealEntryToProduct(makeEntry(SRC, f))!.incomplete_nutrients ?? null,
     },
   },
 ];

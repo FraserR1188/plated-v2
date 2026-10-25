@@ -507,6 +507,7 @@ describe("getDaySummary", () => {
     fibre: 9,
     sugar: 14,
     count: 2,
+    lowerBound: [],
   };
 
   const expectedPending = {
@@ -519,6 +520,7 @@ describe("getDaySummary", () => {
     fibre: 6,
     sugar: 10,
     count: 1,
+    lowerBound: [],
   };
 
   describe("live day (now is the same calendar day as date)", () => {
@@ -544,6 +546,7 @@ describe("getDaySummary", () => {
         fibre: 15,
         sugar: 24,
         count: 3,
+        lowerBound: [],
       });
     });
   });

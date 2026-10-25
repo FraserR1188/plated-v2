@@ -808,6 +808,11 @@ function DayPage({
   // (unknown vs zero — see DayBucket in lib/entries.ts); coalesced to 0 here
   // at the display boundary, same convention the rest of the app reads
   // nullable macros with.
+  //
+  // PL-059: towardGoal.lowerBound lists the small four where a contributing
+  // entry is a lower bound (a batch with unknown ingredients); the macro
+  // bars below show those as "≥". An entry that is simply NULL still
+  // contributes nothing and reads as 0 here — that's PL-061, not this.
   const stripSegments = [
     {
       color: MacroColor.protein,
@@ -1064,6 +1069,7 @@ function DayPage({
                 label="Sat fat"
                 consumed={Math.round(summary.towardGoal.satFat ?? 0)}
                 goal={goals.satFat}
+                atLeast={summary.towardGoal.lowerBound.includes("sat_fat")}
               />
             </View>
             <View style={styles.macroCol}>
@@ -1072,6 +1078,7 @@ function DayPage({
                 macro="fibre"
                 consumed={Math.round(summary.towardGoal.fibre ?? 0)}
                 goal={goals.fibre}
+                atLeast={summary.towardGoal.lowerBound.includes("fibre")}
               />
             </View>
             <View style={styles.macroCol}>
@@ -1080,6 +1087,7 @@ function DayPage({
                 macro="sugar"
                 consumed={Math.round(summary.towardGoal.sugar ?? 0)}
                 goal={goals.sugar}
+                atLeast={summary.towardGoal.lowerBound.includes("sugar")}
               />
             </View>
             {/* Salt is the one sub-gram macro: rounded to 2dp, not to a whole
@@ -1090,6 +1098,7 @@ function DayPage({
                 macro="salt"
                 consumed={roundSalt(summary.towardGoal.salt ?? 0)}
                 goal={goals.salt}
+                atLeast={summary.towardGoal.lowerBound.includes("salt")}
                 unit="g"
               />
             </View>

@@ -237,7 +237,7 @@ describe("draftsFromBatch", () => {
         at,
       );
 
-    it.fails("three known fibre + one unknown → the known sum, with fibre listed", () => {
+    it("three known fibre + one unknown → the known sum, with fibre listed", () => {
       const draft = batch([
         makeBatchIngredient({ id: "1", fibre: 6.5 }),
         makeBatchIngredient({ id: "2", fibre: 6.5 }),
@@ -248,7 +248,7 @@ describe("draftsFromBatch", () => {
       expect(draft.incomplete_nutrients).toEqual(["fibre"]);
     });
 
-    it.fails("all unknown → NULL, and NOT listed (NULL already says unknown)", () => {
+    it("all unknown → NULL, and NOT listed (NULL already says unknown)", () => {
       const draft = batch([
         makeBatchIngredient({ id: "1", fibre: null }),
         makeBatchIngredient({ id: "2", fibre: null }),
@@ -257,7 +257,7 @@ describe("draftsFromBatch", () => {
       expect(draft.incomplete_nutrients).toBeNull();
     });
 
-    it.fails("all known → the sum, nothing listed — NULL, never an empty array", () => {
+    it("all known → the sum, nothing listed — NULL, never an empty array", () => {
       const draft = batch([
         makeBatchIngredient({ id: "1", sat_fat: 1, salt: 0.25, fibre: 3, sugar: 2 }),
         makeBatchIngredient({ id: "2", sat_fat: 2, salt: 0.5, fibre: 4, sugar: 1 }),
@@ -269,7 +269,7 @@ describe("draftsFromBatch", () => {
       expect(draft.incomplete_nutrients).toBeNull();
     });
 
-    it.fails("a real 0 alongside an unknown sums (0 included) and is listed — the 0 is known, the NULL isn't", () => {
+    it("a real 0 alongside an unknown sums (0 included) and is listed — the 0 is known, the NULL isn't", () => {
       const draft = batch([
         makeBatchIngredient({ id: "1", sugar: 0 }), // REAL ZERO
         makeBatchIngredient({ id: "2", sugar: 5 }),
@@ -279,13 +279,13 @@ describe("draftsFromBatch", () => {
       expect(draft.incomplete_nutrients).toEqual(["sugar"]);
     });
 
-    it.fails("a lone real 0 is complete, not unknown", () => {
+    it("a lone real 0 is complete, not unknown", () => {
       const draft = batch([makeBatchIngredient({ id: "1", salt: 0 })]);
       expect(draft.salt).toBe(0);
       expect(draft.incomplete_nutrients).toBeNull();
     });
 
-    it.fails("each nutrient is judged on its own — salt and fibre incomplete, sat_fat and sugar complete", () => {
+    it("each nutrient is judged on its own — salt and fibre incomplete, sat_fat and sugar complete", () => {
       // The reported shape.
       const draft = batch([
         makeBatchIngredient({ id: "1", sat_fat: 2, salt: 0.4, fibre: 3, sugar: 1 }),
@@ -300,7 +300,7 @@ describe("draftsFromBatch", () => {
       expect(draft.incomplete_nutrients).toEqual(["salt", "fibre"]);
     });
 
-    it.fails("lists all four in column order when all four are partial", () => {
+    it("lists all four in column order when all four are partial", () => {
       const draft = batch([
         makeBatchIngredient({ id: "1", sat_fat: null, salt: null, fibre: null, sugar: null }),
         makeBatchIngredient({ id: "2", sat_fat: 1, salt: 0.1, fibre: 1, sugar: 1 }),
@@ -308,7 +308,7 @@ describe("draftsFromBatch", () => {
       expect(draft.incomplete_nutrients).toEqual(["sat_fat", "salt", "fibre", "sugar"]);
     });
 
-    it.fails("scales the KNOWN sum by portion_g / yield_g, rounded once (1 dp; 2 dp for salt)", () => {
+    it("scales the KNOWN sum by portion_g / yield_g, rounded once (1 dp; 2 dp for salt)", () => {
       // Known fibre 0.2 + 0.14 = 0.34; known salt 0.2 + 0.137 = 0.337. The
       // third ingredient knows neither. yield 100, portion 75 → scale 0.75.
       //   once:  fibre 0.34 × 0.75 = 0.255 → 0.3;  salt 0.337 × 0.75 = 0.25275 → 0.25
@@ -926,7 +926,7 @@ describe("incomplete_nutrients through bundles and batch apply (PL-059)", () => 
     } as never);
   });
 
-  it.fails("createBundleFromEntries snapshots the flag with an explicit key", async () => {
+  it("createBundleFromEntries snapshots the flag with an explicit key", async () => {
     const capture = mockTables();
     await createBundleFromEntries("Dinner", [
       makeLoggedEntry(),
@@ -936,7 +936,7 @@ describe("incomplete_nutrients through bundles and batch apply (PL-059)", () => 
     expect(capture.items![1]).toHaveProperty("incomplete_nutrients", null);
   });
 
-  it.fails("appendEntriesToBundle snapshots the flag with an explicit key", async () => {
+  it("appendEntriesToBundle snapshots the flag with an explicit key", async () => {
     const capture = mockTables();
     await appendEntriesToBundle(makeComposition([]), [
       makeLoggedEntry(),
@@ -947,7 +947,7 @@ describe("incomplete_nutrients through bundles and batch apply (PL-059)", () => 
     expect(capture.items![1]).toHaveProperty("incomplete_nutrients", null);
   });
 
-  it.fails("draftsFromComposition carries a bundle item's flag back out onto the draft", () => {
+  it("draftsFromComposition carries a bundle item's flag back out onto the draft", () => {
     const composition = makeComposition([
       makeItem({ id: "1", eaten_time: "19:00", meal_type: "dinner", incomplete_nutrients: ["fibre"] }),
       makeItem({ id: "2", eaten_time: "19:05", meal_type: "dinner", incomplete_nutrients: null }),
@@ -957,7 +957,7 @@ describe("incomplete_nutrients through bundles and batch apply (PL-059)", () => 
     expect(drafts[1].incomplete_nutrients).toBeNull();
   });
 
-  it.fails("applyBatch: a partial batch's flag reaches the meal_entries insert payload", async () => {
+  it("applyBatch: a partial batch's flag reaches the meal_entries insert payload", async () => {
     const capture = mockTables();
     await applyBatch(
       makeComposition(

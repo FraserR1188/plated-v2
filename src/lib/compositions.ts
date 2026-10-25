@@ -26,6 +26,7 @@ import {
   MealCompositionItemDraft,
   MealCompositionWithItems,
   MealEntry,
+  SmallFourKey,
 } from "../types";
 import {
   anchorTimesOfDay,
@@ -137,6 +138,10 @@ function itemFromEntry(e: MealEntry, position: number): MealCompositionItemDraft
     fibre: e.fibre ?? null,
     sugar: e.sugar ?? null,
 
+    // PL-059. A partial batch entry's lower-bound flag goes with its values,
+    // or draftsFromComposition hands them back out looking complete.
+    incomplete_nutrients: e.incomplete_nutrients ?? null,
+
     meal_type: e.meal_type,
 
     // The item keeps a LOCAL WALL CLOCK, not an instant. "My breakfast" is
@@ -217,6 +222,7 @@ export async function createBundleFromEntries(
         salt: it.salt,
         fibre: it.fibre,
         sugar: it.sugar,
+        incomplete_nutrients: it.incomplete_nutrients,
         meal_type: it.meal_type,
         eaten_time: it.eaten_time,
         barcode: it.barcode,
@@ -285,6 +291,7 @@ export async function appendEntriesToBundle(
         salt: it.salt,
         fibre: it.fibre,
         sugar: it.sugar,
+        incomplete_nutrients: it.incomplete_nutrients,
         meal_type: it.meal_type,
         eaten_time: it.eaten_time,
         barcode: it.barcode,
@@ -484,11 +491,12 @@ export function draftsFromComposition(
       carbs: item.carbs,
       fat: item.fat,
 
-      // Straight through. NULL stays NULL.
+      // Straight through. NULL stays NULL, and a lower bound stays flagged.
       sat_fat: item.sat_fat,
       salt: item.salt,
       fibre: item.fibre,
       sugar: item.sugar,
+      incomplete_nutrients: item.incomplete_nutrients ?? null,
 
       // ⚠ DERIVED FROM THIS APPLY'S eaten_at, NOT item.meal_type.
       //
@@ -794,18 +802,32 @@ interface BatchMacroTotals {
   salt: number | null;
   fibre: number | null;
   sugar: number | null;
+  /** Small four whose sum above is a lower bound — see sumBatchMacros. */
+  incomplete: SmallFourKey[];
 }
+
+/** Column order — the order incomplete_nutrients is always written in. */
+const SMALL_FOUR: readonly SmallFourKey[] = ["sat_fat", "salt", "fibre", "sugar"];
 
 /**
  * Raw (unrounded, unscaled) sums across a batch's ingredients.
  *
- * NULL-POISONS-TOTAL: the moment ANY ingredient's value for an optional
- * macro is null ("we don't know how much of this it had"), the batch's total
- * for that macro is null too — never coalesced to 0. Checked with `== null`,
- * not truthiness: a real 0 (this ingredient genuinely has zero grams of it)
- * sums normally: only null poisons. Required macros (calories/protein/carbs/
- * fat) are NOT NULL by schema, so they just sum — no null handling needed or
- * possible.
+ * SUM THE KNOWN, FLAG THE INCOMPLETE (PL-059), per small-four nutrient:
+ *   - every ingredient known → the sum; complete.
+ *   - some known, some null  → the sum of the KNOWN ones, and the nutrient
+ *     goes in `incomplete`: the number is a lower bound, never a total.
+ *   - every ingredient null  → null, and NOT in `incomplete` — null already
+ *     says "unknown".
+ * A null is skipped, never coalesced to 0 (NULL-not-zero still holds). A
+ * real 0 is KNOWN: it sums normally and never makes a nutrient incomplete.
+ * Checked with `== null`, not truthiness, for exactly that reason.
+ *
+ * This replaced NULL-poisons-total, under which one spice with no fibre on
+ * record made the whole batch's fibre null — and the day total then counted
+ * that batch as no fibre at all.
+ *
+ * Required macros (calories/protein/carbs/fat) are NOT NULL by schema, so
+ * they just sum — no null handling needed or possible.
  */
 function sumBatchMacros(items: MealCompositionItem[]): BatchMacroTotals {
   const calories = items.reduce((s, i) => s + i.calories, 0);
@@ -813,28 +835,24 @@ function sumBatchMacros(items: MealCompositionItem[]): BatchMacroTotals {
   const carbs = items.reduce((s, i) => s + i.carbs, 0);
   const fat = items.reduce((s, i) => s + i.fat, 0);
 
-  const sumOrPoison = (
-    pick: (i: MealCompositionItem) => number | null,
-  ): number | null => {
-    let total = 0;
+  const totals = {} as Record<SmallFourKey, number | null>;
+  const incomplete: SmallFourKey[] = [];
+  for (const key of SMALL_FOUR) {
+    let total: number | null = null;
+    let anyUnknown = false;
     for (const item of items) {
-      const v = pick(item);
-      if (v == null) return null; // short-circuit: unknown poisons the total
-      total += v;
+      const v = item[key];
+      if (v == null) {
+        anyUnknown = true; // skipped, never coalesced to 0
+      } else {
+        total = (total ?? 0) + v;
+      }
     }
-    return total;
-  };
+    totals[key] = total;
+    if (anyUnknown && total != null) incomplete.push(key);
+  }
 
-  return {
-    calories,
-    protein,
-    carbs,
-    fat,
-    sat_fat: sumOrPoison((i) => i.sat_fat),
-    salt: sumOrPoison((i) => i.salt),
-    fibre: sumOrPoison((i) => i.fibre),
-    sugar: sumOrPoison((i) => i.sugar),
-  };
+  return { calories, protein, carbs, fat, ...totals, incomplete };
 }
 
 /**
@@ -920,10 +938,16 @@ export function draftsFromBatch(
     carbs: scaled(totals.carbs, 1),
     fat: scaled(totals.fat, 1),
 
+    // An incomplete nutrient's scaled value is the known ingredients' share
+    // only — a lower bound. Rounding can take a tiny one to 0.0; it stays
+    // listed, and the CHECK still holds (0 is non-NULL).
     sat_fat: scaledNullable(totals.sat_fat, 1),
     salt: scaledNullable(totals.salt, 2),
     fibre: scaledNullable(totals.fibre, 1),
     sugar: scaledNullable(totals.sugar, 1),
+
+    // NULL when nothing is incomplete — never []: complete has one spelling.
+    incomplete_nutrients: totals.incomplete.length > 0 ? totals.incomplete : null,
 
     meal_type: sectionForTime(eaten_at),
     eaten_at,
@@ -1055,6 +1079,10 @@ function itemFromIngredient(
     fibre: product.fibre_per100 != null ? product.fibre_per100 * f : null,
     sugar: product.sugar_per100 != null ? product.sugar_per100 * f : null,
 
+    // An ingredient is a rate × grams, never a partial sum: nothing to flag.
+    // A batch's incompleteness is derived at apply (sumBatchMacros).
+    incomplete_nutrients: null,
+
     meal_type: null,
     eaten_time: null,
 
@@ -1103,6 +1131,7 @@ function batchItemRow(
     salt: it.salt,
     fibre: it.fibre,
     sugar: it.sugar,
+    incomplete_nutrients: it.incomplete_nutrients, // null — see itemFromIngredient
     meal_type: it.meal_type, // null — the trigger requires this for kind='batch'
     eaten_time: it.eaten_time, // null
     barcode: it.barcode,

@@ -177,7 +177,7 @@ describe("useStore.addEntry", () => {
     expect(row.meal_type).toBe("lunch");
   });
 
-  it.fails("PL-059: maps incomplete_nutrients under an explicit key — the list when given, NULL when not", async () => {
+  it("PL-059: maps incomplete_nutrients under an explicit key — the list when given, NULL when not", async () => {
     useStore.getState().setUserId("test-user-id");
 
     let capture = mockInsertSingle(makeEntry());
@@ -446,6 +446,7 @@ function makeEntryDraft(overrides: Partial<EntryDraft> = {}): EntryDraft {
     salt: 0.5,
     fibre: 2,
     sugar: 3,
+    incomplete_nutrients: null,
     meal_type: "breakfast",
     eaten_at: "2026-07-27T08:00:00.000Z",
     eaten_at_estimated: true,

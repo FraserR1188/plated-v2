@@ -23,6 +23,7 @@ function makeDraft(overrides: Partial<EntryDraft> = {}): EntryDraft {
     salt: 1.25,
     fibre: 6,
     sugar: 4,
+    incomplete_nutrients: null,
     meal_type: "breakfast",
     eaten_at: "2026-07-27T08:00:00.000Z",
     eaten_at_estimated: false,
@@ -131,7 +132,7 @@ describe("applyEntries", () => {
     expect(row.sugar).toBeNull();
   });
 
-  it.fails("PL-059: sends incomplete_nutrients under an explicit snake_case key — the list when flagged, NULL when not", async () => {
+  it("PL-059: sends incomplete_nutrients under an explicit snake_case key — the list when flagged, NULL when not", async () => {
     const capture = mockInsert([]);
     await applyEntries([
       makeDraft({ fibre: 4, incomplete_nutrients: ["salt", "fibre"] }),

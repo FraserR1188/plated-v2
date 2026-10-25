@@ -444,26 +444,14 @@ describe.each(CARRIERS)("nutrient carrier: $name", (c) => {
 
 // ─── PL-059: the lower-bound flag ────────────────────────────
 
-// PL-059 commit 3: the five explicit field-map builders don't carry the flag
-// yet, so their two tests are it.fails until the next commit removes this set.
-// The two spread-based scalers already carry it and run as plain it().
-const RED_UNTIL_FIX = new Set([
-  "draftsFromFeedEntry",
-  "draftsForCopy",
-  "draftsFromDay",
-  "draftsForTarget",
-  "draftsFromComposition",
-]);
-
 describe.each(CARRIERS)("incomplete_nutrients carrier: $name", (c) => {
   const flag = c.flag;
-  const it_ = RED_UNTIL_FIX.has(c.name) ? it.fails : it;
   if ("carry" in flag) {
     const carry = flag.carry;
-    it_("carries a lower-bound flag through unchanged", () => {
+    it("carries a lower-bound flag through unchanged", () => {
       expect(carry(["salt", "fibre"])).toEqual(["salt", "fibre"]);
     });
-    it_("carries 'nothing incomplete' as NULL — not undefined, not []", () => {
+    it("carries 'nothing incomplete' as NULL — not undefined, not []", () => {
       expect(carry(null)).toBeNull();
     });
   } else {

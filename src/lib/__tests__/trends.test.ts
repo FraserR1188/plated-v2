@@ -317,7 +317,7 @@ describe("incomplete days", () => {
     expect(day.unlogged).toBe(false); // the day WAS logged
   });
 
-  it.fails("PL-059: flags a day whose only shortfall is a lower-bound row — a value isn't a complete value", () => {
+  it("PL-059: flags a day whose only shortfall is a lower-bound row — a value isn't a complete value", () => {
     // Every row HAS a salt value, so the old "any NULL row" test sees a
     // complete day. But row b is a partial batch: its 0.4 g is the known
     // ingredients only. The day's 1.9 g is a lower bound, drawn hollow.

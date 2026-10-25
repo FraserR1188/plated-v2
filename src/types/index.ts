@@ -300,8 +300,9 @@ export interface EntryDraft {
   fibre: number | null;
   sugar: number | null;
 
-  /** Lower-bound nutrients — see MealEntry.incomplete_nutrients. */
-  incomplete_nutrients?: SmallFourKey[] | null;
+  /** Lower-bound nutrients — see MealEntry.incomplete_nutrients. REQUIRED
+   *  (null = none), so a builder that forgets it is a compile error. */
+  incomplete_nutrients: SmallFourKey[] | null;
 
   meal_type: MealType;
 
@@ -462,11 +463,13 @@ export interface MealCompositionWithItems extends MealComposition {
   items: MealCompositionItem[];
 }
 
-/** A new item, before the DB has given it an id or a parent. */
+/** A new item, before the DB has given it an id or a parent.
+ *  incomplete_nutrients is REQUIRED here (optional on the row type), so both
+ *  item builders — itemFromEntry and itemFromIngredient — must say it. */
 export type MealCompositionItemDraft = Omit<
   MealCompositionItem,
-  "id" | "composition_id" | "user_id"
->;
+  "id" | "composition_id" | "user_id" | "incomplete_nutrients"
+> & { incomplete_nutrients: SmallFourKey[] | null };
 
 // ─── Saved ingredients ───────────────────────────────────────
 

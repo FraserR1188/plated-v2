@@ -641,6 +641,9 @@ export function draftsFromFeedEntry(
     fibre: entry.fibre ?? null,
     sugar: entry.sugar ?? null,
 
+    // PL-059. A friend's lower bound is still a lower bound in your log.
+    incomplete_nutrients: entry.incomplete_nutrients ?? null,
+
     // target.meal_type is resolved HERE and stops here. It never reaches the
     // insert:
     //   - ingredient / meal_section copies → target.meal_type overrides.

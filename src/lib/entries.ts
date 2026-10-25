@@ -106,6 +106,9 @@ export async function applyEntries(drafts: EntryDraft[]): Promise<MealEntry[]> {
     fibre: d.fibre,
     sugar: d.sugar,
 
+    // PL-059. Which of those four are lower bounds. NULL = none; never [].
+    incomplete_nutrients: d.incomplete_nutrients,
+
     source: d.source,
     barcode: d.barcode,
     off_id: d.off_id,
@@ -180,6 +183,8 @@ export function draftsFromDay(
     salt: e.salt ?? null,
     fibre: e.fibre ?? null,
     sugar: e.sugar ?? null,
+    // A copied lower bound is still a lower bound.
+    incomplete_nutrients: e.incomplete_nutrients ?? null,
 
     // The row's OWN section. Monday's lunch becomes Tuesday's LUNCH. There is
     // no targetMeal override — that's the social path's idea, and it cannot
@@ -258,6 +263,7 @@ export function draftsForTarget(
     salt: e.salt ?? null,
     fibre: e.fibre ?? null,
     sugar: e.sugar ?? null,
+    incomplete_nutrients: e.incomplete_nutrients ?? null,
 
     // The CHOSEN section, not the row's own — see the comment above.
     meal_type: target.meal_type,

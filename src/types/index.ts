@@ -128,6 +128,13 @@ export interface FoodProduct {
 }
 
 /**
+ * The four nullable nutrients, by their meal_entries column name. The only
+ * values meal_entries.incomplete_nutrients may hold (its CHECK refuses
+ * anything else), always written in this order.
+ */
+export type SmallFourKey = "sat_fat" | "salt" | "fibre" | "sugar";
+
+/**
  * Mirrors public.meal_entries.
  *
  * ─── NULLABILITY: THE SAME `?? 0` MEANS TWO OPPOSITE THINGS ───
@@ -193,6 +200,17 @@ export interface MealEntry {
   fibre?: number | null;
   sugar?: number | null;
   sat_fat?: number | null;
+
+  /**
+   * PL-059. The small-four nutrients whose value above is a LOWER BOUND: a
+   * batch summed its known ingredients, and at least one had no value on
+   * record. NULL = nothing incomplete — never an empty array (the CHECK
+   * refuses one). A listed nutrient always has a value; an all-unknown one is
+   * NULL and not listed. Set at insert, carried by every copy and bundle
+   * snapshot, and never in MealEntryPatch: an edit can neither clear nor
+   * forge it. See 20261025120000_incomplete_nutrients.sql.
+   */
+  incomplete_nutrients?: SmallFourKey[] | null;
 
   /**
    * NOT NULL, default now(), as of migration 3. Required and non-null HERE.
@@ -281,6 +299,9 @@ export interface EntryDraft {
   salt: number | null;
   fibre: number | null;
   sugar: number | null;
+
+  /** Lower-bound nutrients — see MealEntry.incomplete_nutrients. */
+  incomplete_nutrients?: SmallFourKey[] | null;
 
   meal_type: MealType;
 
@@ -398,6 +419,10 @@ export interface MealCompositionItem {
   salt: number | null;
   fibre: number | null;
   sugar: number | null;
+
+  /** Snapshot of MealEntry.incomplete_nutrients for a bundle item; always
+   *  NULL on a batch's own ingredient rows. */
+  incomplete_nutrients?: SmallFourKey[] | null;
 
   /**
    * REQUIRED for a bundle item (each independently loggable), NULL for a

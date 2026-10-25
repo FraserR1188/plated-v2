@@ -146,6 +146,33 @@ describe("buildEditPatch — PL-037: only what changed", () => {
     expect(buildEditPatch(wire, untouched({ servingText: "37.5" }))).toEqual({});
   });
 
+  it("PL-059: a grams change on a lower-bound batch entry rescales from the rate and never touches the flag", () => {
+    // A partial batch, logged at 350 g with salt and fibre as lower bounds,
+    // edited to 175 g. The rate is rebuilt from the stored (partial) values,
+    // so the rescaled numbers are still lower bounds — the row's flag must
+    // survive, which it does only because the patch never names it.
+    const batchRate: FoodProduct = {
+      ...product,
+      salt_per100: 0.2,
+      fibre_per100: 2,
+    };
+    const patch = buildEditPatch(
+      { ...original, serving_g: 350 },
+      untouched({ servingText: "175", product: batchRate }),
+    );
+    expect(patch.salt).toBeCloseTo(0.35);
+    expect(patch.fibre).toBeCloseTo(3.5);
+    expect(keys(patch)).toEqual([...MACRO_KEYS, "serving_g"].sort());
+    expect("incomplete_nutrients" in patch).toBe(false);
+  });
+
+  it("PL-059: the return type cannot carry incomplete_nutrients — an edit can neither clear nor forge it", () => {
+    const patch = buildEditPatch(original, untouched({ servingText: "200" }));
+    // @ts-expect-error — not in MealEntryPatch, by design.
+    void patch.incomplete_nutrients;
+    expect("incomplete_nutrients" in patch).toBe(false);
+  });
+
   it("the return type cannot carry date or planned", () => {
     const patch = buildEditPatch(original, untouched({ mealType: "dinner" }));
     // @ts-expect-error — `date` is derived from eaten_at by updateEntry, never sent.

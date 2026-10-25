@@ -177,6 +177,20 @@ describe("useStore.addEntry", () => {
     expect(row.meal_type).toBe("lunch");
   });
 
+  it.fails("PL-059: maps incomplete_nutrients under an explicit key — the list when given, NULL when not", async () => {
+    useStore.getState().setUserId("test-user-id");
+
+    let capture = mockInsertSingle(makeEntry());
+    await useStore
+      .getState()
+      .addEntry({ ...sandwich(), fibre: 3, incomplete_nutrients: ["fibre"] });
+    expect((capture.row as Record<string, unknown>).incomplete_nutrients).toEqual(["fibre"]);
+
+    capture = mockInsertSingle(makeEntry());
+    await useStore.getState().addEntry(sandwich());
+    expect(capture.row).toHaveProperty("incomplete_nutrients", null);
+  });
+
   it("never sends planned/confirmed_at/skipped_at — the BEFORE INSERT trigger owns them", async () => {
     useStore.getState().setUserId("test-user-id");
     const capture = mockInsertSingle(makeEntry());

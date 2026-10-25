@@ -7,10 +7,11 @@
 //   - meal_type defaulting: each item's/batch's section must come from the
 //     resolved eaten_at, never inherited from a saved meal_type. See
 //     lib/time.ts's sectionForTime.
-//   - the batch per-portion macro derivation and the null-poisons-total rule.
+//   - the batch per-portion macro derivation and the sum-the-known,
+//     flag-the-incomplete rule for the small four (PL-059).
 // ============================================================
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import {
   draftsFromComposition,
   draftsFromBatch,
@@ -20,9 +21,14 @@ import {
   scaleEntryDraftGrams,
   scaleCompositionItem,
   batchPortionCalories,
+  createBundleFromEntries,
+  appendEntriesToBundle,
+  applyBatch,
 } from "../compositions";
+import { supabase } from "../supabase";
 import {
   MealComposition,
+  MealEntry,
   MealCompositionItem,
   MealCompositionWithItems,
   MealType,
@@ -211,33 +217,118 @@ describe("draftsFromBatch", () => {
     expect(draft.serving_g).toBe(100); // portion_g
   });
 
-  it("sums a real 0 normally but poisons on null — they look alike, behave oppositely", () => {
-    // scale = 1 (yield_g === portion_g) so the totals ARE the draft values —
-    // no rounding arithmetic to second-guess while checking this rule.
-    const composition = makeComposition(
-      [
-        makeBatchIngredient({
-          id: "1",
-          fibre: 3, // real value
-          sugar: 0, // REAL ZERO — must sum normally, must NOT poison
-        }),
-        makeBatchIngredient({
-          id: "2",
-          fibre: null, // UNKNOWN — must poison the batch total
-          sugar: 5,
-        }),
-      ],
-      { kind: "batch", yield_g: 100, portion_g: 100 },
-    );
+  // ─── PL-059: sum the known, flag the incomplete ───────────────────────
+  //
+  // Replaces the old "poisons on null" pin. NULL-poisons-total made a batch
+  // with three tins of beans (fibre known) and one spice (fibre unknown) log
+  // fibre as NULL, and the day total then counted it as nothing. Now: sum
+  // the known ingredients, list the nutrient in incomplete_nutrients, and
+  // the stored number is a lower bound. All-unknown stays NULL, unlisted.
+  // A real 0 is known, sums normally, and never counts as unknown.
+  //
+  // scale = 1 (yield_g === portion_g) in all but the last test, so the
+  // totals ARE the draft values.
+  describe("small four — sum the known, flag the incomplete (PL-059)", () => {
+    const at = new Date(2026, 6, 27, 8, 0);
+    const batch = (items: MealCompositionItem[], yield_g = 100, portion_g = 100) =>
+      draftsFromBatch(
+        makeComposition(items, { kind: "batch", yield_g, portion_g }),
+        { date: "2026-07-27" },
+        at,
+      );
 
-    const draft = draftsFromBatch(
-      composition,
-      { date: "2026-07-27" },
-      new Date(2026, 6, 27, 8, 0),
-    );
+    it.fails("three known fibre + one unknown → the known sum, with fibre listed", () => {
+      const draft = batch([
+        makeBatchIngredient({ id: "1", fibre: 6.5 }),
+        makeBatchIngredient({ id: "2", fibre: 6.5 }),
+        makeBatchIngredient({ id: "3", fibre: 6.5 }),
+        makeBatchIngredient({ id: "4", fibre: null }), // the spice
+      ]);
+      expect(draft.fibre).toBe(19.5);
+      expect(draft.incomplete_nutrients).toEqual(["fibre"]);
+    });
 
-    expect(draft.sugar).toBe(5); // 0 + 5 = 5 — the 0 summed, it didn't poison
-    expect(draft.fibre).toBeNull(); // one null among the ingredients poisons the total
+    it.fails("all unknown → NULL, and NOT listed (NULL already says unknown)", () => {
+      const draft = batch([
+        makeBatchIngredient({ id: "1", fibre: null }),
+        makeBatchIngredient({ id: "2", fibre: null }),
+      ]);
+      expect(draft.fibre).toBeNull();
+      expect(draft.incomplete_nutrients).toBeNull();
+    });
+
+    it.fails("all known → the sum, nothing listed — NULL, never an empty array", () => {
+      const draft = batch([
+        makeBatchIngredient({ id: "1", sat_fat: 1, salt: 0.25, fibre: 3, sugar: 2 }),
+        makeBatchIngredient({ id: "2", sat_fat: 2, salt: 0.5, fibre: 4, sugar: 1 }),
+      ]);
+      expect(draft.sat_fat).toBe(3);
+      expect(draft.salt).toBe(0.75);
+      expect(draft.fibre).toBe(7);
+      expect(draft.sugar).toBe(3);
+      expect(draft.incomplete_nutrients).toBeNull();
+    });
+
+    it.fails("a real 0 alongside an unknown sums (0 included) and is listed — the 0 is known, the NULL isn't", () => {
+      const draft = batch([
+        makeBatchIngredient({ id: "1", sugar: 0 }), // REAL ZERO
+        makeBatchIngredient({ id: "2", sugar: 5 }),
+        makeBatchIngredient({ id: "3", sugar: null }), // UNKNOWN
+      ]);
+      expect(draft.sugar).toBe(5);
+      expect(draft.incomplete_nutrients).toEqual(["sugar"]);
+    });
+
+    it.fails("a lone real 0 is complete, not unknown", () => {
+      const draft = batch([makeBatchIngredient({ id: "1", salt: 0 })]);
+      expect(draft.salt).toBe(0);
+      expect(draft.incomplete_nutrients).toBeNull();
+    });
+
+    it.fails("each nutrient is judged on its own — salt and fibre incomplete, sat_fat and sugar complete", () => {
+      // The reported shape.
+      const draft = batch([
+        makeBatchIngredient({ id: "1", sat_fat: 2, salt: 0.4, fibre: 3, sugar: 1 }),
+        makeBatchIngredient({ id: "2", sat_fat: 1, salt: null, fibre: 5, sugar: 4 }),
+        makeBatchIngredient({ id: "3", sat_fat: 0.5, salt: 0.2, fibre: null, sugar: 0 }),
+      ]);
+      expect(draft.sat_fat).toBe(3.5);
+      expect(draft.salt).toBe(0.6);
+      expect(draft.fibre).toBe(8);
+      expect(draft.sugar).toBe(5);
+      // Fixed column order, whatever order the unknowns turned up in.
+      expect(draft.incomplete_nutrients).toEqual(["salt", "fibre"]);
+    });
+
+    it.fails("lists all four in column order when all four are partial", () => {
+      const draft = batch([
+        makeBatchIngredient({ id: "1", sat_fat: null, salt: null, fibre: null, sugar: null }),
+        makeBatchIngredient({ id: "2", sat_fat: 1, salt: 0.1, fibre: 1, sugar: 1 }),
+      ]);
+      expect(draft.incomplete_nutrients).toEqual(["sat_fat", "salt", "fibre", "sugar"]);
+    });
+
+    it.fails("scales the KNOWN sum by portion_g / yield_g, rounded once (1 dp; 2 dp for salt)", () => {
+      // Known fibre 0.2 + 0.14 = 0.34; known salt 0.2 + 0.137 = 0.337. The
+      // third ingredient knows neither. yield 100, portion 75 → scale 0.75.
+      //   once:  fibre 0.34 × 0.75 = 0.255 → 0.3;  salt 0.337 × 0.75 = 0.25275 → 0.25
+      //   twice: fibre 0.3  × 0.75 = 0.225 → 0.2;  salt 0.34  × 0.75 = 0.255   → 0.26
+      // so these numbers tell rounding-once from rounding-the-sum-first.
+      const draft = batch(
+        [
+          makeBatchIngredient({ id: "1", fibre: 0.2, salt: 0.2 }),
+          makeBatchIngredient({ id: "2", fibre: 0.14, salt: 0.137 }),
+          makeBatchIngredient({ id: "3", fibre: null, salt: null }),
+        ],
+        100,
+        75,
+      );
+      expect(draft.fibre).toBe(+((0.2 + 0.14) * 0.75).toFixed(1));
+      expect(draft.fibre).toBe(0.3);
+      expect(draft.salt).toBe(+((0.2 + 0.137) * 0.75).toFixed(2));
+      expect(draft.salt).toBe(0.25);
+      expect(draft.incomplete_nutrients).toEqual(["salt", "fibre"]);
+    });
   });
 
   it("produces exactly one draft, with meal_type derived from THIS apply's own eaten_at — never inherited", () => {
@@ -748,5 +839,138 @@ describe("scaleCompositionItem + draftsFromBatch — an edited ingredient's per-
     // agrees with the same figure batchPortionCalories shows in the list.
     const draft = draftsFromBatch(after, { date: "2026-07-27" }, new Date(2026, 6, 27, 8, 0));
     expect(draft.calories).toBe(kcalAfter);
+  });
+});
+
+// ─── PL-059: the flag through the bundle snapshot and the batch apply ────
+//
+// createBundleFromEntries / appendEntriesToBundle snapshot ANY selected
+// Today entry, a partial batch entry included. If the flag is dropped on
+// the way into meal_composition_items, draftsFromComposition hands the
+// lower bound back out looking like a complete total.
+
+function makeLoggedEntry(overrides: Partial<MealEntry> = {}): MealEntry {
+  return {
+    id: "e1",
+    user_id: "user-1",
+    date: "2026-07-20",
+    logged_at: "2026-07-20T12:00:00.000Z",
+    name: "Chilli (batch)",
+    calories: 450,
+    protein: 30,
+    carbs: 40,
+    fat: 12,
+    source: "batch",
+    barcode: null,
+    off_id: null,
+    serving_g: 350,
+    meal_type: "dinner",
+    brand: null,
+    sat_fat: 4,
+    salt: 1.1,
+    fibre: 9.5,
+    sugar: 6,
+    incomplete_nutrients: ["salt", "fibre"],
+    eaten_at: "2026-07-20T19:00:00.000Z",
+    planned: false,
+    confirmed_at: null,
+    skipped_at: null,
+    image_url: null,
+    image_path: null,
+    custom_food_id: null,
+    eaten_at_estimated: false,
+    ...overrides,
+  };
+}
+
+/** meal_compositions insert → one composition; meal_composition_items
+ *  insert → captured rows; meal_entries insert → captured rows. */
+function mockTables() {
+  const capture: { items?: Record<string, unknown>[]; entries?: Record<string, unknown>[] } = {};
+  (supabase.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+    if (table === "meal_compositions") {
+      return {
+        insert: () => ({
+          select: () => ({
+            single: async () => ({ data: makeComposition([]), error: null }),
+          }),
+        }),
+      };
+    }
+    if (table === "meal_composition_items") {
+      return {
+        insert: (rows: Record<string, unknown>[]) => {
+          capture.items = rows;
+          return { select: async () => ({ data: [], error: null }) };
+        },
+      };
+    }
+    if (table === "meal_entries") {
+      return {
+        insert: (rows: Record<string, unknown>[]) => {
+          capture.entries = rows;
+          return { select: async () => ({ data: [], error: null }) };
+        },
+      };
+    }
+    throw new Error(`unexpected table ${table}`);
+  });
+  return capture;
+}
+
+describe("incomplete_nutrients through bundles and batch apply (PL-059)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(supabase.auth.getUser).mockResolvedValue({
+      data: { user: { id: "user-1" } },
+    } as never);
+  });
+
+  it.fails("createBundleFromEntries snapshots the flag with an explicit key", async () => {
+    const capture = mockTables();
+    await createBundleFromEntries("Dinner", [
+      makeLoggedEntry(),
+      makeLoggedEntry({ id: "e2", source: "search", incomplete_nutrients: null }),
+    ]);
+    expect(capture.items![0].incomplete_nutrients).toEqual(["salt", "fibre"]);
+    expect(capture.items![1]).toHaveProperty("incomplete_nutrients", null);
+  });
+
+  it.fails("appendEntriesToBundle snapshots the flag with an explicit key", async () => {
+    const capture = mockTables();
+    await appendEntriesToBundle(makeComposition([]), [
+      makeLoggedEntry(),
+      makeLoggedEntry({ id: "e2", incomplete_nutrients: undefined }),
+    ]);
+    expect(capture.items![0].incomplete_nutrients).toEqual(["salt", "fibre"]);
+    // undefined (an old cached row) normalises to NULL, never [].
+    expect(capture.items![1]).toHaveProperty("incomplete_nutrients", null);
+  });
+
+  it.fails("draftsFromComposition carries a bundle item's flag back out onto the draft", () => {
+    const composition = makeComposition([
+      makeItem({ id: "1", eaten_time: "19:00", meal_type: "dinner", incomplete_nutrients: ["fibre"] }),
+      makeItem({ id: "2", eaten_time: "19:05", meal_type: "dinner", incomplete_nutrients: null }),
+    ]);
+    const drafts = draftsFromComposition(composition, "2026-07-27");
+    expect(drafts[0].incomplete_nutrients).toEqual(["fibre"]);
+    expect(drafts[1].incomplete_nutrients).toBeNull();
+  });
+
+  it.fails("applyBatch: a partial batch's flag reaches the meal_entries insert payload", async () => {
+    const capture = mockTables();
+    await applyBatch(
+      makeComposition(
+        [
+          makeBatchIngredient({ id: "1", fibre: 4 }),
+          makeBatchIngredient({ id: "2", fibre: null }),
+        ],
+        { kind: "batch", yield_g: 100, portion_g: 100 },
+      ),
+      { date: "2026-07-27" },
+      new Date(2026, 6, 27, 19, 0),
+    );
+    expect(capture.entries![0].fibre).toBe(4);
+    expect(capture.entries![0].incomplete_nutrients).toEqual(["fibre"]);
   });
 });

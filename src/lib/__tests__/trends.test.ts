@@ -317,6 +317,44 @@ describe("incomplete days", () => {
     expect(day.unlogged).toBe(false); // the day WAS logged
   });
 
+  it.fails("PL-059: flags a day whose only shortfall is a lower-bound row — a value isn't a complete value", () => {
+    // Every row HAS a salt value, so the old "any NULL row" test sees a
+    // complete day. But row b is a partial batch: its 0.4 g is the known
+    // ingredients only. The day's 1.9 g is a lower bound, drawn hollow.
+    const entries = [
+      makeEntry({ id: "a", date: "2026-09-19", salt: 1.5 }),
+      makeEntry({ id: "b", date: "2026-09-19", salt: 0.4, incomplete_nutrients: ["salt"] }),
+    ];
+    const [series] = buildTrendSeries({
+      entries,
+      nutrients: ["salt"],
+      range: 7,
+      now: NOW,
+      goals: GOALS,
+      goalsState: "loaded",
+    });
+    const day = series.points.find((p) => p.date === "2026-09-19")!;
+    expect(day.value).toBe(1.9);
+    expect(day.incomplete).toBe(true);
+  });
+
+  it("PL-059: a row flagged for a DIFFERENT nutrient leaves this one's day complete", () => {
+    const entries = [
+      makeEntry({ id: "a", date: "2026-09-19", salt: 1.5 }),
+      makeEntry({ id: "b", date: "2026-09-19", salt: 0.4, incomplete_nutrients: ["fibre"] }),
+    ];
+    const [series] = buildTrendSeries({
+      entries,
+      nutrients: ["salt"],
+      range: 7,
+      now: NOW,
+      goals: GOALS,
+      goalsState: "loaded",
+    });
+    const day = series.points.find((p) => p.date === "2026-09-19")!;
+    expect(day.incomplete).toBe(false);
+  });
+
   it("can never flag calories, protein, carbs or fat as incomplete", () => {
     // Those four are NOT NULL on meal_entries (see
     // 20260818140000_meal_entries_null_not_zero.sql, which deliberately left

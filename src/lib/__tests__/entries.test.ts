@@ -131,6 +131,19 @@ describe("applyEntries", () => {
     expect(row.sugar).toBeNull();
   });
 
+  it.fails("PL-059: sends incomplete_nutrients under an explicit snake_case key — the list when flagged, NULL when not", async () => {
+    const capture = mockInsert([]);
+    await applyEntries([
+      makeDraft({ fibre: 4, incomplete_nutrients: ["salt", "fibre"] }),
+      makeDraft({ incomplete_nutrients: null }),
+    ]);
+
+    const rows = capture.rows as Record<string, unknown>[];
+    expect(rows[0].incomplete_nutrients).toEqual(["salt", "fibre"]);
+    // Present and NULL — not absent, not []. Complete is spelled NULL.
+    expect(rows[1]).toHaveProperty("incomplete_nutrients", null);
+  });
+
   it("short-circuits on an empty draft list without calling supabase", async () => {
     const result = await applyEntries([]);
     expect(result).toEqual([]);

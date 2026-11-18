@@ -1,5 +1,6 @@
 // ============================================================
-// src/lib/entryEdit.ts — the edit path's changed-fields patch (PL-037)
+// src/lib/entryEdit.ts — the edit path's changed-fields patch (PL-037),
+// scaled off the row's stored values (PL-010)
 //
 // ProductScreen's edit path used to resend serving_g, all eight macros and
 // eaten_at on EVERY save. Two costs:
@@ -26,20 +27,38 @@
 //                       string would resend the macros on every edit — the
 //                       failure this exists to stop.
 //
-// Returns MealEntryPatch, so `date` and `planned` stay unrepresentable.
-// `date` is derived from eaten_at inside updateEntry, and only when eaten_at
-// is sent — a slot-only patch leaves the day alone. `{}` means nothing
-// changed; the caller then writes nothing.
+// PL-010: the macros are the row's OWN stored values × (new g / stored g) —
+// the same ratio scaling bundles use (compositions.ts, "Apply-time quantity
+// adjustment"). Never a per-100g rate: mealEntryToProduct's rate is only for
+// display, and going through any rate (rounded or not) and back does not
+// reproduce the stored numbers. Device pass 2026-11-18: a chilli at 713 g
+// with salt 3.02 previewed 2.99 untouched, and a 400 g edit wrote 1.68
+// (0.42 × 4) instead of 1.6942.
+//
+// Returns MealEntryPatch, so `date` and `planned` stay unrepresentable, and
+// incomplete_nutrients can't be named: a lower bound scaled is still a
+// lower bound, so the row's flag stands. `date` is derived from eaten_at
+// inside updateEntry, and only when eaten_at is sent — a slot-only patch
+// leaves the day alone. `{}` means nothing changed; the caller then writes
+// nothing.
 // ============================================================
 
-import type { FoodProduct, MealEntry, MealType } from "../types";
+import type { MealEntry, MealType } from "../types";
 import type { MealEntryPatch } from "../store/useStore";
+import { roundServingTotals, type ServingTotals } from "./macros";
+
+/** The eight stored macro columns, as the row holds them. */
+export type StoredMacros = Pick<
+  MealEntry,
+  "calories" | "protein" | "carbs" | "fat" | "sat_fat" | "salt" | "fibre" | "sugar"
+>;
 
 /** The loaded row, snapshotted when ProductScreen opened it. */
 export type EditOriginal = Pick<
   MealEntry,
   "meal_type" | "serving_g" | "eaten_at" | "eaten_at_estimated"
->;
+> &
+  StoredMacros;
 
 /** What the edit screen holds at Submit. */
 export interface EditState {
@@ -50,12 +69,82 @@ export interface EditState {
   eatenAt: string;
   /** Did the user pick a time on ProductScreen's own time chip? */
   timeTouched: boolean;
-  /** Per-100g source for recomputing macros. */
-  product: FoodProduct;
 }
 
 const minuteOf = (iso: string): number =>
   Math.floor(new Date(iso).getTime() / 60000);
+
+/**
+ * The row's eight stored values at `grams`.
+ *
+ *   grams equal to the stored serving → the stored values VERBATIM (no
+ *                                       arithmetic, so nothing can drift);
+ *   otherwise                         → each × (grams / stored serving);
+ *   NULL                              → NULL, at any grams.
+ *
+ * null when the stored serving_g is NULL or not > 0: there is nothing to
+ * scale from. TodayScreen refuses to open such a row for editing (it can't
+ * rebuild a per-100g rate either — see mealEntryToProduct), so this is a
+ * guard, not a path.
+ */
+export function scaleStoredMacros(
+  row: Pick<MealEntry, "serving_g"> & StoredMacros,
+  grams: number,
+): StoredMacros | null {
+  const stored = Number(row.serving_g);
+  if (row.serving_g == null || !(stored > 0)) return null;
+
+  if (grams === stored) {
+    return {
+      calories: row.calories,
+      protein: row.protein,
+      carbs: row.carbs,
+      fat: row.fat,
+      sat_fat: row.sat_fat ?? null,
+      salt: row.salt ?? null,
+      fibre: row.fibre ?? null,
+      sugar: row.sugar ?? null,
+    };
+  }
+
+  const ratio = grams / stored;
+  const scale = (v: number | null | undefined): number | null =>
+    v == null ? null : v * ratio;
+  return {
+    calories: row.calories * ratio,
+    protein: row.protein * ratio,
+    carbs: row.carbs * ratio,
+    fat: row.fat * ratio,
+    sat_fat: scale(row.sat_fat),
+    salt: scale(row.salt),
+    fibre: scale(row.fibre),
+    sugar: scale(row.sugar),
+  };
+}
+
+/**
+ * The edit screen's Nutrition preview: scaleStoredMacros through the same
+ * display rounding as every other preview (roundServingTotals). An untouched
+ * entry therefore shows exactly its stored values. null when the row can't
+ * be scaled (see above) — the caller falls back to the rate-based preview.
+ */
+export function editPreviewTotals(
+  row: Pick<MealEntry, "serving_g"> & StoredMacros,
+  grams: number,
+): ServingTotals | null {
+  const s = scaleStoredMacros(row, grams);
+  if (!s) return null;
+  return roundServingTotals({
+    calories: s.calories,
+    protein: s.protein,
+    carbs: s.carbs,
+    fat: s.fat,
+    satFat: s.sat_fat,
+    salt: s.salt,
+    fibre: s.fibre,
+    sugar: s.sugar,
+  });
+}
 
 export function buildEditPatch(
   original: EditOriginal,
@@ -78,18 +167,20 @@ export function buildEditPatch(
   // number; Number() is the coercion that matters, on the stored side.
   const g = parseFloat(edited.servingText) || 0;
   if (g !== Number(original.serving_g)) {
-    // NULL-not-zero: an unknown per-100g value stays NULL through the scale.
-    const f = g / 100;
-    const p = edited.product;
-    patch.serving_g = g;
-    patch.calories = p.cal_per100 * f;
-    patch.protein = p.protein_per100 * f;
-    patch.carbs = p.carbs_per100 * f;
-    patch.fat = p.fat_per100 * f;
-    patch.sat_fat = p.sat_fat_per100 != null ? p.sat_fat_per100 * f : null;
-    patch.salt = p.salt_per100 != null ? p.salt_per100 * f : null;
-    patch.fibre = p.fibre_per100 != null ? p.fibre_per100 * f : null;
-    patch.sugar = p.sugar_per100 != null ? p.sugar_per100 * f : null;
+    const scaled = scaleStoredMacros(original, g);
+    // No stored serving to scale from: send neither the serving nor macros
+    // rather than invent them. Unreachable from the UI (see scaleStoredMacros).
+    if (scaled) {
+      patch.serving_g = g;
+      patch.calories = scaled.calories;
+      patch.protein = scaled.protein;
+      patch.carbs = scaled.carbs;
+      patch.fat = scaled.fat;
+      patch.sat_fat = scaled.sat_fat;
+      patch.salt = scaled.salt;
+      patch.fibre = scaled.fibre;
+      patch.sugar = scaled.sugar;
+    }
   }
 
   return patch;

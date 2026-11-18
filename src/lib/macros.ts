@@ -278,14 +278,58 @@ export function computeServingTotals(
   servingG: number,
 ): ServingTotals {
   const f = servingG / 100;
+  const scaled = (v: number | undefined) => (v == null ? null : v * f);
+  return roundServingTotals({
+    calories: product.cal_per100 * f,
+    protein: product.protein_per100 * f,
+    carbs: product.carbs_per100 * f,
+    fat: product.fat_per100 * f,
+    satFat: scaled(product.sat_fat_per100),
+    salt: scaled(product.salt_per100),
+    fibre: scaled(product.fibre_per100),
+    sugar: scaled(product.sugar_per100),
+  });
+}
+
+/**
+ * The preview's display rounding, on its own so the edit path (PL-010,
+ * lib/entryEdit.ts editPreviewTotals — the row's stored values, scaled) and
+ * the create path (computeServingTotals — a per-100g rate, scaled) round
+ * identically. Whole kcal, roundSalt for salt, 1 dp for the rest. An
+ * unknown small-four value is 0 here only because ServingTotals is all
+ * numbers: ProductScreen shows "—" for it off the rate's own nullness, never
+ * this 0.
+ */
+export function roundServingTotals(raw: {
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  satFat: number | null | undefined;
+  salt: number | null | undefined;
+  fibre: number | null | undefined;
+  sugar: number | null | undefined;
+}): ServingTotals {
   return {
-    calories: Math.round(product.cal_per100 * f),
-    protein: +(product.protein_per100 * f).toFixed(1),
-    carbs: +(product.carbs_per100 * f).toFixed(1),
-    fat: +(product.fat_per100 * f).toFixed(1),
-    satFat: +((product.sat_fat_per100 ?? 0) * f).toFixed(1),
-    salt: roundSalt((product.salt_per100 ?? 0) * f),
-    fibre: +((product.fibre_per100 ?? 0) * f).toFixed(1),
-    sugar: +((product.sugar_per100 ?? 0) * f).toFixed(1),
+    calories: Math.round(raw.calories),
+    protein: +raw.protein.toFixed(1),
+    carbs: +raw.carbs.toFixed(1),
+    fat: +raw.fat.toFixed(1),
+    satFat: +(raw.satFat ?? 0).toFixed(1),
+    salt: roundSalt(raw.salt ?? 0),
+    fibre: +(raw.fibre ?? 0).toFixed(1),
+    sugar: +(raw.sugar ?? 0).toFixed(1),
   };
+}
+
+/**
+ * Decimal places for a read-only Per 100g tile. PL-010: mealEntryToProduct
+ * no longer rounds the rate it rebuilds, so the tile rounds for display:
+ * whole kcal, 2 dp salt, 1 dp otherwise — the grid OFF rates already sit on
+ * (openfoodfacts.ts parseProduct), so an OFF tile reads exactly as before.
+ */
+export function per100DisplayPlaces(key: string): number {
+  if (key === "cal") return 0;
+  if (key === "salt") return 2;
+  return 1;
 }

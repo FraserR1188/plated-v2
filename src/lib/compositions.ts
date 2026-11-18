@@ -562,9 +562,10 @@ export async function applyCompositionDrafts(
 // Ratio scaling off the item's stored absolute macros, NOT a per-100g
 // reconstruction. meal_composition_items has no per-100g column (see the
 // schema comment on itemFromEntry above) — reconstructing a rate via
-// mealEntryToProduct-style (value / servingG) * 100 rounds on the way out
-// AND on the way back in, eroding precision twice for no reason when the
-// ratio can be applied directly. mealEntryToProduct() itself must never
+// mealEntryToProduct-style (value / servingG) * 100 and multiplying back
+// erodes precision for no reason when the ratio can be applied directly
+// (PL-010 moved ProductScreen's edit path onto this same ratio scaling —
+// entryEdit.ts scaleStoredMacros). mealEntryToProduct() itself must never
 // appear in this path. Beyond the double rounding, it used to coalesce a NULL
 // nutrient to zero before dividing (`(v ?? 0) / g`, fixed in 92a5f90 — it now
 // keeps NULL as undefined). Ratio scaling never had either problem.
@@ -922,7 +923,7 @@ export function draftsFromBatch(
       );
 
   // Scaled AND rounded ONCE, here — never round the sum and round again after
-  // scaling. Same granularity as mealEntryToProduct/ProductScreen's preview:
+  // scaling. Same granularity as ProductScreen's preview (roundServingTotals):
   // whole kcal, 1dp for protein/carbs/fat/sat_fat/fibre/sugar, 2dp for salt.
   const scaled = (v: number, dp: number): number => +(v * scale).toFixed(dp);
   const scaledNullable = (v: number | null, dp: number): number | null =>

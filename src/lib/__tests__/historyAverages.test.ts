@@ -134,3 +134,13 @@ describe("dailyAverages (PL-058)", () => {
     expect(avg.fibre.value).toBe(1); // 1.02 → 1.0
   });
 });
+
+describe("PL-061: an empty day stays out of History's averages", () => {
+  it("is not logged, not known and not a minimum day", () => {
+    const empty = { ...UNLOGGED, hasNullRow: [] };
+    const avg = dailyAverages([empty, day({ fibre: 12 }), empty])!;
+    expect(avg.loggedDays).toBe(1);
+    expect(avg.fibre).toEqual({ value: 12, knownDays: 1, loggedDays: 1, lowerBoundDays: 0 });
+    expect(dailyAverages([empty, empty])).toBeNull();
+  });
+});

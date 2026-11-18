@@ -16,7 +16,9 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { per100TileText } from "../incompleteNutrients";
-import { per100DisplayPlaces } from "../macros";
+import { per100DisplayPlaces, servingMacrosFromRate } from "../macros";
+import { customFoodToProduct } from "../foodLookup";
+import type { CustomFood } from "../../types";
 
 describe("per100TileText", () => {
   it("prefixes ≥ on a flagged small-four rate", () => {
@@ -79,5 +81,63 @@ describe("ProductScreen's Per 100g tiles use per100TileText", () => {
         new RegExp(`key: "${key}",[\\s\\S]*?column: "${column}",[\\s\\S]*?\\n  \\}`),
       );
     }
+  });
+});
+
+// ─── PL-010 follow-up: the add path's tile rounding is display-only ─────
+//
+// The tile rounds a per-100g rate for display. What gets LOGGED must still
+// be the unrounded rate × grams / 100: a custom food typed as 2.25 g
+// protein per 100 g shows "2.3" on the tile but logs exactly 2.25 × g/100.
+
+describe("PL-010: per-100g tile rounding never reaches the logged values", () => {
+  const cf: CustomFood = {
+    id: "cf-1",
+    user_id: "u1",
+    name: "Oat bake",
+    brand: null,
+    barcode: null,
+    cal_per100: 381,
+    protein_per100: 2.25,
+    carbs_per100: 61.25,
+    fat_per100: 11.75,
+    sat_fat_per100: 4.35,
+    salt_per100: 0.125,
+    fibre_per100: null,
+    sugar_per100: 18.45,
+    serving_g: null,
+    serving_label: null,
+    created_at: "2026-11-18T00:00:00.000Z",
+    image_url: null,
+    label_image_url: null,
+  };
+
+  it('a custom food at 2.25 g protein/100 g shows "2.3" on the tile but logs 2.25 × g/100 exactly', () => {
+    const product = customFoodToProduct(cf);
+    expect(per100TileText(product.protein_per100, null, undefined, per100DisplayPlaces("protein"))).toBe("2.3");
+    expect(per100TileText(product.salt_per100!, null, "salt", per100DisplayPlaces("salt"))).toBe("0.13");
+
+    // Rendering the tile changed nothing on the product.
+    expect(product.protein_per100).toBe(2.25);
+
+    const logged = servingMacrosFromRate(product, 150);
+    expect(logged.serving_g).toBe(150);
+    expect(logged.protein).toBe(2.25 * (150 / 100));
+    expect(logged.protein).toBe(3.375);
+    expect(logged.carbs).toBe(61.25 * (150 / 100));
+    expect(logged.salt).toBe(0.125 * (150 / 100));
+    expect(logged.calories).toBe(381 * (150 / 100));
+    // NULL-not-zero survives the scale.
+    expect(logged.fibre).toBeNull();
+  });
+
+  it("ProductScreen's create path logs servingMacrosFromRate(draft, g), and the tile only reads the draft", () => {
+    const src = fs
+      .readFileSync(path.resolve(process.cwd(), "src/screens/ProductScreen.tsx"), "utf8")
+      .replace(/\r\n/g, "\n");
+    expect(src).toMatch(/const macros = \{\s*\.\.\.servingMacrosFromRate\(draft, g\),\s*eaten_at,\s*\};/);
+    // Nothing writes a display-rounded rate back into the draft.
+    expect(src).not.toMatch(/setDraft\([^)]*per100TileText/);
+    expect(src).not.toMatch(/setDraft\([^)]*per100DisplayPlaces/);
   });
 });

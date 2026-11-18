@@ -84,6 +84,11 @@ export type WhoopError = {
   error: string;
   status?: number;
   fatal: boolean;
+  /** Our own WHOOP credentials are missing from Supabase secrets. Never the
+   *  user's fault, so it must never count toward giving up on a connection
+   *  (PL-064). Without this flag it is indistinguishable from a network
+   *  failure: neither carries a status. */
+  misconfigured?: true;
 };
 
 export function whoopCredentials(): {
@@ -285,6 +290,7 @@ export async function whoopRefresh(refreshToken: string): Promise<
     return {
       error: "WHOOP_CLIENT_ID or WHOOP_CLIENT_SECRET is not set",
       fatal: false, // Our misconfiguration. Never punish the user's connection.
+      misconfigured: true,
     };
   }
 

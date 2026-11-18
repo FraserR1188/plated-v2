@@ -37,7 +37,7 @@
 // invalid_grant. Everything else is transient and the sync simply fails.
 // ============================================================
 
-import { whoopRefresh, sleep } from "./whoop.ts";
+import { whoopRefresh, sleep, type WhoopError } from "./whoop.ts";
 
 // deno-lint-ignore no-explicit-any
 type Admin = any; // SupabaseClient from _shared/auth.ts adminClient()
@@ -50,6 +50,39 @@ export type TokenResult =
   | { ok: false; kind: "revoked"; message: string }
   /** WHOOP is unwell, or another invocation is mid-refresh. Try again later. */
   | { ok: false; kind: "transient"; message: string };
+
+/**
+ * PL-064 — when to stop retrying a refresh that keeps failing non-fatally.
+ *
+ * Non-fatal used to mean "retry forever": a connection whose refresh failed
+ * in a way isFatalTokenFailure didn't recognise stayed 'connected' with
+ * last_sync_error 'transient' indefinitely, and Settings — which only offers
+ * Reconnect for 'revoked' — never told the user (test account, stuck from
+ * 2026-09-19).
+ *
+ * expires_at only moves on a SUCCESSFUL refresh, and WHOOP access tokens live
+ * about an hour, so "expired more than seven days ago" means no refresh has
+ * worked for seven days. Past that, a non-fatal REFRESH failure is treated as
+ * fatal. The cost is bounded: a WHOOP outage longer than seven days revokes
+ * each user on their own next sync attempt, and they reconnect once.
+ *
+ * Only ever consulted for the refresh call itself failing. A lease RPC error,
+ * the busy wait, or a failed commit after a successful rotation are database
+ * or concurrency problems, not a dead credential, and never reach this.
+ */
+export const GIVE_UP_AFTER_MS = 7 * 86_400_000;
+
+export function refreshGivenUp(
+  expiresAt: string | null | undefined,
+  nowMs: number,
+  err: WhoopError,
+): boolean {
+  if (err.misconfigured) return false; // Our fault, never the user's.
+  if (!expiresAt) return false;
+  const expiredMs = Date.parse(expiresAt);
+  if (!Number.isFinite(expiredMs)) return false;
+  return nowMs - expiredMs > GIVE_UP_AFTER_MS;
+}
 
 /** How long to wait for another invocation's refresh to land, before giving up. */
 const BUSY_WAIT_MS = 1_000;
@@ -130,6 +163,22 @@ export async function getValidToken(
         // The credential itself is finished. Nothing to release — the row is
         // about to be deleted.
         await revoke(admin, userId, refreshed.error);
+        return {
+          ok: false,
+          kind: "revoked",
+          message: "Your WHOOP connection expired. Reconnect in Settings.",
+        };
+      }
+
+      // PL-064: non-fatal, but no refresh has worked for over seven days.
+      // This is the ONLY place the give-up rule is consulted — inside the
+      // refresh-failure branch, never on a lease, busy or commit failure.
+      if (refreshGivenUp(data.expires_at as string | null, Date.now(), refreshed)) {
+        await revoke(
+          admin,
+          userId,
+          `no successful refresh since ${data.expires_at} (over 7 days); last: ${refreshed.error}`,
+        );
         return {
           ok: false,
           kind: "revoked",

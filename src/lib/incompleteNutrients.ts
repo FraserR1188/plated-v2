@@ -59,11 +59,17 @@ export function isLowerBound(
 // all read, so the three can't disagree again (before PL-061, Trends counted
 // flagged + NULL rows, History flagged only, and Today neither):
 //
+//   no contributing rows at all      → 0, plain — nothing eaten is a KNOWN
+//                                      zero, exactly as the big four read it
 //   every contributing row NULL      → unknown  ("—", no bar fill)
 //   any row NULL or flagged, rest known → the known sum, a MINIMUM ("≥")
 //   otherwise                        → the sum, plain
 //
-// A real 0 is a value, never a gap.
+// A real 0 is a value, never a gap. The first line matters because an empty
+// bucket's small four are null too (sumBucket starts them null): device pass,
+// an empty day read "—" for sat fat/fibre/sugar/salt beside "0" for protein.
+// Trends and History never reach it — both drop empty days first (a gap, and
+// left out of the average) — so only Today's bars depended on it.
 
 export type SmallFourTotal =
   | { known: false }
@@ -71,10 +77,11 @@ export type SmallFourTotal =
 
 export type SmallFourBucket = Pick<
   DayBucket,
-  "satFat" | "salt" | "fibre" | "sugar" | "lowerBound" | "hasNullRow"
+  "satFat" | "salt" | "fibre" | "sugar" | "lowerBound" | "hasNullRow" | "count"
 >;
 
 export function smallFourTotal(bucket: SmallFourBucket, key: SmallFourKey): SmallFourTotal {
+  if (bucket.count === 0) return { known: true, value: 0, atLeast: false };
   const value = bucket[BUCKET_FIELD[key]];
   if (value == null) return { known: false };
   return {

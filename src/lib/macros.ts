@@ -323,6 +323,42 @@ export function roundServingTotals(raw: {
 }
 
 /**
+ * What ProductScreen's CREATE path logs: the per-100g rate × grams / 100,
+ * unrounded. Moved out of handleSubmit unchanged so a test can prove the
+ * Per 100g tiles' display rounding (per100DisplayPlaces) never reaches the
+ * logged values. NULL-not-zero: an unknown per-100g value stays NULL
+ * through the scale — a fabricated 0 would be indistinguishable from a real
+ * zero once it lands in meal_entries (see MealEntry in src/types/index.ts).
+ */
+export function servingMacrosFromRate(
+  product: PerHundredGram,
+  servingG: number,
+): {
+  serving_g: number;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+  sat_fat: number | null;
+  salt: number | null;
+  fibre: number | null;
+  sugar: number | null;
+} {
+  const f = servingG / 100;
+  return {
+    serving_g: servingG,
+    calories: product.cal_per100 * f,
+    protein: product.protein_per100 * f,
+    carbs: product.carbs_per100 * f,
+    fat: product.fat_per100 * f,
+    sat_fat: product.sat_fat_per100 != null ? product.sat_fat_per100 * f : null,
+    salt: product.salt_per100 != null ? product.salt_per100 * f : null,
+    fibre: product.fibre_per100 != null ? product.fibre_per100 * f : null,
+    sugar: product.sugar_per100 != null ? product.sugar_per100 * f : null,
+  };
+}
+
+/**
  * Decimal places for a read-only Per 100g tile. PL-010: mealEntryToProduct
  * no longer rounds the rate it rebuilds, so the tile rounds for display:
  * whole kcal, 2 dp salt, 1 dp otherwise — the grid OFF rates already sit on

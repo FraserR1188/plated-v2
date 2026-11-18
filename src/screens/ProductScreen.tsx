@@ -66,6 +66,7 @@ import {
   needsManualEntry,
   canSubmitProduct,
   per100DisplayPlaces,
+  servingMacrosFromRate,
 } from "../lib/macros";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Product">;
@@ -459,7 +460,6 @@ export function ProductScreen() {
   const submittingRef = useRef(false);
 
   const g = parseFloat(serving) || 0;
-  const f = g / 100;
 
   // Phase 2 guard: energy + protein + carbs + fat all zero ⇒ no usable
   // nutrition (see lib/macros.ts needsManualEntry — a genuine OFF
@@ -556,16 +556,11 @@ export function ProductScreen() {
     // fabricated 0. That 0 would be indistinguishable from a real zero the
     // instant it lands in meal_entries, permanently — see the WRITING rule
     // on MealEntry in src/types/index.ts.
+    //
+    // servingMacrosFromRate (lib/macros.ts) is the unrounded rate × g/100:
+    // the Per 100g tiles round only for display (PL-010).
     const macros = {
-      serving_g: g,
-      calories: draft.cal_per100 * f,
-      protein: draft.protein_per100 * f,
-      carbs: draft.carbs_per100 * f,
-      fat: draft.fat_per100 * f,
-      sat_fat: draft.sat_fat_per100 != null ? draft.sat_fat_per100 * f : null,
-      salt: draft.salt_per100 != null ? draft.salt_per100 * f : null,
-      fibre: draft.fibre_per100 != null ? draft.fibre_per100 * f : null,
-      sugar: draft.sugar_per100 != null ? draft.sugar_per100 * f : null,
+      ...servingMacrosFromRate(draft, g),
       eaten_at,
     };
 

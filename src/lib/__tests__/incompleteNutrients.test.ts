@@ -16,8 +16,12 @@ import {
   trendHeadlineText,
   averageText,
   averageNote,
+  smallFourTotal,
+  smallFourTotalText,
+  smallFourBar,
   type NamedIngredient,
 } from "../incompleteNutrients";
+import { roundSalt } from "../macros";
 import { getDaySummary } from "../entries";
 import { mealEntryToProduct } from "../foodLookup";
 import type { FoodProduct, MealEntry } from "../../types";
@@ -198,7 +202,7 @@ describe("getDaySummary lowerBound — the day total's ≥", () => {
     expect(s.towardGoal.lowerBound).toEqual(["salt", "fibre"]);
   });
 
-  it("is empty when no entry is flagged — a NULL row alone is PL-061, not this", () => {
+  it("is empty when no entry is flagged — a NULL row goes in hasNullRow instead (PL-061)", () => {
     const s = getDaySummary(
       [entry({ id: "a" }), entry({ id: "b", fibre: null })],
       "2026-10-25",
@@ -240,5 +244,142 @@ describe("mealEntryToProduct carries the flag for the edit screen", () => {
 
   it("leaves it undefined when the entry is complete (FoodProduct's 'absent' convention)", () => {
     expect(mealEntryToProduct(entry())!.incomplete_nutrients).toBeUndefined();
+  });
+});
+
+// ─── PL-061: a contributing NULL row makes the day total a minimum ──────
+
+describe("getDaySummary hasNullRow (PL-061)", () => {
+  const NOW = new Date(2026, 9, 25, 20, 0);
+
+  it("lists a nutrient when any contributing eaten entry is NULL for it", () => {
+    const s = getDaySummary(
+      [entry({ id: "a" }), entry({ id: "b", fibre: null, salt: null })],
+      "2026-10-25",
+      NOW,
+    );
+    expect(s.eaten.hasNullRow).toEqual(["salt", "fibre"]);
+    expect(s.towardGoal.hasNullRow).toEqual(["salt", "fibre"]);
+    // A real 0 is a value, not a gap.
+    expect(
+      getDaySummary([entry({ sugar: 0 })], "2026-10-25", NOW).towardGoal.hasNullRow,
+    ).toEqual([]);
+  });
+
+  it("unions eaten and pending in column order, and the settled day keeps eaten only", () => {
+    const later = "2026-10-25T21:30:00.000Z";
+    const rows = [
+      entry({ id: "a", sugar: null }),
+      entry({ id: "b", planned: true, eaten_at: later, sat_fat: null, sugar: null }),
+    ];
+    const live = getDaySummary(rows, "2026-10-25", NOW);
+    expect(live.eaten.hasNullRow).toEqual(["sugar"]);
+    expect(live.pending.hasNullRow).toEqual(["sat_fat", "sugar"]);
+    expect(live.towardGoal.hasNullRow).toEqual(["sat_fat", "sugar"]);
+    const settled = getDaySummary(rows, "2026-10-25", new Date(2026, 9, 26, 9, 0));
+    expect(settled.towardGoal.hasNullRow).toEqual(["sugar"]);
+  });
+
+  it("ignores a skipped entry's NULL", () => {
+    const s = getDaySummary(
+      [entry({ id: "a" }), entry({ id: "b", fibre: null, skipped_at: "2026-10-25T09:00:00.000Z" })],
+      "2026-10-25",
+      NOW,
+    );
+    expect(s.towardGoal.hasNullRow).toEqual([]);
+  });
+});
+
+describe("smallFourTotal / smallFourTotalText — the one rule Today, Trends and History share", () => {
+  const NOW = new Date(2026, 9, 25, 20, 0);
+  const bucket = (rows: MealEntry[]) => getDaySummary(rows, "2026-10-25", NOW).towardGoal;
+
+  it("unknown when every contributing row is NULL — rendered —", () => {
+    const t = smallFourTotal(bucket([entry({ fibre: null }), entry({ id: "b", fibre: null })]), "fibre");
+    expect(t).toEqual({ known: false });
+    expect(smallFourTotalText(t, String)).toBe("—");
+  });
+
+  it("a known sum is a minimum when any contributing row is NULL", () => {
+    const t = smallFourTotal(bucket([entry({ fibre: 6 }), entry({ id: "b", fibre: null })]), "fibre");
+    expect(t).toEqual({ known: true, value: 6, atLeast: true });
+    expect(smallFourTotalText(t, String)).toBe("≥ 6");
+  });
+
+  it("a known sum is a minimum when any contributing row is flagged", () => {
+    const t = smallFourTotal(
+      bucket([entry({ fibre: 6, incomplete_nutrients: ["fibre"] })]),
+      "fibre",
+    );
+    expect(t).toEqual({ known: true, value: 6, atLeast: true });
+  });
+
+  it("plain when every row is known and unflagged, a real 0 included", () => {
+    const t = smallFourTotal(bucket([entry({ sugar: 0 }), entry({ id: "b", sugar: 4 })]), "sugar");
+    expect(t).toEqual({ known: true, value: 4, atLeast: false });
+    expect(smallFourTotalText(t, String)).toBe("4");
+    expect(smallFourTotal(bucket([entry({ sugar: 0 })]), "sugar")).toEqual({
+      known: true,
+      value: 0,
+      atLeast: false,
+    });
+  });
+
+  it("a flag on one nutrient or a NULL in one nutrient does not mark the others", () => {
+    const b = bucket([entry({ fibre: null, incomplete_nutrients: ["salt"] })]);
+    expect(smallFourTotal(b, "sugar")).toEqual({ known: true, value: 6, atLeast: false });
+    expect(smallFourTotal(b, "salt")).toEqual({ known: true, value: 1.2, atLeast: true });
+  });
+});
+
+describe("smallFourBar — Today's small-four bars and strip (PL-061)", () => {
+  const NOW = new Date(2026, 9, 25, 20, 0);
+  const today = (rows: MealEntry[]) => getDaySummary(rows, "2026-10-25", NOW).towardGoal;
+
+  it("all-unknown: no number at all — consumed null, text —", () => {
+    // The device bug: every fibre row NULL, the bar read "0 g".
+    const bar = smallFourBar(
+      today([entry({ fibre: null }), entry({ id: "b", fibre: null })]),
+      "fibre",
+      Math.round,
+    );
+    expect(bar).toEqual({ consumed: null, atLeast: false, text: "—" });
+  });
+
+  it("partly NULL: the known sum, as a minimum", () => {
+    const bar = smallFourBar(
+      today([entry({ fibre: 6.4 }), entry({ id: "b", fibre: null })]),
+      "fibre",
+      Math.round,
+    );
+    expect(bar).toEqual({ consumed: 6, atLeast: true, text: "≥ 6" });
+  });
+
+  it("a NULL planned meal makes today's total a minimum — plans count toward the goal", () => {
+    const later = "2026-10-25T21:30:00.000Z";
+    const bar = smallFourBar(
+      today([entry({ salt: 1.2 }), entry({ id: "p", planned: true, eaten_at: later, salt: null })]),
+      "salt",
+      roundSalt,
+    );
+    expect(bar).toEqual({ consumed: 1.2, atLeast: true, text: "≥ 1.2" });
+  });
+
+  it("complete: plain, rounded by the caller's rule", () => {
+    const bar = smallFourBar(
+      today([entry({ salt: 0.235 }), entry({ id: "b", salt: 0.235 })]),
+      "salt",
+      roundSalt,
+    );
+    expect(bar).toEqual({ consumed: 0.47, atLeast: false, text: "0.47" });
+  });
+
+  it("a flagged batch is still a minimum, as PL-059 had it", () => {
+    const bar = smallFourBar(
+      today([entry({ sugar: 6, incomplete_nutrients: ["sugar"] })]),
+      "sugar",
+      Math.round,
+    );
+    expect(bar).toEqual({ consumed: 6, atLeast: true, text: "≥ 6" });
   });
 });

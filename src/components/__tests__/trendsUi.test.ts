@@ -79,6 +79,13 @@ describe("HistoryScreen, a Data segment only", () => {
     expect(code).not.toMatch(/SafeAreaView/);
   });
 
+  it("PL-059: each small-four average's value and note come from averageText / averageNote", () => {
+    const stat = code.slice(code.indexOf("function SecondaryAvgStat"), code.indexOf("function MacroChip"));
+    expect(stat.length).toBeGreaterThan(0);
+    expect(stat).toMatch(/\{averageText\(average\)\}/);
+    expect(stat).toMatch(/averageNote\(average\)/);
+  });
+
   it("draws no heading of its own (the segmented control says History)", () => {
     expect(code).not.toMatch(/styles\.heading/);
     expect(code).not.toMatch(/>History</);

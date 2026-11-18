@@ -12,6 +12,7 @@
 // ============================================================
 
 import type { FoodProduct, SmallFourKey } from "../types";
+import type { KnownAverage } from "./historyAverages";
 
 /** Column order — the order incomplete_nutrients is written in. */
 export const SMALL_FOUR_KEYS: readonly SmallFourKey[] = ["sat_fat", "salt", "fibre", "sugar"];
@@ -52,6 +53,34 @@ export function isLowerBound(
  */
 export function trendHeadlineText(formatted: string, incomplete: boolean): string {
   return atLeast(formatted, incomplete);
+}
+
+/**
+ * History's small-four daily average. "—" when unknown; "≥" when any day in
+ * it was a lower bound (lowerBoundDays > 0) — that day is included at its
+ * known sum, so the average is a minimum too.
+ */
+export function averageText(avg: KnownAverage): string {
+  if (avg.value == null) return "—";
+  return atLeast(`${avg.value}g`, avg.lowerBoundDays > 0);
+}
+
+/**
+ * The note under that average, or null. PL-058's "6 of 7 days" (days left
+ * out) is unchanged; PL-059 adds how many of the included days are minimums:
+ *   "6 of 7 days" · "2 of 7 days are minimums" · "6 of 7 days · 1 is a minimum"
+ */
+export function averageNote(avg: KnownAverage): string | null {
+  if (avg.value == null) return null;
+  const leftOut = avg.knownDays < avg.loggedDays;
+  const n = avg.lowerBoundDays;
+  const minimums = n === 1 ? "1 is a minimum" : `${n} are minimums`;
+  if (leftOut && n > 0) return `${avg.knownDays} of ${avg.loggedDays} days · ${minimums}`;
+  if (leftOut) return `${avg.knownDays} of ${avg.loggedDays} days`;
+  if (n > 0) {
+    return `${n} of ${avg.loggedDays} days ${n === 1 ? "is a minimum" : "are minimums"}`;
+  }
+  return null;
 }
 
 /**

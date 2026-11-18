@@ -5,6 +5,7 @@ import { BottomTabNavigationProp } from "@react-navigation/bottom-tabs";
 import { useStore } from "../store/useStore";
 import { BottomTabParamList } from "../types";
 import { dailyAverages, KnownAverage } from "../lib/historyAverages";
+import { averageNote, averageText } from "../lib/incompleteNutrients";
 import { dateKey, addDays } from "../lib/time";
 import { RangeControl } from "../components/RangeControl";
 import {
@@ -337,7 +338,9 @@ function AvgStat({
 /**
  * PL-058: a small-four average can be unknown (no logged day had a value) or
  * partial (some days were left out). Both are said out loud — "—" and
- * "n of N days" — rather than shown as a confident number.
+ * "n of N days" — rather than shown as a confident number. PL-059: if any
+ * included day was a lower bound, the average is a minimum — "≥", and the
+ * note says how many days were. Text from averageText / averageNote.
  */
 function SecondaryAvgStat({
   label,
@@ -348,8 +351,7 @@ function SecondaryAvgStat({
   average: KnownAverage;
   color: string;
 }) {
-  const partial =
-    average.value != null && average.knownDays < average.loggedDays;
+  const note = averageNote(average);
   return (
     <View style={avgStyles.secondary}>
       <View style={[avgStyles.secondaryDot, { backgroundColor: color }]} />
@@ -361,13 +363,9 @@ function SecondaryAvgStat({
             { color: average.value == null ? Colors.textMuted : color },
           ]}
         >
-          {average.value == null ? "—" : `${average.value}g`}
+          {averageText(average)}
         </Text>
-        {partial && (
-          <Text style={avgStyles.secondaryNote}>
-            {average.knownDays} of {average.loggedDays} days
-          </Text>
-        )}
+        {note && <Text style={avgStyles.secondaryNote}>{note}</Text>}
       </View>
     </View>
   );

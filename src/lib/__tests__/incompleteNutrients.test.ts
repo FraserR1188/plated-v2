@@ -14,6 +14,8 @@ import {
   lowerBoundNote,
   missingNutrientLines,
   trendHeadlineText,
+  averageText,
+  averageNote,
   type NamedIngredient,
 } from "../incompleteNutrients";
 import { getDaySummary } from "../entries";
@@ -91,6 +93,42 @@ describe("trendHeadlineText — the Trends card's big latest-day number", () => 
 
   it("leaves a complete point's number plain", () => {
     expect(trendHeadlineText("1,850", false)).toBe("1,850");
+  });
+});
+
+describe("History small-four average — averageText / averageNote", () => {
+  const avg = (value: number | null, knownDays: number, loggedDays: number, lowerBoundDays: number) => ({
+    value,
+    knownDays,
+    loggedDays,
+    lowerBoundDays,
+  });
+
+  it("shows — for an unknown average, with no note", () => {
+    expect(averageText(avg(null, 0, 7, 0))).toBe("—");
+    expect(averageNote(avg(null, 0, 7, 0))).toBeNull();
+  });
+
+  it("a complete average is plain, with no note", () => {
+    expect(averageText(avg(3.2, 7, 7, 0))).toBe("3.2g");
+    expect(averageNote(avg(3.2, 7, 7, 0))).toBeNull();
+  });
+
+  it("days left out: plain value, the existing note unchanged", () => {
+    expect(averageText(avg(3.2, 6, 7, 0))).toBe("3.2g");
+    expect(averageNote(avg(3.2, 6, 7, 0))).toBe("6 of 7 days");
+  });
+
+  it("minimum days: ≥ on the value, and the note says so", () => {
+    expect(averageText(avg(3.2, 7, 7, 2))).toBe("≥ 3.2g");
+    expect(averageNote(avg(3.2, 7, 7, 2))).toBe("2 of 7 days are minimums");
+    expect(averageNote(avg(3.2, 7, 7, 1))).toBe("1 of 7 days is a minimum");
+  });
+
+  it("both: ≥, and the note says both", () => {
+    expect(averageText(avg(3.2, 6, 7, 2))).toBe("≥ 3.2g");
+    expect(averageNote(avg(3.2, 6, 7, 2))).toBe("6 of 7 days · 2 are minimums");
+    expect(averageNote(avg(3.2, 6, 7, 1))).toBe("6 of 7 days · 1 is a minimum");
   });
 });
 

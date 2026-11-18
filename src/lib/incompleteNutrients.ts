@@ -13,6 +13,7 @@
 
 import type { FoodProduct, SmallFourKey } from "../types";
 import type { KnownAverage } from "./historyAverages";
+import type { DayBucket } from "./entries";
 
 /** Column order — the order incomplete_nutrients is written in. */
 export const SMALL_FOUR_KEYS: readonly SmallFourKey[] = ["sat_fat", "salt", "fibre", "sugar"];
@@ -31,6 +32,14 @@ const PER100: Record<SmallFourKey, keyof FoodProduct> = {
   sugar: "sugar_per100",
 };
 
+/** DayBucket's camelCase field for each small-four column. */
+const BUCKET_FIELD: Record<SmallFourKey, "satFat" | "salt" | "fibre" | "sugar"> = {
+  sat_fat: "satFat",
+  salt: "salt",
+  fibre: "fibre",
+  sugar: "sugar",
+};
+
 /** "≥ 2.1" for a lower bound, the text unchanged otherwise. */
 export function atLeast(text: string, lowerBound: boolean): string {
   return lowerBound ? `≥ ${text}` : text;
@@ -42,6 +51,69 @@ export function isLowerBound(
   key: SmallFourKey,
 ): boolean {
   return !!flags?.includes(key);
+}
+
+// ─── PL-061: the day total of one small-four nutrient ────────────────────
+//
+// THE rule Today's bars, Trends' hollow points and History's minimum days
+// all read, so the three can't disagree again (before PL-061, Trends counted
+// flagged + NULL rows, History flagged only, and Today neither):
+//
+//   every contributing row NULL      → unknown  ("—", no bar fill)
+//   any row NULL or flagged, rest known → the known sum, a MINIMUM ("≥")
+//   otherwise                        → the sum, plain
+//
+// A real 0 is a value, never a gap.
+
+export type SmallFourTotal =
+  | { known: false }
+  | { known: true; value: number; atLeast: boolean };
+
+export type SmallFourBucket = Pick<
+  DayBucket,
+  "satFat" | "salt" | "fibre" | "sugar" | "lowerBound" | "hasNullRow"
+>;
+
+export function smallFourTotal(bucket: SmallFourBucket, key: SmallFourKey): SmallFourTotal {
+  const value = bucket[BUCKET_FIELD[key]];
+  if (value == null) return { known: false };
+  return {
+    known: true,
+    value,
+    atLeast: bucket.lowerBound.includes(key) || bucket.hasNullRow.includes(key),
+  };
+}
+
+/** "—", "≥ x" or "x"; `format` turns the number into text. */
+export function smallFourTotalText(
+  total: SmallFourTotal,
+  format: (v: number) => string,
+): string {
+  return total.known ? atLeast(format(total.value), total.atLeast) : "—";
+}
+
+/** What one of Today's small-four bars (and its strip segment) shows.
+ *  `consumed` is null for an unknown total: no number, no fill, no
+ *  over-goal colour. `round` is the bar's display rounding. */
+export interface SmallFourBarValue {
+  consumed: number | null;
+  atLeast: boolean;
+  text: string;
+}
+
+export function smallFourBar(
+  bucket: SmallFourBucket,
+  key: SmallFourKey,
+  round: (v: number) => number,
+): SmallFourBarValue {
+  const total = smallFourTotal(bucket, key);
+  if (!total.known) return { consumed: null, atLeast: false, text: "—" };
+  const consumed = round(total.value);
+  return {
+    consumed,
+    atLeast: total.atLeast,
+    text: atLeast(String(consumed), total.atLeast),
+  };
 }
 
 /**

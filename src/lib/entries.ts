@@ -318,15 +318,22 @@ export type DayBucket = Omit<
   /**
    * PL-059. Small four (column names, column order) where at least one
    * contributing row is a LOWER BOUND (listed in its incomplete_nutrients),
-   * so the bucket's sum is too — the day total shows "≥". A row that is
-   * merely NULL does not put a nutrient here; that is PL-061's question.
+   * so the bucket's sum is too. A row that is merely NULL does not put a
+   * nutrient here — it goes in hasNullRow.
    */
   lowerBound: SmallFourKey[];
+  /**
+   * PL-061. Small four (column names, column order) where at least one
+   * contributing row is NULL. With a non-null sum, the sum is the KNOWN rows'
+   * total and so a minimum. Read both lists through
+   * incompleteNutrients.smallFourTotal, never directly.
+   */
+  hasNullRow: SmallFourKey[];
 };
 
 const SMALL_FOUR_ORDER: readonly SmallFourKey[] = ["sat_fat", "salt", "fibre", "sugar"];
 
-/** Union of two lowerBound lists, in column order. */
+/** Union of two small-four lists (lowerBound, hasNullRow), in column order. */
 function unionLowerBound(a: readonly SmallFourKey[], b: readonly SmallFourKey[]): SmallFourKey[] {
   return SMALL_FOUR_ORDER.filter((k) => a.includes(k) || b.includes(k));
 }
@@ -360,6 +367,7 @@ function sumBucket(rows: MealEntry[]): DayBucket {
   let fibre: number | null = null;
   let sugar: number | null = null;
   let lowerBound: SmallFourKey[] = [];
+  const hasNullRow = new Set<SmallFourKey>();
 
   for (const e of rows) {
     calories += e.calories;
@@ -371,6 +379,7 @@ function sumBucket(rows: MealEntry[]): DayBucket {
     if (e.fibre != null) fibre = (fibre ?? 0) + e.fibre;
     if (e.sugar != null) sugar = (sugar ?? 0) + e.sugar;
     if (e.incomplete_nutrients) lowerBound = unionLowerBound(lowerBound, e.incomplete_nutrients);
+    for (const k of SMALL_FOUR_ORDER) if (e[k] == null) hasNullRow.add(k);
   }
 
   return {
@@ -384,6 +393,7 @@ function sumBucket(rows: MealEntry[]): DayBucket {
     sugar,
     count: rows.length,
     lowerBound,
+    hasNullRow: SMALL_FOUR_ORDER.filter((k) => hasNullRow.has(k)),
   };
 }
 
@@ -405,6 +415,7 @@ function addBuckets(a: DayBucket, b: DayBucket): DayBucket {
     sugar: addNullable(a.sugar, b.sugar),
     count: a.count + b.count,
     lowerBound: unionLowerBound(a.lowerBound, b.lowerBound),
+    hasNullRow: unionLowerBound(a.hasNullRow, b.hasNullRow),
   };
 }
 

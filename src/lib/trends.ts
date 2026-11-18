@@ -30,9 +30,10 @@ import { GoalsState } from "../store/useStore";
 import { DayBucket, getDaySummary } from "./entries";
 import { dateKey, parseDateKey } from "./time";
 import { withThousands } from "./numberFormat";
+import { smallFourTotal } from "./incompleteNutrients";
 
 /** The eight tracked nutrients, keyed as DayBucket and Goals key them. */
-export type TrendNutrient = keyof Omit<DayBucket, "count" | "lowerBound">;
+export type TrendNutrient = keyof Omit<DayBucket, "count" | "lowerBound" | "hasNullRow">;
 
 /** The ranges the toggle offers, in the order it offers them. */
 export const RANGE_DAYS = [7, 14] as const;
@@ -179,25 +180,17 @@ export function toggleNutrient(
   return [...selected, nutrient];
 }
 
-/** Does any EATEN row on this day lack a COMPLETE value for this nutrient —
- *  NULL, or (PL-059) a lower bound listed in incomplete_nutrients? Either way
- *  the day's sum is short of the truth. Pending and skipped rows are
- *  irrelevant: they are not part of what was eaten, so their unknowns say
- *  nothing about the completeness of what was. */
-function hasUnknownRow(
-  entries: MealEntry[],
-  date: string,
-  nutrient: TrendNutrient,
-): boolean {
+/** Is this day's value short of the truth for this nutrient — NULL on any
+ *  eaten row, or (PL-059) a lower bound listed in incomplete_nutrients? A day
+ *  unknown on EVERY eaten row is a gap and still incomplete. Read from the
+ *  eaten bucket through the shared rule (PL-061, incompleteNutrients.ts), so
+ *  Trends, Today and History cannot disagree. Pending and skipped rows are
+ *  irrelevant: the eaten bucket already leaves them out. */
+function isIncomplete(eaten: DayBucket, nutrient: TrendNutrient): boolean {
   const column = ENTRY_COLUMN[nutrient];
   if (!column) return false; // big four: NOT NULL, cannot be unknown
-  return entries.some(
-    (e) =>
-      e.date === date &&
-      !e.skipped_at &&
-      (!e.planned || !!e.confirmed_at) && // isEaten, inlined to keep this pure
-      (e[column] == null || !!e.incomplete_nutrients?.includes(column)),
-  );
+  const total = smallFourTotal(eaten, column);
+  return !total.known || total.atLeast;
 }
 
 /**
@@ -828,7 +821,7 @@ export function buildTrendSeries({
         // was null, which is "unknown", not "zero".
         value: unlogged ? null : raw,
         unlogged,
-        incomplete: unlogged ? false : hasUnknownRow(entries, date, nutrient),
+        incomplete: unlogged ? false : isIncomplete(eaten, nutrient),
         soFar: date === today,
       };
     });

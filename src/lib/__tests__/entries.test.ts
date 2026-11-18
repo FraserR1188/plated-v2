@@ -508,6 +508,7 @@ describe("getDaySummary", () => {
     sugar: 14,
     count: 2,
     lowerBound: [],
+    hasNullRow: [],
   };
 
   const expectedPending = {
@@ -521,6 +522,7 @@ describe("getDaySummary", () => {
     sugar: 10,
     count: 1,
     lowerBound: [],
+    hasNullRow: [],
   };
 
   describe("live day (now is the same calendar day as date)", () => {
@@ -547,6 +549,7 @@ describe("getDaySummary", () => {
         sugar: 24,
         count: 3,
         lowerBound: [],
+        hasNullRow: [],
       });
     });
   });

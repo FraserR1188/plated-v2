@@ -40,6 +40,7 @@ import { captureAndScanLabel } from "../lib/labelCapture";
 import { labelExtractionToFoodProduct, type ExtractSuccess } from "../lib/labelExtraction";
 import { LabelConfirmSheet, type LabelConfirmApply } from "../components/LabelConfirmSheet";
 import { KeyboardScreen } from "../components/KeyboardScreen";
+import { missingNutrientLines } from "../lib/incompleteNutrients";
 import { useStore } from "../store/useStore";
 import { Colors, Spacing, Radius, Typography, Fonts, withDefaultFont } from "../theme/tokens";
 import { FoodProduct, RootStackParamList } from "../types";
@@ -228,6 +229,13 @@ export function RecipeConfirmScreen() {
   };
 
   const includedCount = rows.filter((r) => r.included).length;
+  // PL-059: included, matched ingredients with no value for a small-four
+  // nutrient — the batch will log those as lower bounds ("≥").
+  const missingLines = missingNutrientLines(
+    rows
+      .filter((r) => r.included && r.product)
+      .map((r) => ({ name: r.name.trim() || r.product!.name, product: r.product })),
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={["bottom"]}>
@@ -282,6 +290,11 @@ export function RecipeConfirmScreen() {
         </ScrollView>
 
         <View style={styles.footer}>
+          {missingLines.map((line) => (
+            <Text key={line} style={styles.missingNote}>
+              {line}
+            </Text>
+          ))}
           <Pressable
             style={({ pressed }) => [styles.primaryBtn, pressed && { opacity: 0.88 }]}
             onPress={handleAddToBatch}
@@ -660,6 +673,12 @@ const styles = StyleSheet.create(
       paddingBottom: Spacing.sm,
       borderTopWidth: 1,
       borderTopColor: Colors.borderSub,
+      gap: Spacing.xs,
+    },
+    missingNote: {
+      fontSize: Typography.xs,
+      color: Colors.textMuted,
+      lineHeight: 17,
     },
     primaryBtn: {
       backgroundColor: Colors.green,

@@ -134,6 +134,8 @@ export function mealEntryToProduct(e: MealEntry): FoodProduct | null {
     image_path: e.image_path ?? undefined,
     custom_food_id: e.custom_food_id ?? undefined,
     source: e.source === "custom" ? "custom" : "off",
+    // PL-059: a lower bound rebuilt into a rate is still a lower bound.
+    incomplete_nutrients: e.incomplete_nutrients ?? undefined,
   };
 }
 

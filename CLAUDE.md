@@ -73,6 +73,7 @@ These are the source of most historical bugs. Each one is an invariant, not a pr
 - Tests cover what types can't: whether the _right_ value was computed (e.g. the correct local date), not merely a validly-typed one.
 - When fixing a bug, **write the failing test first**, then fix, then confirm green.
 - Component tests (RNTL) and E2E (Detox/Maestro) are deferred until after the UI redesign.
+- **Run vitest from the uppercase `C:\...` path.** On the primary dev machine, vitest fails to start (before any test runs, e.g. `TypeError: Cannot read properties of undefined (reading 'config')` at the first `describe`) when the working directory is the lowercase `c:\...` path. From `C:\...` (uppercase drive letter) it runs normally. CI is unaffected.
 
 ## Git hygiene
 

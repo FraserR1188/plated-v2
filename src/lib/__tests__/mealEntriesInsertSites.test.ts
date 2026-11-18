@@ -399,6 +399,21 @@ describe("meal_entries update sites (structural)", () => {
     }
   });
 
+  it("PL-059: no traceable meal_entries update payload names incomplete_nutrients — only an insert sets it", () => {
+    // updateEntry's payload is a spread of MealEntryPatch, which has no such
+    // key (see entryEdit.test.ts's @ts-expect-error). This covers the rest.
+    const file = path.join(SRC_ROOT, "store/useStore.ts");
+    const updateSitesAst = findMealEntriesUpdateSites(readNormalized(file), "store/useStore.ts");
+    expect(updateSitesAst.length).toBeGreaterThan(0);
+    for (const site of updateSitesAst) {
+      if (!site.literal) continue;
+      expect(
+        propertyNames(site.literal),
+        `${site.name} writes incomplete_nutrients on an UPDATE`,
+      ).not.toContain("incomplete_nutrients");
+    }
+  });
+
   it("no traceable meal_entries update payload outside updateEntry carries a nutrient key at all", () => {
     const file = path.join(SRC_ROOT, "store/useStore.ts");
     const text = readNormalized(file);

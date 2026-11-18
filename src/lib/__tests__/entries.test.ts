@@ -23,6 +23,7 @@ function makeDraft(overrides: Partial<EntryDraft> = {}): EntryDraft {
     salt: 1.25,
     fibre: 6,
     sugar: 4,
+    incomplete_nutrients: null,
     meal_type: "breakfast",
     eaten_at: "2026-07-27T08:00:00.000Z",
     eaten_at_estimated: false,
@@ -129,6 +130,19 @@ describe("applyEntries", () => {
     expect(row.salt).toBeNull();
     expect(row.fibre).toBeNull();
     expect(row.sugar).toBeNull();
+  });
+
+  it("PL-059: sends incomplete_nutrients under an explicit snake_case key — the list when flagged, NULL when not", async () => {
+    const capture = mockInsert([]);
+    await applyEntries([
+      makeDraft({ fibre: 4, incomplete_nutrients: ["salt", "fibre"] }),
+      makeDraft({ incomplete_nutrients: null }),
+    ]);
+
+    const rows = capture.rows as Record<string, unknown>[];
+    expect(rows[0].incomplete_nutrients).toEqual(["salt", "fibre"]);
+    // Present and NULL — not absent, not []. Complete is spelled NULL.
+    expect(rows[1]).toHaveProperty("incomplete_nutrients", null);
   });
 
   it("short-circuits on an empty draft list without calling supabase", async () => {
@@ -493,6 +507,7 @@ describe("getDaySummary", () => {
     fibre: 9,
     sugar: 14,
     count: 2,
+    lowerBound: [],
   };
 
   const expectedPending = {
@@ -505,6 +520,7 @@ describe("getDaySummary", () => {
     fibre: 6,
     sugar: 10,
     count: 1,
+    lowerBound: [],
   };
 
   describe("live day (now is the same calendar day as date)", () => {
@@ -530,6 +546,7 @@ describe("getDaySummary", () => {
         fibre: 15,
         sugar: 24,
         count: 3,
+        lowerBound: [],
       });
     });
   });

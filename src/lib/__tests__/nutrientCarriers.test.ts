@@ -19,6 +19,11 @@
 // walks src/ for every function declared to return EntryDraft / EntryDraft[]
 // and requires that set to equal this registry's EntryDraft entries exactly.
 // A new builder that isn't registered here fails CI instead of rotting.
+//
+// PL-059 adds a second dimension: incomplete_nutrients, the lower-bound
+// flag. Every carrier declares what it does with it — carries it, derives
+// it, or (non-EntryDraft only) has a stated reason it can't see one — and
+// an EntryDraft producer may not opt out.
 // ============================================================
 
 import { describe, it, expect } from "vitest";
@@ -42,6 +47,7 @@ import {
   MealComposition,
   MealCompositionItem,
   MealCompositionWithItems,
+  SmallFourKey,
 } from "../../types";
 
 const KEYS = [
@@ -56,6 +62,7 @@ const KEYS = [
 ] as const;
 type Key = (typeof KEYS)[number];
 type Nutrients = Record<Key, number | null>;
+type Flag = SmallFourKey[] | null;
 
 const SMALL: Key[] = ["sat_fat", "salt", "fibre", "sugar"];
 
@@ -82,7 +89,7 @@ function pick(o: Record<Key, number | null | undefined>): Nutrients {
   return out;
 }
 
-function makeEntry(n: Nutrients): MealEntry {
+function makeEntry(n: Nutrients, flag: Flag = null): MealEntry {
   return {
     id: "e1",
     user_id: "friend-1",
@@ -103,6 +110,7 @@ function makeEntry(n: Nutrients): MealEntry {
     salt: n.salt,
     fibre: n.fibre,
     sugar: n.sugar,
+    incomplete_nutrients: flag,
     eaten_at: "2026-09-01T12:00:00.000Z",
     planned: false,
     confirmed_at: null,
@@ -165,7 +173,7 @@ function makeComposition(
   };
 }
 
-function makeDraft(n: Nutrients): EntryDraft {
+function makeDraft(n: Nutrients, flag: Flag = null): EntryDraft {
   return {
     name: "Parity draft",
     brand: null,
@@ -178,6 +186,7 @@ function makeDraft(n: Nutrients): EntryDraft {
     salt: n.salt,
     fibre: n.fibre,
     sugar: n.sugar,
+    incomplete_nutrients: flag,
     meal_type: "lunch",
     eaten_at: "2026-09-05T12:00:00.000Z",
     eaten_at_estimated: true,
@@ -198,6 +207,16 @@ interface Carrier {
   /** output nutrient = input nutrient × ratio. */
   ratio: number;
   run: (n: Nutrients) => Nutrients;
+  /**
+   * PL-059. What it does with incomplete_nutrients:
+   *   carry   — fed the flag on its input, returns the flag on its output;
+   *   derives — computes it (draftsFromBatch: covered in compositions.test.ts);
+   *   none    — non-EntryDraft only, with the reason it can never see one.
+   */
+  flag:
+    | { carry: (f: Flag) => Flag | undefined }
+    | { derives: string }
+    | { none: string };
 }
 
 const TARGET_DAY = "2026-09-05";
@@ -214,6 +233,13 @@ const CARRIERS: Carrier[] = [
           { dayKey: TARGET_DAY, time: { hours: 12, minutes: 0 }, meal_type: "lunch" },
         )[0],
       ),
+    flag: {
+      carry: (f) =>
+        draftsFromFeedEntry(
+          { scope: "meal_section", entries: [makeEntry(SRC, f)], sourceName: "Parity" },
+          { dayKey: TARGET_DAY, time: { hours: 12, minutes: 0 }, meal_type: "lunch" },
+        )[0].incomplete_nutrients,
+    },
   },
   {
     // The single-ingredient friend copy, at a new portion: the friend's
@@ -229,12 +255,23 @@ const CARRIERS: Carrier[] = [
           SERVING_G * 2,
         )[0],
       ),
+    flag: {
+      carry: (f) =>
+        draftsForCopy(
+          { scope: "ingredient", entries: [makeEntry(SRC, f)], sourceName: "Parity" },
+          { dayKey: TARGET_DAY, time: { hours: 12, minutes: 0 }, meal_type: "lunch" },
+          SERVING_G * 2,
+        )[0].incomplete_nutrients,
+    },
   },
   {
     name: "draftsFromDay",
     returnsEntryDraft: true,
     ratio: 1,
     run: (n) => pick(draftsFromDay([makeEntry(n)], TARGET_DAY)[0]),
+    flag: {
+      carry: (f) => draftsFromDay([makeEntry(SRC, f)], TARGET_DAY)[0].incomplete_nutrients,
+    },
   },
   {
     name: "draftsForTarget",
@@ -248,12 +285,27 @@ const CARRIERS: Carrier[] = [
           time: { hours: 19, minutes: 0 },
         })[0],
       ),
+    flag: {
+      carry: (f) =>
+        draftsForTarget([makeEntry(SRC, f)], {
+          dayKey: TARGET_DAY,
+          meal_type: "dinner",
+          time: { hours: 19, minutes: 0 },
+        })[0].incomplete_nutrients,
+    },
   },
   {
     name: "draftsFromComposition",
     returnsEntryDraft: true,
     ratio: 1,
     run: (n) => pick(draftsFromComposition(makeComposition([makeItem(n)]), TARGET_DAY)[0]),
+    flag: {
+      carry: (f) =>
+        draftsFromComposition(
+          makeComposition([makeItem(SRC, { incomplete_nutrients: f })]),
+          TARGET_DAY,
+        )[0].incomplete_nutrients,
+    },
   },
   {
     // A one-ingredient batch whose portion IS its yield: scale 1, so the
@@ -273,18 +325,32 @@ const CARRIERS: Carrier[] = [
           new Date("2026-09-05T12:00:00"),
         ),
       ),
+    flag: {
+      derives:
+        "computed from which ingredients are NULL — see compositions.test.ts, 'small four — sum the known, flag the incomplete'",
+    },
   },
   {
     name: "scaleEntryDraftGrams",
     returnsEntryDraft: true,
     ratio: 2,
     run: (n) => pick(scaleEntryDraftGrams(makeDraft(n), SERVING_G, SERVING_G * 2)),
+    // A ratio keeps a lower bound a lower bound.
+    flag: {
+      carry: (f) =>
+        scaleEntryDraftGrams(makeDraft(SRC, f), SERVING_G, SERVING_G * 2).incomplete_nutrients,
+    },
   },
   {
     name: "scaleCompositionItem",
     returnsEntryDraft: false,
     ratio: 2,
     run: (n) => pick(scaleCompositionItem(makeItem(n), SERVING_G * 2)),
+    flag: {
+      carry: (f) =>
+        scaleCompositionItem(makeItem(SRC, { incomplete_nutrients: f }), SERVING_G * 2)
+          .incomplete_nutrients,
+    },
   },
   {
     // My Library row → FoodProduct: per-100g in, per-100g out, NULL → undefined.
@@ -321,6 +387,9 @@ const CARRIERS: Carrier[] = [
         sugar: p.sugar_per100,
       });
     },
+    flag: {
+      none: "a My Library row is a per-100g rate from a food, never a batch's partial sum",
+    },
   },
   {
     // Per-100g rebuild: output per-100g = per-serving × 100 / serving_g.
@@ -340,6 +409,11 @@ const CARRIERS: Carrier[] = [
         fibre: p.fibre_per100,
         sugar: p.sugar_per100,
       });
+    },
+    // FoodProduct spells "nothing incomplete" as absent (undefined), like its
+    // other optional fields; normalised to null here so the shared check reads.
+    flag: {
+      carry: (f) => mealEntryToProduct(makeEntry(SRC, f))!.incomplete_nutrients ?? null,
     },
   },
 ];
@@ -368,6 +442,35 @@ describe.each(CARRIERS)("nutrient carrier: $name", (c) => {
       expectCarried(c.run(src), src, c.ratio);
     },
   );
+});
+
+// ─── PL-059: the lower-bound flag ────────────────────────────
+
+describe.each(CARRIERS)("incomplete_nutrients carrier: $name", (c) => {
+  const flag = c.flag;
+  if ("carry" in flag) {
+    const carry = flag.carry;
+    it("carries a lower-bound flag through unchanged", () => {
+      expect(carry(["salt", "fibre"])).toEqual(["salt", "fibre"]);
+    });
+    it("carries 'nothing incomplete' as NULL — not undefined, not []", () => {
+      expect(carry(null)).toBeNull();
+    });
+  } else {
+    const why = "derives" in flag ? flag.derives : flag.none;
+    it("states why it doesn't carry the flag", () => {
+      expect(why.length).toBeGreaterThan(0);
+    });
+  }
+});
+
+describe("incomplete_nutrients registry", () => {
+  it("no EntryDraft producer opts out of the flag — each carries or derives it", () => {
+    const optedOut = CARRIERS.filter((c) => c.returnsEntryDraft && "none" in c.flag).map(
+      (c) => c.name,
+    );
+    expect(optedOut).toEqual([]);
+  });
 });
 
 // ─── Registry completeness ───────────────────────────────────

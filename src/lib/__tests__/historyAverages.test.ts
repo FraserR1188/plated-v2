@@ -29,6 +29,7 @@ function day(over: Partial<DayBucket> = {}): DayBucket {
     fibre: 25,
     sugar: 50,
     count: 5,
+    lowerBound: [],
     ...over,
   };
 }
@@ -46,23 +47,43 @@ describe("dailyAverages (PL-058)", () => {
       day({ fibre: null }), day({ fibre: null }), day({ fibre: null }), day({ fibre: null }),
     ];
     const avg = dailyAverages(days)!;
-    expect(avg.fibre).toEqual({ value: 20, knownDays: 3, loggedDays: 7 });
+    expect(avg.fibre).toEqual({ value: 20, knownDays: 3, loggedDays: 7, lowerBoundDays: 0 });
   });
 
   it("is null, not 0, when the nutrient is unknown on every logged day", () => {
     const avg = dailyAverages([day({ salt: null }), day({ salt: null })])!;
-    expect(avg.salt).toEqual({ value: null, knownDays: 0, loggedDays: 2 });
+    expect(avg.salt).toEqual({ value: null, knownDays: 0, loggedDays: 2, lowerBoundDays: 0 });
   });
 
   it("keeps a measured zero as a zero", () => {
     const avg = dailyAverages([day({ sugar: 0 }), day({ sugar: 10 })])!;
-    expect(avg.sugar).toEqual({ value: 5, knownDays: 2, loggedDays: 2 });
+    expect(avg.sugar).toEqual({ value: 5, knownDays: 2, loggedDays: 2, lowerBoundDays: 0 });
   });
 
   it("counts a partly-known day at its known sum, as Trends draws it", () => {
     // sumBucket gives 6 for a day with rows {6, unknown}: known, an undercount.
     const avg = dailyAverages([day({ satFat: 6 }), day({ satFat: 10 })])!;
     expect(avg.satFat.value).toBe(8);
+  });
+
+  it("PL-059: includes a day with a lower-bound entry in the average, and counts it as a minimum day", () => {
+    // Excluding it would understate the average further; it is included at
+    // its known sum and the average is marked as a minimum instead.
+    const avg = dailyAverages([
+      day({ fibre: 10, lowerBound: ["fibre"] }),
+      day({ fibre: 20 }),
+      day({ fibre: 30, lowerBound: ["salt", "fibre"] }),
+    ])!;
+    expect(avg.fibre).toEqual({ value: 20, knownDays: 3, loggedDays: 3, lowerBoundDays: 2 });
+    // salt is flagged on day 3 only; sat fat and sugar on none.
+    expect(avg.salt.lowerBoundDays).toBe(1);
+    expect(avg.satFat.lowerBoundDays).toBe(0);
+    expect(avg.sugar.lowerBoundDays).toBe(0);
+  });
+
+  it("PL-059: a day where the nutrient is unknown is left out, so it can't be a minimum day either", () => {
+    const avg = dailyAverages([day({ fibre: null, lowerBound: [] }), day({ fibre: 8 })])!;
+    expect(avg.fibre).toEqual({ value: 8, knownDays: 1, loggedDays: 2, lowerBoundDays: 0 });
   });
 
   it("averages the big four over every logged day and ignores unlogged days entirely", () => {

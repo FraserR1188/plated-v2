@@ -25,14 +25,14 @@
 // every "is this today" decision is testable across a DST boundary.
 // ============================================================
 
-import { MealEntry, Goals } from "../types";
+import { MealEntry, Goals, SmallFourKey } from "../types";
 import { GoalsState } from "../store/useStore";
 import { DayBucket, getDaySummary } from "./entries";
 import { dateKey, parseDateKey } from "./time";
 import { withThousands } from "./numberFormat";
 
 /** The eight tracked nutrients, keyed as DayBucket and Goals key them. */
-export type TrendNutrient = keyof Omit<DayBucket, "count">;
+export type TrendNutrient = keyof Omit<DayBucket, "count" | "lowerBound">;
 
 /** The ranges the toggle offers, in the order it offers them. */
 export const RANGE_DAYS = [7, 14] as const;
@@ -69,7 +69,7 @@ export const NULLABLE_NUTRIENTS: TrendNutrient[] = [
 
 /** The MealEntry column each bucket field sums, for the per-row completeness
  *  check. Only the nullable four need one; the big four cannot be unknown. */
-const ENTRY_COLUMN: Partial<Record<TrendNutrient, keyof MealEntry>> = {
+const ENTRY_COLUMN: Partial<Record<TrendNutrient, SmallFourKey>> = {
   satFat: "sat_fat",
   salt: "salt",
   fibre: "fibre",
@@ -179,9 +179,11 @@ export function toggleNutrient(
   return [...selected, nutrient];
 }
 
-/** Does any EATEN row on this day lack a value for this nutrient? Pending and
- *  skipped rows are irrelevant: they are not part of what was eaten, so their
- *  unknowns say nothing about the completeness of what was. */
+/** Does any EATEN row on this day lack a COMPLETE value for this nutrient —
+ *  NULL, or (PL-059) a lower bound listed in incomplete_nutrients? Either way
+ *  the day's sum is short of the truth. Pending and skipped rows are
+ *  irrelevant: they are not part of what was eaten, so their unknowns say
+ *  nothing about the completeness of what was. */
 function hasUnknownRow(
   entries: MealEntry[],
   date: string,
@@ -194,7 +196,7 @@ function hasUnknownRow(
       e.date === date &&
       !e.skipped_at &&
       (!e.planned || !!e.confirmed_at) && // isEaten, inlined to keep this pure
-      e[column] == null,
+      (e[column] == null || !!e.incomplete_nutrients?.includes(column)),
   );
 }
 

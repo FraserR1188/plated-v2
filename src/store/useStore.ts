@@ -1033,6 +1033,9 @@ export const useStore = create<AppState>((set, get) => ({
         fibre: entry.fibre ?? null,
         sugar: entry.sugar ?? null,
 
+        // PL-059. NULL = nothing incomplete; never [].
+        incomplete_nutrients: entry.incomplete_nutrients ?? null,
+
         barcode: entry.barcode ?? null,
         off_id: entry.off_id ?? null,
 

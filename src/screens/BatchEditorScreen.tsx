@@ -60,6 +60,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useStore, BatchDraftIngredient } from "../store/useStore";
 import { BatchIngredientInput, scaleCompositionItem } from "../lib/compositions";
 import { parseGrams } from "../lib/macros";
+import { missingNutrientLines } from "../lib/incompleteNutrients";
 import { KeyboardScreen } from "../components/KeyboardScreen";
 import {
   Colors,
@@ -381,6 +382,16 @@ export function BatchEditorScreen() {
               Ingredients {batchDraft.ingredients.length > 0 ? `(${batchDraft.ingredients.length})` : ""}
             </Text>
 
+            {/* PL-059: which ingredients will make a nutrient a lower bound
+                ("≥") when this batch is logged. */}
+            {missingNutrientLines(
+              batchDraft.ingredients.map((i) => ({ name: i.product.name, product: i.product })),
+            ).map((line) => (
+              <Text key={line} style={styles.missingNote}>
+                {line}
+              </Text>
+            ))}
+
             {batchDraft.ingredients.length === 0 ? (
               <Text style={styles.emptyIngredients}>
                 Add what went into the pot — search or pick from your library.
@@ -650,6 +661,11 @@ const styles = StyleSheet.create(
       borderColor: `${Colors.warning}40`,
       padding: Spacing.sm,
       gap: Spacing.xs,
+    },
+    missingNote: {
+      fontSize: Typography.xs,
+      color: Colors.textMuted,
+      lineHeight: 17,
     },
     confirmBannerText: {
       fontSize: Typography.xs,

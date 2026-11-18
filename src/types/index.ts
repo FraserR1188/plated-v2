@@ -77,6 +77,12 @@ export interface FoodProduct {
   serving_label?: string;
   serving_g?: number;
   source?: ProductSource; // undefined = OFF (legacy paths)
+  /**
+   * PL-059. Set only by mealEntryToProduct, from a logged entry's
+   * incomplete_nutrients: these small-four rates were rebuilt from a lower
+   * bound, so the edit screen shows "≥". Absent = nothing incomplete.
+   */
+  incomplete_nutrients?: SmallFourKey[];
   custom_food_id?: string; // set when source === "custom"
   unique_scans_n?: number; // OFF popularity — used as a ranking tiebreaker
 
@@ -126,6 +132,13 @@ export interface FoodProduct {
     userCorrected: boolean;
   };
 }
+
+/**
+ * The four nullable nutrients, by their meal_entries column name. The only
+ * values meal_entries.incomplete_nutrients may hold (its CHECK refuses
+ * anything else), always written in this order.
+ */
+export type SmallFourKey = "sat_fat" | "salt" | "fibre" | "sugar";
 
 /**
  * Mirrors public.meal_entries.
@@ -193,6 +206,17 @@ export interface MealEntry {
   fibre?: number | null;
   sugar?: number | null;
   sat_fat?: number | null;
+
+  /**
+   * PL-059. The small-four nutrients whose value above is a LOWER BOUND: a
+   * batch summed its known ingredients, and at least one had no value on
+   * record. NULL = nothing incomplete — never an empty array (the CHECK
+   * refuses one). A listed nutrient always has a value; an all-unknown one is
+   * NULL and not listed. Set at insert, carried by every copy and bundle
+   * snapshot, and never in MealEntryPatch: an edit can neither clear nor
+   * forge it. See 20261025120000_incomplete_nutrients.sql.
+   */
+  incomplete_nutrients?: SmallFourKey[] | null;
 
   /**
    * NOT NULL, default now(), as of migration 3. Required and non-null HERE.
@@ -281,6 +305,10 @@ export interface EntryDraft {
   salt: number | null;
   fibre: number | null;
   sugar: number | null;
+
+  /** Lower-bound nutrients — see MealEntry.incomplete_nutrients. REQUIRED
+   *  (null = none), so a builder that forgets it is a compile error. */
+  incomplete_nutrients: SmallFourKey[] | null;
 
   meal_type: MealType;
 
@@ -399,6 +427,10 @@ export interface MealCompositionItem {
   fibre: number | null;
   sugar: number | null;
 
+  /** Snapshot of MealEntry.incomplete_nutrients for a bundle item; always
+   *  NULL on a batch's own ingredient rows. */
+  incomplete_nutrients?: SmallFourKey[] | null;
+
   /**
    * REQUIRED for a bundle item (each independently loggable), NULL for a
    * batch item (only the merged output gets a section, chosen at apply) —
@@ -437,11 +469,13 @@ export interface MealCompositionWithItems extends MealComposition {
   items: MealCompositionItem[];
 }
 
-/** A new item, before the DB has given it an id or a parent. */
+/** A new item, before the DB has given it an id or a parent.
+ *  incomplete_nutrients is REQUIRED here (optional on the row type), so both
+ *  item builders — itemFromEntry and itemFromIngredient — must say it. */
 export type MealCompositionItemDraft = Omit<
   MealCompositionItem,
-  "id" | "composition_id" | "user_id"
->;
+  "id" | "composition_id" | "user_id" | "incomplete_nutrients"
+> & { incomplete_nutrients: SmallFourKey[] | null };
 
 // ─── Saved ingredients ───────────────────────────────────────
 

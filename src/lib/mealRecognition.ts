@@ -195,6 +195,9 @@ export function mealScanToFoodProduct(
     sugar_per100: result.per100g.sugar,
     serving_g: result.portion.grams,
     serving_label: result.portion.description,
+    // PL-060: an estimate, not Open Food Facts data. Explicit, because an
+    // absent source reads as OFF and ProductScreen would show OFF's notice.
+    source: "other",
     aiEstimate: {
       alternatives: corrected ? [] : result.dish.alternatives,
       confidence: result.confidence,

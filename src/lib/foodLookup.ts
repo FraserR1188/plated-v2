@@ -9,7 +9,7 @@
 import { supabase } from "./supabase";
 import { lookupBarcode } from "./openfoodfacts";
 import { useStore } from "../store/useStore";
-import { CustomFood, FoodProduct, MealEntry } from "../types";
+import { CustomFood, FoodProduct, MealEntry, ProductSource } from "../types";
 import { reportError } from "./reportError";
 
 // ─── Mapping ─────────────────────────────────────────────────
@@ -52,6 +52,34 @@ export function customFoodToProduct(cf: CustomFood): FoodProduct {
     // notice). Do NOT "fix" this to match the column name.
     image_path: cf.image_url ?? undefined,
   };
+}
+
+/**
+ * PL-060: which data-source notice a logged entry gets on the edit screen.
+ *
+ * It used to be `source === "custom" ? "custom" : "off"`, so a batch or AI
+ * photo entry said "Source: Open Food Facts (ODbL)". The fix ERRS TOWARD
+ * OFF, because the two mistakes aren't equal: a notice on non-OFF food is
+ * harmless, a missing one on OFF-derived food breaks ODbL §4.3 attribution.
+ * off_id can't decide alone — hosted data (2026-11-18) has NULL off_id rows
+ * in every source group, up to this week.
+ *
+ *   source "custom", or any custom_food_id → "custom" (no notice)
+ *   off_id set                             → "off"
+ *   "ai_photo", "batch"                    → "other" (no notice)
+ *   anything else — search, barcode, bundle, copied, legacy "manual",
+ *   values this client never wrote         → "off"
+ *
+ * "copied" rows lose the original source on copy, so a copy of an AI or
+ * batch entry still says OFF (PL-060 follow-up).
+ */
+export function productSourceForEntry(
+  e: Pick<MealEntry, "source" | "off_id" | "custom_food_id">,
+): ProductSource {
+  if (e.source === "custom" || e.custom_food_id != null) return "custom";
+  if (e.off_id != null) return "off";
+  if (e.source === "ai_photo" || e.source === "batch") return "other";
+  return "off";
 }
 
 /**
@@ -133,7 +161,7 @@ export function mealEntryToProduct(e: MealEntry): FoodProduct | null {
     image_url: e.image_url ?? undefined,
     image_path: e.image_path ?? undefined,
     custom_food_id: e.custom_food_id ?? undefined,
-    source: e.source === "custom" ? "custom" : "off",
+    source: productSourceForEntry(e),
     // PL-059: a lower bound rebuilt into a rate is still a lower bound.
     incomplete_nutrients: e.incomplete_nutrients ?? undefined,
   };

@@ -102,7 +102,7 @@ export const DATA_SOURCES: DataSource[] = [
 ];
 
 /**
- * FoodProduct.source is `"off" | "custom" | undefined` (src/types/index.ts)
+ * FoodProduct.source is `"off" | "custom" | "other" | undefined` (src/types/index.ts)
  * — `undefined` covers every OFF product resolved before source-tagging
  * existed ("undefined = OFF (legacy paths)"). An ABSENT value here means
  * Open Food Facts, not "unknown". This is the one place that convention is

@@ -48,12 +48,18 @@ import {
   MEAL_TYPES,
   MEAL_LABELS,
   MissingMacro,
+  SmallFourKey,
 } from "../types";
 import { getSignedImageUrl } from "../lib/customFoodImages";
 import { reportError } from "../lib/reportError";
 import { SourceNotice } from "../components/SourceNotice";
 import { buildEditPatch } from "../lib/entryEdit";
-import { atLeast, isLowerBound, lowerBoundNote } from "../lib/incompleteNutrients";
+import {
+  atLeast,
+  isLowerBound,
+  lowerBoundNote,
+  per100TileText,
+} from "../lib/incompleteNutrients";
 import { scanMealPhoto, mealScanToFoodProduct, MacroKey } from "../lib/mealRecognition";
 import {
   computeServingTotals,
@@ -103,6 +109,9 @@ type MacroMeta = {
   // from "we don't have this" — `get` above always coalesces to 0 and can't
   // make that distinction, it exists only to seed the editable TextInput.
   raw?: (p: FoodProduct) => number | undefined;
+  // PL-059: the small-four column this tile reads, so a lower-bound rate
+  // (incomplete_nutrients) shows "≥". Undefined on the big four.
+  column?: SmallFourKey;
 };
 
 const MACRO_META: MacroMeta[] = [
@@ -150,6 +159,7 @@ const MACRO_META: MacroMeta[] = [
     get: (p) => p.sat_fat_per100 ?? 0,
     set: (p, v) => ({ ...p, sat_fat_per100: v }),
     raw: (p) => p.sat_fat_per100,
+    column: "sat_fat",
   },
   {
     key: "salt",
@@ -159,6 +169,7 @@ const MACRO_META: MacroMeta[] = [
     get: (p) => p.salt_per100 ?? 0,
     set: (p, v) => ({ ...p, salt_per100: v }),
     raw: (p) => p.salt_per100,
+    column: "salt",
   },
   {
     key: "fibre",
@@ -168,6 +179,7 @@ const MACRO_META: MacroMeta[] = [
     get: (p) => p.fibre_per100 ?? 0,
     set: (p, v) => ({ ...p, fibre_per100: v }),
     raw: (p) => p.fibre_per100,
+    column: "fibre",
   },
   {
     key: "sugar",
@@ -177,6 +189,7 @@ const MACRO_META: MacroMeta[] = [
     get: (p) => p.sugar_per100 ?? 0,
     set: (p, v) => ({ ...p, sugar_per100: v }),
     raw: (p) => p.sugar_per100,
+    column: "sugar",
   },
 ];
 
@@ -1077,7 +1090,7 @@ export function ProductScreen() {
                     <Text style={styles.macroCellValMissing}>—</Text>
                   ) : (
                     <Text style={[styles.macroCellVal, { color: m.color }]}>
-                      {m.get(draft)}
+                      {per100TileText(m.get(draft), draft.incomplete_nutrients, m.column)}
                       <Text style={styles.macroCellUnit}> {m.unit}</Text>
                     </Text>
                   )}

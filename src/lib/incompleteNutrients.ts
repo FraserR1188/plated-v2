@@ -44,6 +44,20 @@ export function isLowerBound(
 }
 
 /**
+ * ProductScreen's read-only Per 100g tile value. A per-100g rate rebuilt from
+ * a lower bound (mealEntryToProduct on a flagged entry) is a lower bound too,
+ * so it gets the same "≥" as the Nutrition preview below it. `column` is the
+ * tile's small-four column; big-four tiles pass undefined and stay plain.
+ */
+export function per100TileText(
+  value: number,
+  flags: readonly SmallFourKey[] | null | undefined,
+  column: SmallFourKey | undefined,
+): string {
+  return atLeast(String(value), column != null && isLowerBound(flags, column));
+}
+
+/**
  * The one muted line under a flagged entry's nutrition, or null when nothing
  * is flagged. Column order, whatever order `flags` came in:
  *   ["fibre"]                 → "Some ingredients have no fibre data"

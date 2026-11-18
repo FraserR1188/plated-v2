@@ -90,18 +90,27 @@ describe("mealEntryToProduct", () => {
     expect(mealEntryToProduct(makeEntry({ serving_g: -5 }))).toBeNull();
   });
 
-  it("reconstructs per-100g values from the per-serving snapshot", () => {
-    // 250g at 437 kcal → 174.8 kcal/100g, rounded to 175.
+  it("reconstructs EXACT per-100g values from the per-serving snapshot — no rounding (PL-010)", () => {
+    // 250g at 437 kcal → 174.8 kcal/100g. It used to be rounded to 175, and
+    // the edit screen multiplied that back out to 437.5.
     const product = mealEntryToProduct(makeEntry())!;
     expect(product).not.toBeNull();
-    expect(product.cal_per100).toBe(175);
-    expect(product.protein_per100).toBe(5); // 12.5 / 250 * 100
-    expect(product.carbs_per100).toBe(24); // 60 / 250 * 100
-    expect(product.fat_per100).toBe(3.2); // 8 / 250 * 100
-    expect(product.sat_fat_per100).toBe(0.8);
-    expect(product.salt_per100).toBe(0.5); // toFixed(2)
-    expect(product.fibre_per100).toBe(2.4);
-    expect(product.sugar_per100).toBe(1.6);
+    expect(product.cal_per100).toBe((437 / 250) * 100);
+    expect(product.cal_per100).not.toBe(175);
+    expect(product.protein_per100).toBe((12.5 / 250) * 100);
+    expect(product.carbs_per100).toBe((60 / 250) * 100);
+    expect(product.fat_per100).toBe((8 / 250) * 100);
+    expect(product.sat_fat_per100).toBe((2 / 250) * 100);
+    expect(product.salt_per100).toBe((1.25 / 250) * 100);
+    expect(product.fibre_per100).toBe((6 / 250) * 100);
+    expect(product.sugar_per100).toBe((4 / 250) * 100);
+  });
+
+  it("PL-010 device chilli: 3.02 g salt at 713 g is 0.4236 g/100g, not 0.42", () => {
+    const product = mealEntryToProduct(makeEntry({ serving_g: 713, calories: 481, salt: 3.02 }))!;
+    expect(product.salt_per100).toBe((3.02 / 713) * 100);
+    expect(product.salt_per100).not.toBe(0.42);
+    expect(product.cal_per100).not.toBe(67);
   });
 
   it("preserves NULL small-macros as undefined, not zero, through the per-100g reconstruction", () => {

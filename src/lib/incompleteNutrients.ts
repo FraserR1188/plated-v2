@@ -160,13 +160,16 @@ export function averageNote(avg: KnownAverage): string | null {
  * a lower bound (mealEntryToProduct on a flagged entry) is a lower bound too,
  * so it gets the same "≥" as the Nutrition preview below it. `column` is the
  * tile's small-four column; big-four tiles pass undefined and stay plain.
+ * PL-010: the rate may be exact (an edit's rate is no longer rounded), so
+ * the tile rounds to `places` here, for display only.
  */
 export function per100TileText(
   value: number,
   flags: readonly SmallFourKey[] | null | undefined,
   column: SmallFourKey | undefined,
+  places: number,
 ): string {
-  return atLeast(String(value), column != null && isLowerBound(flags, column));
+  return atLeast(String(+value.toFixed(places)), column != null && isLowerBound(flags, column));
 }
 
 /**

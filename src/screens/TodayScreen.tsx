@@ -41,6 +41,7 @@ import { mealEntryToProduct } from "../lib/foodLookup";
 import { previewComposition, bundlesOnly } from "../lib/compositions";
 import { draftsFromDay, sharedMealType } from "../lib/entries";
 import { roundSalt } from "../lib/macros";
+import { smallFourBar } from "../lib/incompleteNutrients";
 import { dayHeaderInfo } from "../lib/dayHeader";
 import { buildDayStream, BAND_LABELS } from "../lib/dayStream";
 import { kjToKcal } from "../lib/energy";
@@ -804,15 +805,20 @@ function DayPage({
   });
 
   // towardGoal, not eaten+pending unconditionally — same settled-day gate as
-  // kcalTotal above. satFat/salt/fibre/sugar are nullable on the bucket
-  // (unknown vs zero — see DayBucket in lib/entries.ts); coalesced to 0 here
-  // at the display boundary, same convention the rest of the app reads
-  // nullable macros with.
+  // kcalTotal above.
   //
-  // PL-059: towardGoal.lowerBound lists the small four where a contributing
-  // entry is a lower bound (a batch with unknown ingredients); the macro
-  // bars below show those as "≥". An entry that is simply NULL still
-  // contributes nothing and reads as 0 here — that's PL-061, not this.
+  // PL-061: the small four go through smallFourBar (lib/incompleteNutrients),
+  // the rule Trends and History read too. Every contributing row NULL →
+  // consumed null: "—", no fill, no over-goal colour (it used to be `?? 0`
+  // and read "0 g"). Any row NULL or a flagged lower bound (PL-059) → the
+  // known sum, shown "≥". A NULL planned meal counts: plans count toward the
+  // goal, so its unknown makes the goal total a minimum too.
+  const satFatBar = smallFourBar(summary.towardGoal, "sat_fat", Math.round);
+  const fibreBar = smallFourBar(summary.towardGoal, "fibre", Math.round);
+  const sugarBar = smallFourBar(summary.towardGoal, "sugar", Math.round);
+  // Salt is the one sub-gram macro: 2dp, not whole grams.
+  const saltBar = smallFourBar(summary.towardGoal, "salt", roundSalt);
+
   const stripSegments = [
     {
       color: MacroColor.protein,
@@ -823,21 +829,22 @@ function DayPage({
       fraction: frac(summary.towardGoal.carbs, goals.carbs),
     },
     { color: MacroColor.fat, fraction: frac(summary.towardGoal.fat, goals.fat) },
+    // An unknown total has no fill (fraction 0), not a fill for "0 g".
     {
       color: MacroColor.satFat,
-      fraction: frac(summary.towardGoal.satFat ?? 0, goals.satFat),
+      fraction: frac(satFatBar.consumed ?? 0, goals.satFat),
     },
     {
       color: MacroColor.salt,
-      fraction: frac(summary.towardGoal.salt ?? 0, goals.salt),
+      fraction: frac(saltBar.consumed ?? 0, goals.salt),
     },
     {
       color: MacroColor.fibre,
-      fraction: frac(summary.towardGoal.fibre ?? 0, goals.fibre),
+      fraction: frac(fibreBar.consumed ?? 0, goals.fibre),
     },
     {
       color: MacroColor.sugar,
-      fraction: frac(summary.towardGoal.sugar ?? 0, goals.sugar),
+      fraction: frac(sugarBar.consumed ?? 0, goals.sugar),
     },
   ];
 
@@ -1067,27 +1074,27 @@ function DayPage({
                 compact
                 macro="satFat"
                 label="Sat fat"
-                consumed={Math.round(summary.towardGoal.satFat ?? 0)}
+                consumed={satFatBar.consumed}
                 goal={goals.satFat}
-                atLeast={summary.towardGoal.lowerBound.includes("sat_fat")}
+                atLeast={satFatBar.atLeast}
               />
             </View>
             <View style={styles.macroCol}>
               <MacroBar
                 compact
                 macro="fibre"
-                consumed={Math.round(summary.towardGoal.fibre ?? 0)}
+                consumed={fibreBar.consumed}
                 goal={goals.fibre}
-                atLeast={summary.towardGoal.lowerBound.includes("fibre")}
+                atLeast={fibreBar.atLeast}
               />
             </View>
             <View style={styles.macroCol}>
               <MacroBar
                 compact
                 macro="sugar"
-                consumed={Math.round(summary.towardGoal.sugar ?? 0)}
+                consumed={sugarBar.consumed}
                 goal={goals.sugar}
-                atLeast={summary.towardGoal.lowerBound.includes("sugar")}
+                atLeast={sugarBar.atLeast}
               />
             </View>
             {/* Salt is the one sub-gram macro: rounded to 2dp, not to a whole
@@ -1096,9 +1103,9 @@ function DayPage({
               <MacroBar
                 compact
                 macro="salt"
-                consumed={roundSalt(summary.towardGoal.salt ?? 0)}
+                consumed={saltBar.consumed}
                 goal={goals.salt}
-                atLeast={summary.towardGoal.lowerBound.includes("salt")}
+                atLeast={saltBar.atLeast}
                 unit="g"
               />
             </View>

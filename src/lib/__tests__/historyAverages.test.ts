@@ -16,6 +16,7 @@
 
 import { describe, it, expect } from "vitest";
 import { dailyAverages } from "../historyAverages";
+import { averageNote, averageText } from "../incompleteNutrients";
 import type { DayBucket } from "../entries";
 
 function day(over: Partial<DayBucket> = {}): DayBucket {
@@ -30,6 +31,7 @@ function day(over: Partial<DayBucket> = {}): DayBucket {
     sugar: 50,
     count: 5,
     lowerBound: [],
+    hasNullRow: [],
     ...over,
   };
 }
@@ -60,10 +62,26 @@ describe("dailyAverages (PL-058)", () => {
     expect(avg.sugar).toEqual({ value: 5, knownDays: 2, loggedDays: 2, lowerBoundDays: 0 });
   });
 
-  it("counts a partly-known day at its known sum, as Trends draws it", () => {
+  it("counts a partly-known day at its known sum, as Trends draws it — and as a minimum (PL-061)", () => {
     // sumBucket gives 6 for a day with rows {6, unknown}: known, an undercount.
-    const avg = dailyAverages([day({ satFat: 6 }), day({ satFat: 10 })])!;
-    expect(avg.satFat.value).toBe(8);
+    const avg = dailyAverages([day({ satFat: 6, hasNullRow: ["sat_fat"] }), day({ satFat: 10 })])!;
+    expect(avg.satFat).toEqual({ value: 8, knownDays: 2, loggedDays: 2, lowerBoundDays: 1 });
+    expect(averageText(avg.satFat)).toBe("≥ 8g");
+    expect(averageNote(avg.satFat)).toBe("1 of 2 days is a minimum");
+  });
+
+  it("PL-061: a partly-NULL day and a flagged day are each one minimum day, never two", () => {
+    const avg = dailyAverages([
+      day({ fibre: 10, hasNullRow: ["fibre"] }),
+      day({ fibre: 20, hasNullRow: ["fibre"], lowerBound: ["fibre"] }),
+      day({ fibre: 30 }),
+      day({ fibre: null, hasNullRow: ["fibre"] }),
+    ])!;
+    expect(avg.fibre).toEqual({ value: 20, knownDays: 3, loggedDays: 4, lowerBoundDays: 2 });
+    expect(averageText(avg.fibre)).toBe("≥ 20g");
+    expect(averageNote(avg.fibre)).toBe("3 of 4 days · 2 are minimums");
+    // A NULL row in fibre says nothing about salt.
+    expect(avg.salt.lowerBoundDays).toBe(0);
   });
 
   it("PL-059: includes a day with a lower-bound entry in the average, and counts it as a minimum day", () => {

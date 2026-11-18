@@ -28,7 +28,9 @@ const LIMIT_MACROS = new Set(["salt", "satFat", "sugar"]);
 type Props = {
   macro: string; // key into MacroColor — 'protein' | 'carbs' | 'fat' | etc.
   label?: string; // display name override, defaults to capitalised macro
-  consumed: number;
+  /** PL-061: null = unknown (every contributing row NULL). Shown "—",
+   *  muted, with no fill and no over-goal colour — never as 0. */
+  consumed: number | null;
   goal: number;
   unit?: string; // 'g' | 'mg' | 'kcal'
   compact?: boolean; // smaller variant for dense lists
@@ -47,8 +49,9 @@ export function MacroBar({
 }: Props) {
   const color = MacroColor[macro] ?? Colors.green;
   const trackColor = MacroColorSoft[macro] ?? `${Colors.green}18`;
-  const progress = goal > 0 ? Math.min(consumed / goal, 1) : 0;
-  const isOver = consumed > goal;
+  const unknown = consumed == null;
+  const progress = !unknown && goal > 0 ? Math.min(consumed / goal, 1) : 0;
+  const isOver = !unknown && consumed > goal;
   const showWarning = isOver && LIMIT_MACROS.has(macro);
   const displayLabel = label ?? macro.charAt(0).toUpperCase() + macro.slice(1);
 
@@ -79,10 +82,16 @@ export function MacroBar({
           <Text
             style={[
               styles.valueHighlight,
-              { color: showWarning ? Colors.coral : Colors.text },
+              {
+                color: unknown
+                  ? Colors.textMuted
+                  : showWarning
+                    ? Colors.coral
+                    : Colors.text,
+              },
             ]}
           >
-            {atLeast ? `≥ ${consumed}` : consumed}
+            {unknown ? "—" : atLeast ? `≥ ${consumed}` : consumed}
           </Text>
           <Text style={styles.valueMuted}>
             {" / "}

@@ -42,7 +42,7 @@ import {
   trendWindowDates,
 } from "../trends";
 import { getDaySummary } from "../entries";
-import { MealEntry, Goals } from "../../types";
+import { MealEntry, Goals, SmallFourKey } from "../../types";
 
 function makeEntry(overrides: Partial<MealEntry> = {}): MealEntry {
   return {
@@ -1438,5 +1438,104 @@ describe("nutrient selection", () => {
       goalsState: "loaded",
     });
     expect(series.map((s) => s.nutrient)).toEqual(["carbs", "calories"]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────
+// PL-061: "incomplete" now comes from the shared day-bucket rule
+// (incompleteNutrients.smallFourTotal) instead of a raw-entry scan. Trends'
+// output must not move. The scan it replaced is kept here VERBATIM as the
+// reference, and both are run over seeded random days that mix NULLs,
+// flags, real zeros, plans, confirmations and skips.
+// ────────────────────────────────────────────────────────────
+
+describe("PL-061: Trends' incomplete flag is unchanged by the shared helper", () => {
+  const COLUMN: Record<string, SmallFourKey> = {
+    satFat: "sat_fat",
+    salt: "salt",
+    fibre: "fibre",
+    sugar: "sugar",
+  };
+
+  // lib/trends.ts hasUnknownRow, as it was before PL-061.
+  function referenceIncomplete(entries: MealEntry[], date: string, nutrient: string): boolean {
+    const column = COLUMN[nutrient];
+    if (!column) return false;
+    return entries.some(
+      (e) =>
+        e.date === date &&
+        !e.skipped_at &&
+        (!e.planned || !!e.confirmed_at) &&
+        (e[column] == null || !!e.incomplete_nutrients?.includes(column)),
+    );
+  }
+
+  // mulberry32: deterministic, so a failure reproduces.
+  function rng(seed: number) {
+    return () => {
+      seed |= 0;
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  const NOW = noonLocal(2026, 9, 20);
+  const DATES = trendWindowDates(7, NOW);
+  const KEYS: SmallFourKey[] = ["sat_fat", "salt", "fibre", "sugar"];
+
+  it("matches the old raw-entry scan on 500 random windows, every small-four nutrient", () => {
+    const r = rng(61);
+    const pick = <T,>(xs: T[]) => xs[Math.floor(r() * xs.length)];
+    let compared = 0;
+    let flagged = 0;
+
+    for (let w = 0; w < 500; w++) {
+      const entries: MealEntry[] = [];
+      for (const date of DATES) {
+        const n = Math.floor(r() * 4); // 0 rows = an unlogged day
+        for (let i = 0; i < n; i++) {
+          const planned = r() < 0.3;
+          const flags = KEYS.filter(() => r() < 0.15);
+          entries.push(
+            makeEntry({
+              id: `${w}-${date}-${i}`,
+              date,
+              sat_fat: pick([null, 0, 2.5]),
+              salt: pick([null, 0, 0.4]),
+              fibre: pick([null, 0, 3]),
+              sugar: pick([null, 0, 7]),
+              incomplete_nutrients: flags.length ? flags : null,
+              planned,
+              confirmed_at: planned && r() < 0.5 ? `${date}T20:00:00.000Z` : null,
+              skipped_at: r() < 0.1 ? `${date}T21:00:00.000Z` : null,
+            }),
+          );
+        }
+      }
+
+      const series = buildTrendSeries({
+        entries,
+        nutrients: ["satFat", "salt", "fibre", "sugar"],
+        range: 7,
+        now: NOW,
+        goals: GOALS,
+        goalsState: "loaded",
+      });
+      for (const s of series) {
+        for (const p of s.points) {
+          const expected = p.unlogged ? false : referenceIncomplete(entries, p.date, s.nutrient);
+          expect(p.incomplete, `window ${w} ${p.date} ${s.nutrient}`).toBe(expected);
+          compared++;
+          if (expected) flagged++;
+        }
+      }
+    }
+
+    // The comparison really exercised both answers.
+    expect(compared).toBe(500 * 7 * 4);
+    expect(flagged).toBeGreaterThan(1000);
+    expect(compared - flagged).toBeGreaterThan(1000);
   });
 });

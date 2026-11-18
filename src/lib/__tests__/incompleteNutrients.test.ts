@@ -383,3 +383,51 @@ describe("smallFourBar — Today's small-four bars and strip (PL-061)", () => {
     expect(bar).toEqual({ consumed: 6, atLeast: true, text: "≥ 6" });
   });
 });
+
+// ─── PL-061 device fix: a day with NO contributing entries is a known 0 ──
+//
+// Device pass: an empty day showed "—" for sat fat, fibre, sugar and salt
+// while protein, carbs and fat showed 0. sumBucket leaves the small four
+// null when nothing contributed, and the shared rule read that null as
+// "unknown". No entries is a known zero intake. "—" needs at least one
+// contributing entry, every one of them NULL for that nutrient.
+
+describe("PL-061: zero contributing entries → 0, plain, never —", () => {
+  const NOW = new Date(2026, 9, 25, 20, 0);
+  const KEYS = ["sat_fat", "salt", "fibre", "sugar"] as const;
+
+  it("an empty day: every small-four bar reads 0, like the big four", () => {
+    const empty = getDaySummary([], "2026-10-25", NOW).towardGoal;
+    for (const k of KEYS) {
+      expect(smallFourTotal(empty, k), k).toEqual({ known: true, value: 0, atLeast: false });
+      expect(smallFourBar(empty, k, k === "salt" ? roundSalt : Math.round), k).toEqual({
+        consumed: 0,
+        atLeast: false,
+        text: "0",
+      });
+    }
+  });
+
+  it("entries that don't contribute (skipped, another day) leave the day at 0", () => {
+    const rows = [
+      entry({ id: "s", fibre: null, skipped_at: "2026-10-25T09:00:00.000Z" }),
+      entry({ id: "y", date: "2026-10-24", fibre: null }),
+    ];
+    const b = getDaySummary(rows, "2026-10-25", NOW).towardGoal;
+    expect(smallFourBar(b, "fibre", Math.round)).toEqual({ consumed: 0, atLeast: false, text: "0" });
+  });
+
+  it("a settled day whose only row is an unconfirmed NULL plan reads 0: the plan never happened", () => {
+    const plan = entry({ id: "p", planned: true, eaten_at: "2026-10-25T21:30:00.000Z", fibre: null });
+    const settled = getDaySummary([plan], "2026-10-25", new Date(2026, 9, 26, 9, 0)).towardGoal;
+    expect(smallFourBar(settled, "fibre", Math.round)).toEqual({ consumed: 0, atLeast: false, text: "0" });
+    // While the day is live the plan counts toward the goal, and its NULL is unknown.
+    const live = getDaySummary([plan], "2026-10-25", NOW).towardGoal;
+    expect(smallFourBar(live, "fibre", Math.round)).toEqual({ consumed: null, atLeast: false, text: "—" });
+  });
+
+  it("one contributing entry, NULL for the nutrient, is still —", () => {
+    const b = getDaySummary([entry({ fibre: null })], "2026-10-25", NOW).towardGoal;
+    expect(smallFourBar(b, "fibre", Math.round).text).toBe("—");
+  });
+});

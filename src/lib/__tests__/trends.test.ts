@@ -1539,3 +1539,21 @@ describe("PL-061: Trends' incomplete flag is unchanged by the shared helper", ()
     expect(compared - flagged).toBeGreaterThan(1000);
   });
 });
+
+describe("PL-061: an empty day in Trends is a gap, never hollow", () => {
+  it("unlogged, no value, not incomplete, for every small-four nutrient", () => {
+    const NOW = noonLocal(2026, 9, 20);
+    const series = buildTrendSeries({
+      entries: [makeEntry({ id: "a", date: "2026-09-18", fibre: null })],
+      nutrients: ["satFat", "salt", "fibre", "sugar"],
+      range: 7,
+      now: NOW,
+      goals: GOALS,
+      goalsState: "loaded",
+    });
+    for (const s of series) {
+      const empty = s.points.find((p) => p.date === "2026-09-19")!;
+      expect(empty, s.nutrient).toMatchObject({ unlogged: true, value: null, incomplete: false });
+    }
+  });
+});

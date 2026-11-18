@@ -41,7 +41,12 @@
 import { preflight, json, fail } from "../_shared/cors.ts";
 import { getCallerId, adminClient } from "../_shared/auth.ts";
 import { getValidToken } from "../_shared/whoopToken.ts";
-import { whoopGet, sleep, WHOOP_PAGE_LIMIT } from "../_shared/whoop.ts";
+import {
+  whoopGet,
+  sleep,
+  WHOOP_PAGE_LIMIT,
+  normalizeWhoopOffset,
+} from "../_shared/whoop.ts";
 
 const DEFAULT_WINDOW_DAYS = 7;
 const MAX_WINDOW_DAYS = 30;
@@ -153,7 +158,10 @@ function mapCycle(userId: string, c: WhoopCycle) {
     id: c.id,
     start: c.start,
     end: c.end ?? null, // null = IN PROGRESS. Store it: today's meals need it.
-    timezone_offset: c.timezone_offset ?? null,
+    timezone_offset: normalizeWhoopOffset(
+      c.timezone_offset,
+      `cycle ${c.id}`,
+    ),
     score_state: c.score_state ?? null,
     strain: num(c.score?.strain),
     kilojoule: num(c.score?.kilojoule),
@@ -172,7 +180,10 @@ function mapSleep(userId: string, s: WhoopSleep) {
     id: s.id,
     start: s.start,
     end: s.end,
-    timezone_offset: s.timezone_offset ?? null,
+    timezone_offset: normalizeWhoopOffset(
+      s.timezone_offset,
+      `sleep ${s.id}`,
+    ),
     nap: s.nap ?? false,
     score_state: s.score_state ?? null,
     total_in_bed_time_milli: int(stages?.total_in_bed_time_milli),
@@ -221,7 +232,10 @@ function mapWorkout(userId: string, w: WhoopWorkout) {
     id: w.id,
     start: w.start,
     end: w.end,
-    timezone_offset: w.timezone_offset ?? null,
+    timezone_offset: normalizeWhoopOffset(
+      w.timezone_offset,
+      `workout ${w.id}`,
+    ),
     sport_name: w.sport_name ?? null,
     score_state: w.score_state ?? null,
     strain: num(w.score?.strain),

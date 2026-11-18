@@ -7,12 +7,13 @@ import { describe, it, expect, beforeAll } from "vitest";
 // before the module is even imported — hence the dynamic import in
 // beforeAll rather than a static `import` at the top.
 let isFatalTokenFailure: (status: number, body: string) => boolean;
+let normalizeWhoopOffset: (raw: unknown, context: string) => string | null;
 
 beforeAll(async () => {
   (globalThis as unknown as { Deno: { env: { get: () => undefined } } }).Deno = {
     env: { get: () => undefined },
   };
-  ({ isFatalTokenFailure } = await import("../whoop.ts"));
+  ({ isFatalTokenFailure, normalizeWhoopOffset } = await import("../whoop.ts"));
 });
 
 describe("isFatalTokenFailure", () => {
@@ -76,5 +77,29 @@ describe("isFatalTokenFailure", () => {
     expect(isFatalTokenFailure(403, JSON.stringify({ error: "access_denied" }))).toBe(
       false,
     );
+  });
+});
+
+describe("normalizeWhoopOffset (PL-063)", () => {
+  it("maps WHOOP's UTC 'Z' to '+00:00' — the winter-long blank Today panel", () => {
+    expect(normalizeWhoopOffset("Z", "cycle 1")).toBe("+00:00");
+  });
+
+  it("passes BST and other fixed offsets through untouched", () => {
+    expect(normalizeWhoopOffset("+01:00", "cycle 1")).toBe("+01:00");
+    expect(normalizeWhoopOffset("+02:00", "cycle 1")).toBe("+02:00");
+    expect(normalizeWhoopOffset("-05:30", "cycle 1")).toBe("-05:30");
+    expect(normalizeWhoopOffset("+01:00:30", "cycle 1")).toBe("+01:00:30");
+  });
+
+  it("keeps absent as NULL, not a guessed '+00:00'", () => {
+    expect(normalizeWhoopOffset(undefined, "cycle 1")).toBeNull();
+    expect(normalizeWhoopOffset(null, "cycle 1")).toBeNull();
+  });
+
+  it("writes NULL for an unrecognised shape rather than guessing", () => {
+    expect(normalizeWhoopOffset("Europe/London", "cycle 1")).toBeNull();
+    expect(normalizeWhoopOffset("+01", "cycle 1")).toBeNull();
+    expect(normalizeWhoopOffset("z", "cycle 1")).toBeNull();
   });
 });

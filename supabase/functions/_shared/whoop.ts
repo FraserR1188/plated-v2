@@ -434,5 +434,37 @@ export async function whoopGet<T>(
   }
 }
 
+// ────────────────────────────────────────────────────────────
+// timezone_offset normalisation
+// ────────────────────────────────────────────────────────────
+
+/**
+ * WHOOP sends `timezone_offset` as ISO-8601: '+01:00' in BST, but 'Z' —
+ * not '+00:00' — whenever the user is on UTC. 'Z' is not Postgres
+ * interval syntax (`'Z'::interval` raises 22007), and
+ * biometric_periods_resolved only computes local_date for a ±HH:MM offset,
+ * so every WHOOP row written from 24 Oct 2026 (UK clocks back) had
+ * local_date NULL and the Today panel showed "–" all winter (PL-063).
+ *
+ * Same fix as health-connect-ingest/mapping.ts normalizeZoneOffsetId:
+ * map 'Z' to '+00:00' at ingest, pass a valid ±HH:MM(:SS) through, and
+ * write NULL (logged) for anything else rather than guess. timezone_offset
+ * is labelling-only; `raw` keeps WHOOP's original value either way.
+ */
+const FIXED_OFFSET_SHAPE = /^[+-]\d{2}:\d{2}(:\d{2})?$/;
+
+export function normalizeWhoopOffset(
+  raw: unknown,
+  context: string,
+): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (raw === "Z") return "+00:00";
+  if (typeof raw === "string" && FIXED_OFFSET_SHAPE.test(raw)) return raw;
+  console.error(
+    `whoop-sync: unrecognised timezone_offset ${JSON.stringify(raw)} (${context}) — written as NULL`,
+  );
+  return null;
+}
+
 export const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));

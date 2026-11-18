@@ -150,6 +150,14 @@ function fatalOAuthErrorField(body: string): boolean | null {
  * Not     — everything else. A 400/403 we don't recognise, a 429, any 5xx,
  *           and every network-level failure.
  *
+ * `invalid_request` is deliberately NOT fatal, even though WHOOP uses it for
+ * a dead refresh token: MEASURED 2026-11-18 (PL-064), a token unused since
+ * 2026-09-19 got `400 {"error":"invalid_request", ...}`, not invalid_grant,
+ * while the same request shape refreshed another account fine. A genuine
+ * malformed-request bug on our side returns the same code, and treating it
+ * as fatal would revoke every user at once. The seven-day give-up rule in
+ * whoopToken.ts (refreshGivenUp) handles the dead-token case instead.
+ *
  * The body is normally JSON, so the `error` field is checked structurally
  * first. If it isn't JSON, or has no `error` field, that's a WHOOP response
  * shape we haven't seen — fall back to a raw substring check rather than

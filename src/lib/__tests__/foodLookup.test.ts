@@ -5,6 +5,7 @@ import {
   customFoodToProduct,
 } from "../foodLookup";
 import { MealEntry, CustomFood } from "../../types";
+import { isOpenFoodFactsSourced } from "../../content/attributions";
 import { supabase } from "../supabase";
 import { useStore } from "../../store/useStore";
 
@@ -143,9 +144,57 @@ describe("mealEntryToProduct", () => {
     expect(product.source).toBe("custom");
   });
 
-  it("maps every non-custom source to 'off'", () => {
-    const product = mealEntryToProduct(makeEntry({ source: "barcode" }))!;
-    expect(product.source).toBe("off");
+});
+
+// ─── PL-060: the edit screen's source notice ───────────────────────────
+//
+// mealEntryToProduct mapped every non-custom source to "off", so editing a
+// batch or AI-photo entry said "Source: Open Food Facts (ODbL)". The two
+// mistakes are not equal: an OFF notice on non-OFF food is harmless, but
+// losing it on OFF-derived food breaks ODbL §4.3 attribution. Hosted data
+// (2026-11-18) has NULL off_id rows in every source group, up to this week,
+// so off_id alone can't decide. The rule errs toward OFF:
+//   custom, or any custom_food_id        → custom (no notice)
+//   off_id set                           → OFF
+//   ai_photo, batch                      → non-OFF (no notice)
+//   anything else (search, barcode, bundle, copied, legacy) → OFF
+
+describe("PL-060: which logged entries keep the Open Food Facts notice", () => {
+  const notice = (over: Partial<MealEntry>) =>
+    isOpenFoodFactsSourced(mealEntryToProduct(makeEntry(over))!.source);
+
+  it("non-OFF entries show no notice: ai_photo, batch, custom, custom-linked", () => {
+    expect(notice({ source: "ai_photo" })).toBe(false);
+    expect(notice({ source: "batch" })).toBe(false);
+    expect(notice({ source: "custom", custom_food_id: "cf-1" })).toBe(false);
+    expect(notice({ source: "custom" })).toBe(false);
+    // 45 hosted copied rows carry a custom_food_id: a copy of a custom food.
+    expect(notice({ source: "copied", custom_food_id: "cf-1" })).toBe(false);
+    expect(notice({ source: "bundle", custom_food_id: "cf-1", barcode: "5000000000001" })).toBe(false);
+  });
+
+  it("the non-OFF value is explicit — never undefined, which means OFF", () => {
+    expect(mealEntryToProduct(makeEntry({ source: "ai_photo" }))!.source).toBe("other");
+    expect(mealEntryToProduct(makeEntry({ source: "batch" }))!.source).toBe("other");
+    expect(mealEntryToProduct(makeEntry({ source: "custom" }))!.source).toBe("custom");
+  });
+
+  it("OFF retention: every row that may carry OFF data keeps the notice", () => {
+    // off_id set: OFF, whatever the source says.
+    for (const source of ["barcode", "search", "bundle", "copied"]) {
+      expect(notice({ source, off_id: "3017620422003" }), `${source} + off_id`).toBe(true);
+    }
+    // No off_id and no custom link: kept as OFF (79 barcode, 29 search,
+    // 2 bundle, 65 copied hosted rows), because removing attribution from
+    // OFF data is the mistake that matters.
+    expect(notice({ source: "barcode", barcode: "5000000000001" })).toBe(true);
+    expect(notice({ source: "search" })).toBe(true);
+    expect(notice({ source: "bundle" })).toBe(true);
+    expect(notice({ source: "copied" })).toBe(true);
+    expect(notice({ source: "copied", barcode: "5000000000001" })).toBe(true);
+    // A source this client never writes (legacy "manual", or anything older).
+    expect(notice({ source: "manual" })).toBe(true);
+    expect(notice({ source: "something-older" })).toBe(true);
   });
 });
 

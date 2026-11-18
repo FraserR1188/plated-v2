@@ -329,9 +329,8 @@ export function TodayScreen() {
   };
 
   // "Ate it" on a single overdue-planned row. Goes STRAIGHT to the store's
-  // confirm action — deliberately NOT through ProductScreen, whose edit path
-  // recomputes every macro from a lossy round-trip. confirmEntries writes only
-  // confirmed_at, so calories can't drift.
+  // confirm action — deliberately NOT through ProductScreen: confirmEntries
+  // writes only confirmed_at, so nothing else on the row can change.
   const handleConfirmOne = (entry: MealEntry) => {
     void confirmEntries([entry.id]);
   };

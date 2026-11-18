@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { scanMealPhoto, mealScanToFoodProduct, type MealScanSuccess } from "../mealRecognition";
+import { isOpenFoodFactsSourced } from "../../content/attributions";
 import { supabase } from "../supabase";
 import {
   VALID_SUCCESS,
@@ -241,5 +242,16 @@ describe("scanMealPhoto — transport failure", () => {
 
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error).toBe("network_error");
+  });
+});
+
+describe("PL-060: a fresh AI photo estimate is not Open Food Facts data", () => {
+  it("carries the non-OFF source, so ProductScreen shows no OFF notice", () => {
+    const product = mealScanToFoodProduct(VALID_SUCCESS, "sourceBytes");
+    expect(product.source).toBe("other");
+    expect(isOpenFoodFactsSourced(product.source)).toBe(false);
+    // A corrected re-estimate is still an estimate.
+    const corrected = mealScanToFoodProduct(VALID_SUCCESS, "sourceBytes", true);
+    expect(isOpenFoodFactsSourced(corrected.source)).toBe(false);
   });
 });

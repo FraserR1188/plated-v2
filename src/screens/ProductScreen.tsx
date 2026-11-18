@@ -53,7 +53,7 @@ import {
 import { getSignedImageUrl } from "../lib/customFoodImages";
 import { reportError } from "../lib/reportError";
 import { SourceNotice } from "../components/SourceNotice";
-import { buildEditPatch } from "../lib/entryEdit";
+import { buildEditPatch, editPreviewTotals } from "../lib/entryEdit";
 import {
   atLeast,
   isLowerBound,
@@ -65,6 +65,8 @@ import {
   computeServingTotals,
   needsManualEntry,
   canSubmitProduct,
+  per100DisplayPlaces,
+  servingMacrosFromRate,
 } from "../lib/macros";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "Product">;
@@ -458,7 +460,6 @@ export function ProductScreen() {
   const submittingRef = useRef(false);
 
   const g = parseFloat(serving) || 0;
-  const f = g / 100;
 
   // Phase 2 guard: energy + protein + carbs + fat all zero ⇒ no usable
   // nutrition (see lib/macros.ts needsManualEntry — a genuine OFF
@@ -487,7 +488,14 @@ export function ProductScreen() {
   // the total recompute" is testable without RNTL, and so salt goes through
   // roundSalt here too — this card used to round it with .toFixed(2)
   // instead, the exact float-noise problem roundSalt exists to fix.
-  const preview = computeServingTotals(draft, g);
+  //
+  // PL-010: an EDIT previews the row's own stored values, scaled by
+  // grams / stored grams (verbatim when unchanged) — exactly what
+  // buildEditPatch will write. Not the per-100g rate: the device-pass chilli
+  // (481 kcal, salt 3.02) previewed 478 / 2.99 through it, untouched.
+  const editPreview =
+    isEditing && originalEntry ? editPreviewTotals(originalEntry, g) : null;
+  const preview = editPreview ?? computeServingTotals(draft, g);
 
   const onDateChange = (picked: Date) => {
     setPickerMode(null);
@@ -535,17 +543,10 @@ export function ProductScreen() {
       eatenAt,
     );
 
-    // PL-010, now narrowed by PL-037. On an EDIT, macros are recomputed from
-    // `draft`, which mealEntryToProduct() reconstructed by DIVIDING the stored
-    // per-serving values and rounding (Math.round / toFixed). The round-trip
-    // does not commute: a 250g entry at 437 kcal comes back as 175 kcal/100g
-    // and multiplies out to 437.5 — bounded by half a rounding step × g/100,
-    // except that a sub-half-step trace becomes exactly 0.
-    //
-    // The edit branch no longer uses the `macros` object below: buildEditPatch
-    // recomputes macros ONLY when the serving actually changed, so moving a
-    // meal's slot or time leaves them untouched. A serving change still snaps
-    // once onto the grid, as it always did.
+    // The edit branch doesn't use the `macros` object below. buildEditPatch
+    // sends macros ONLY when the serving actually changed (PL-037), and then
+    // as the row's stored values × (new g / stored g) — never through the
+    // per-100g rate (PL-010; the rate is for display).
     //
     // (This is also why createBundleFromEntries snapshots MealEntry →
     // meal_composition_items directly and never routes through FoodProduct.)
@@ -555,16 +556,11 @@ export function ProductScreen() {
     // fabricated 0. That 0 would be indistinguishable from a real zero the
     // instant it lands in meal_entries, permanently — see the WRITING rule
     // on MealEntry in src/types/index.ts.
+    //
+    // servingMacrosFromRate (lib/macros.ts) is the unrounded rate × g/100:
+    // the Per 100g tiles round only for display (PL-010).
     const macros = {
-      serving_g: g,
-      calories: draft.cal_per100 * f,
-      protein: draft.protein_per100 * f,
-      carbs: draft.carbs_per100 * f,
-      fat: draft.fat_per100 * f,
-      sat_fat: draft.sat_fat_per100 != null ? draft.sat_fat_per100 * f : null,
-      salt: draft.salt_per100 != null ? draft.salt_per100 * f : null,
-      fibre: draft.fibre_per100 != null ? draft.fibre_per100 * f : null,
-      sugar: draft.sugar_per100 != null ? draft.sugar_per100 * f : null,
+      ...servingMacrosFromRate(draft, g),
       eaten_at,
     };
 
@@ -592,7 +588,6 @@ export function ProductScreen() {
         servingText: serving,
         eatenAt: eaten_at,
         timeTouched,
-        product: draft,
       });
 
       // Nothing changed: write nothing, just leave.
@@ -1090,7 +1085,12 @@ export function ProductScreen() {
                     <Text style={styles.macroCellValMissing}>—</Text>
                   ) : (
                     <Text style={[styles.macroCellVal, { color: m.color }]}>
-                      {per100TileText(m.get(draft), draft.incomplete_nutrients, m.column)}
+                      {per100TileText(
+                        m.get(draft),
+                        draft.incomplete_nutrients,
+                        m.column,
+                        per100DisplayPlaces(m.key),
+                      )}
                       <Text style={styles.macroCellUnit}> {m.unit}</Text>
                     </Text>
                   )}

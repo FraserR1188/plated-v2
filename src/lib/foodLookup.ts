@@ -9,7 +9,7 @@
 import { supabase } from "./supabase";
 import { lookupBarcode } from "./openfoodfacts";
 import { useStore } from "../store/useStore";
-import { CustomFood, FoodProduct, MealEntry } from "../types";
+import { CustomFood, FoodProduct, MealEntry, ProductSource } from "../types";
 import { reportError } from "./reportError";
 
 // ─── Mapping ─────────────────────────────────────────────────
@@ -55,6 +55,34 @@ export function customFoodToProduct(cf: CustomFood): FoodProduct {
 }
 
 /**
+ * PL-060: which data-source notice a logged entry gets on the edit screen.
+ *
+ * It used to be `source === "custom" ? "custom" : "off"`, so a batch or AI
+ * photo entry said "Source: Open Food Facts (ODbL)". The fix ERRS TOWARD
+ * OFF, because the two mistakes aren't equal: a notice on non-OFF food is
+ * harmless, a missing one on OFF-derived food breaks ODbL §4.3 attribution.
+ * off_id can't decide alone — hosted data (2026-11-18) has NULL off_id rows
+ * in every source group, up to this week.
+ *
+ *   source "custom", or any custom_food_id → "custom" (no notice)
+ *   off_id set                             → "off"
+ *   "ai_photo", "batch"                    → "other" (no notice)
+ *   anything else — search, barcode, bundle, copied, legacy "manual",
+ *   values this client never wrote         → "off"
+ *
+ * "copied" rows lose the original source on copy, so a copy of an AI or
+ * batch entry still says OFF (PL-060 follow-up).
+ */
+export function productSourceForEntry(
+  e: Pick<MealEntry, "source" | "off_id" | "custom_food_id">,
+): ProductSource {
+  if (e.source === "custom" || e.custom_food_id != null) return "custom";
+  if (e.off_id != null) return "off";
+  if (e.source === "ai_photo" || e.source === "batch") return "other";
+  return "off";
+}
+
+/**
  * Rebuild per-100g values from a logged entry, so ProductScreen can edit it.
  *
  * ⚠ RETURNS NULL WHEN serving_g IS MISSING. Handle it.
@@ -73,22 +101,21 @@ export function customFoodToProduct(cf: CustomFood): FoodProduct {
  * cannot be un-multiplied. So it refuses, and the caller offers to delete and
  * re-add instead.
  *
- * ─── AND EVEN WHEN serving_g IS VALID, THIS IS LOSSY ───
+ * ─── THE RATE IS FOR DISPLAY. NEVER SCALE A LOGGED ENTRY THROUGH IT ───
  *
- * Math.round() and toFixed() below mean the round-trip does not commute. A 250g
- * entry at 437 kcal → 175 kcal/100g → 437.5 kcal. It happens ONCE, not on every
- * edit: the first save snaps the rate onto the rounding grid, and rounding an
- * on-grid value returns the same value, so later saves rewrite identical
- * numbers (measured). The error is bounded by half a rounding step × g/100 per
- * macro, except that a rate below half a step becomes exactly 0. It only
- * affects entries whose rate wasn't already on the grid when logged — OFF
- * values are pre-rounded to it (openfoodfacts.ts parseProduct), so OFF logs
- * don't move. ProductScreen.handleSubmit still rebuilds ALL macros from the
- * product even when only the time changed.
+ * PL-010: this used to round the rate (Math.round / toFixed), and the edit
+ * screen multiplied that back out — a 250 g entry at 437 kcal became 175
+ * kcal/100g and then 437.5; the device-pass chilli (713 g, salt 3.02)
+ * previewed 2.99 untouched and wrote 1.68 at 400 g instead of 1.6942. The
+ * rate is now exact, and the Per 100g tiles round it for display only
+ * (macros.ts per100DisplayPlaces). But even an exact rate, divided and
+ * multiplied back, misses the stored value at display precision on about 1
+ * row in 25, so the edit path doesn't use it at all: it scales the row's
+ * own stored values (entryEdit.ts scaleStoredMacros).
  *
- * Which is why bundles snapshot MealEntry → meal_composition_items DIRECTLY and
- * never come through here. If you find yourself routing a bundle through
- * FoodProduct, stop.
+ * Bundles do the same — they snapshot MealEntry → meal_composition_items
+ * DIRECTLY and never come through here. If you find yourself routing a
+ * bundle or an edit through FoodProduct, stop.
  */
 export function mealEntryToProduct(e: MealEntry): FoodProduct | null {
   if (e.serving_g == null || e.serving_g <= 0) return null;
@@ -115,14 +142,15 @@ export function mealEntryToProduct(e: MealEntry): FoodProduct | null {
   return {
     name: e.name,
     brand: e.brand ?? "",
-    cal_per100: Math.round(per100(e.calories)!),
-    protein_per100: +per100(e.protein)!.toFixed(1),
-    carbs_per100: +per100(e.carbs)!.toFixed(1),
-    fat_per100: +per100(e.fat)!.toFixed(1),
-    sat_fat_per100: satFat100 != null ? +satFat100.toFixed(1) : undefined,
-    salt_per100: salt100 != null ? +salt100.toFixed(2) : undefined,
-    fibre_per100: fibre100 != null ? +fibre100.toFixed(1) : undefined,
-    sugar_per100: sugar100 != null ? +sugar100.toFixed(1) : undefined,
+    // Exact — no rounding (PL-010). The tiles round for display.
+    cal_per100: per100(e.calories)!,
+    protein_per100: per100(e.protein)!,
+    carbs_per100: per100(e.carbs)!,
+    fat_per100: per100(e.fat)!,
+    sat_fat_per100: satFat100,
+    salt_per100: salt100,
+    fibre_per100: fibre100,
+    sugar_per100: sugar100,
     barcode: e.barcode ?? undefined,
     off_id: e.off_id ?? undefined,
 
@@ -133,7 +161,7 @@ export function mealEntryToProduct(e: MealEntry): FoodProduct | null {
     image_url: e.image_url ?? undefined,
     image_path: e.image_path ?? undefined,
     custom_food_id: e.custom_food_id ?? undefined,
-    source: e.source === "custom" ? "custom" : "off",
+    source: productSourceForEntry(e),
     // PL-059: a lower bound rebuilt into a rate is still a lower bound.
     incomplete_nutrients: e.incomplete_nutrients ?? undefined,
   };

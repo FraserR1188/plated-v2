@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { filterSavedIngredients, savedIngredientToProduct } from "../library";
 import type { SavedIngredientScored } from "../../types";
+import { isOpenFoodFactsSourced } from "../../content/attributions";
 
 function makeItem(
   overrides: Partial<SavedIngredientScored> = {},
@@ -107,5 +108,20 @@ describe("savedIngredientToProduct (My Library → FoodProduct, for logging and 
       barcode: undefined,
       off_id: undefined,
     });
+  });
+});
+
+describe("PL-060: a My Library item keeps OFF attribution", () => {
+  // saved_ingredients has no source and no custom_food_id column, so a
+  // library item can never be PROVEN custom; it keeps the notice.
+  it("with an off_id, a barcode only, or neither", () => {
+    for (const over of [
+      { off_id: "3017620422003", barcode: "3017620422003" },
+      { off_id: null, barcode: "5000000000001" },
+      { off_id: null, barcode: null },
+    ]) {
+      const p = savedIngredientToProduct(makeItem(over));
+      expect(isOpenFoodFactsSourced(p.source), JSON.stringify(over)).toBe(true);
+    }
   });
 });

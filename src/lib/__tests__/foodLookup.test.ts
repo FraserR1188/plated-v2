@@ -5,6 +5,7 @@ import {
   customFoodToProduct,
 } from "../foodLookup";
 import { MealEntry, CustomFood } from "../../types";
+import { isOpenFoodFactsSourced } from "../../content/attributions";
 import { supabase } from "../supabase";
 import { useStore } from "../../store/useStore";
 
@@ -90,18 +91,27 @@ describe("mealEntryToProduct", () => {
     expect(mealEntryToProduct(makeEntry({ serving_g: -5 }))).toBeNull();
   });
 
-  it("reconstructs per-100g values from the per-serving snapshot", () => {
-    // 250g at 437 kcal → 174.8 kcal/100g, rounded to 175.
+  it("reconstructs EXACT per-100g values from the per-serving snapshot — no rounding (PL-010)", () => {
+    // 250g at 437 kcal → 174.8 kcal/100g. It used to be rounded to 175, and
+    // the edit screen multiplied that back out to 437.5.
     const product = mealEntryToProduct(makeEntry())!;
     expect(product).not.toBeNull();
-    expect(product.cal_per100).toBe(175);
-    expect(product.protein_per100).toBe(5); // 12.5 / 250 * 100
-    expect(product.carbs_per100).toBe(24); // 60 / 250 * 100
-    expect(product.fat_per100).toBe(3.2); // 8 / 250 * 100
-    expect(product.sat_fat_per100).toBe(0.8);
-    expect(product.salt_per100).toBe(0.5); // toFixed(2)
-    expect(product.fibre_per100).toBe(2.4);
-    expect(product.sugar_per100).toBe(1.6);
+    expect(product.cal_per100).toBe((437 / 250) * 100);
+    expect(product.cal_per100).not.toBe(175);
+    expect(product.protein_per100).toBe((12.5 / 250) * 100);
+    expect(product.carbs_per100).toBe((60 / 250) * 100);
+    expect(product.fat_per100).toBe((8 / 250) * 100);
+    expect(product.sat_fat_per100).toBe((2 / 250) * 100);
+    expect(product.salt_per100).toBe((1.25 / 250) * 100);
+    expect(product.fibre_per100).toBe((6 / 250) * 100);
+    expect(product.sugar_per100).toBe((4 / 250) * 100);
+  });
+
+  it("PL-010 device chilli: 3.02 g salt at 713 g is 0.4236 g/100g, not 0.42", () => {
+    const product = mealEntryToProduct(makeEntry({ serving_g: 713, calories: 481, salt: 3.02 }))!;
+    expect(product.salt_per100).toBe((3.02 / 713) * 100);
+    expect(product.salt_per100).not.toBe(0.42);
+    expect(product.cal_per100).not.toBe(67);
   });
 
   it("preserves NULL small-macros as undefined, not zero, through the per-100g reconstruction", () => {
@@ -143,9 +153,57 @@ describe("mealEntryToProduct", () => {
     expect(product.source).toBe("custom");
   });
 
-  it("maps every non-custom source to 'off'", () => {
-    const product = mealEntryToProduct(makeEntry({ source: "barcode" }))!;
-    expect(product.source).toBe("off");
+});
+
+// ─── PL-060: the edit screen's source notice ───────────────────────────
+//
+// mealEntryToProduct mapped every non-custom source to "off", so editing a
+// batch or AI-photo entry said "Source: Open Food Facts (ODbL)". The two
+// mistakes are not equal: an OFF notice on non-OFF food is harmless, but
+// losing it on OFF-derived food breaks ODbL §4.3 attribution. Hosted data
+// (2026-11-18) has NULL off_id rows in every source group, up to this week,
+// so off_id alone can't decide. The rule errs toward OFF:
+//   custom, or any custom_food_id        → custom (no notice)
+//   off_id set                           → OFF
+//   ai_photo, batch                      → non-OFF (no notice)
+//   anything else (search, barcode, bundle, copied, legacy) → OFF
+
+describe("PL-060: which logged entries keep the Open Food Facts notice", () => {
+  const notice = (over: Partial<MealEntry>) =>
+    isOpenFoodFactsSourced(mealEntryToProduct(makeEntry(over))!.source);
+
+  it("non-OFF entries show no notice: ai_photo, batch, custom, custom-linked", () => {
+    expect(notice({ source: "ai_photo" })).toBe(false);
+    expect(notice({ source: "batch" })).toBe(false);
+    expect(notice({ source: "custom", custom_food_id: "cf-1" })).toBe(false);
+    expect(notice({ source: "custom" })).toBe(false);
+    // 45 hosted copied rows carry a custom_food_id: a copy of a custom food.
+    expect(notice({ source: "copied", custom_food_id: "cf-1" })).toBe(false);
+    expect(notice({ source: "bundle", custom_food_id: "cf-1", barcode: "5000000000001" })).toBe(false);
+  });
+
+  it("the non-OFF value is explicit — never undefined, which means OFF", () => {
+    expect(mealEntryToProduct(makeEntry({ source: "ai_photo" }))!.source).toBe("other");
+    expect(mealEntryToProduct(makeEntry({ source: "batch" }))!.source).toBe("other");
+    expect(mealEntryToProduct(makeEntry({ source: "custom" }))!.source).toBe("custom");
+  });
+
+  it("OFF retention: every row that may carry OFF data keeps the notice", () => {
+    // off_id set: OFF, whatever the source says.
+    for (const source of ["barcode", "search", "bundle", "copied"]) {
+      expect(notice({ source, off_id: "3017620422003" }), `${source} + off_id`).toBe(true);
+    }
+    // No off_id and no custom link: kept as OFF (79 barcode, 29 search,
+    // 2 bundle, 65 copied hosted rows), because removing attribution from
+    // OFF data is the mistake that matters.
+    expect(notice({ source: "barcode", barcode: "5000000000001" })).toBe(true);
+    expect(notice({ source: "search" })).toBe(true);
+    expect(notice({ source: "bundle" })).toBe(true);
+    expect(notice({ source: "copied" })).toBe(true);
+    expect(notice({ source: "copied", barcode: "5000000000001" })).toBe(true);
+    // A source this client never writes (legacy "manual", or anything older).
+    expect(notice({ source: "manual" })).toBe(true);
+    expect(notice({ source: "something-older" })).toBe(true);
   });
 });
 

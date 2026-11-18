@@ -538,7 +538,16 @@ export interface DayTotals {
 
 // ─── Custom foods ────────────────────────────────────────────
 
-export type ProductSource = "off" | "custom";
+/**
+ * Where a FoodProduct's numbers came from, for the data-source notice
+ * (content/attributions.ts isOpenFoodFactsSourced).
+ *   "off"    — Open Food Facts. `undefined` means this too (legacy paths).
+ *   "custom" — the user's own custom food.
+ *   "other"  — known NOT to be Open Food Facts: an AI photo estimate, a
+ *              batch. Shows no notice. PL-060: it must be explicit, because
+ *              an absent source reads as OFF.
+ */
+export type ProductSource = "off" | "custom" | "other";
 
 export interface CustomFood {
   id: string;

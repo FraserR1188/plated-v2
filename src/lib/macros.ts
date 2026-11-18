@@ -223,7 +223,7 @@ export function needsManualEntry(product: {
   protein_per100: number;
   carbs_per100: number;
   fat_per100: number;
-  source?: "off" | "custom";
+  source?: "off" | "custom" | "other";
   /** PL-028: which big-four keys OFF had no value for. See missingMacros. */
   missing_macros?: MissingMacro[];
 }): boolean {
@@ -253,7 +253,7 @@ export function canSubmitProduct(
     protein_per100: number;
     carbs_per100: number;
     fat_per100: number;
-    source?: "off" | "custom";
+    source?: "off" | "custom" | "other";
   },
   servingG: number,
   isEditing: boolean,

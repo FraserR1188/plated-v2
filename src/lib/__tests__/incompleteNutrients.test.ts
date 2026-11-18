@@ -13,6 +13,7 @@ import {
   isLowerBound,
   lowerBoundNote,
   missingNutrientLines,
+  trendHeadlineText,
   type NamedIngredient,
 } from "../incompleteNutrients";
 import { getDaySummary } from "../entries";
@@ -80,6 +81,16 @@ describe("atLeast / isLowerBound", () => {
     expect(isLowerBound(undefined, "fibre")).toBe(false);
     expect(isLowerBound(["salt"], "fibre")).toBe(false);
     expect(isLowerBound(["salt", "fibre"], "fibre")).toBe(true);
+  });
+});
+
+describe("trendHeadlineText — the Trends card's big latest-day number", () => {
+  it("prefixes ≥ when the latest point is incomplete", () => {
+    expect(trendHeadlineText("4.2", true)).toBe("≥ 4.2");
+  });
+
+  it("leaves a complete point's number plain", () => {
+    expect(trendHeadlineText("1,850", false)).toBe("1,850");
   });
 });
 

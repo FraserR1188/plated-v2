@@ -188,6 +188,15 @@ describe("TrendChart", () => {
     expect(code).toMatch(/style=\{styles\.title\} numberOfLines=\{2\}/);
   });
 
+  it("PL-059: puts ≥ on the headline number when the latest point is incomplete (drawn hollow), and only then", () => {
+    // Keyed on latest.incomplete, NOT the whole hollow condition: a "today
+    // so far" point is already labelled by the note below it, and calories
+    // can never be incomplete, so ≥ on every soFar headline would be noise.
+    expect(code).toMatch(
+      /trendHeadlineText\(\s*formatNutrientValue\(latest\.value, series\.meta\.unit\),\s*latest\.incomplete,?\s*\)/,
+    );
+  });
+
   it("says which day the headline number belongs to", () => {
     expect(code).toMatch(/latest\.soFar \? "today so far" : shortDay\(latest\.date\)/);
   });

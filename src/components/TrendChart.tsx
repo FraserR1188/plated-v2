@@ -56,6 +56,7 @@ import {
   goalCaption,
   shortDay,
 } from "../lib/trends";
+import { trendHeadlineText } from "../lib/incompleteNutrients";
 import {
   Colors,
   Fonts,
@@ -142,7 +143,10 @@ export function TrendChart({ series, range }: Props) {
         {latest?.value != null && (
           <View style={styles.latestWrap}>
             <Text style={[styles.latest, { color }]} numberOfLines={1}>
-              {formatNutrientValue(latest.value, series.meta.unit)}
+              {trendHeadlineText(
+                formatNutrientValue(latest.value, series.meta.unit),
+                latest.incomplete,
+              )}
               <Text style={styles.unit}> {series.meta.unit}</Text>
             </Text>
             {/* Say WHICH day the headline number is. Without this it reads

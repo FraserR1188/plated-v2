@@ -44,6 +44,17 @@ export function isLowerBound(
 }
 
 /**
+ * The Trends card's headline (the latest day's number). An INCOMPLETE point —
+ * the one drawn hollow for missing or lower-bound data — is an undercount,
+ * so its number reads "≥". Keyed on `incomplete` alone, not the whole hollow
+ * condition: a "today so far" point is already labelled by its own note,
+ * and calories can never be incomplete.
+ */
+export function trendHeadlineText(formatted: string, incomplete: boolean): string {
+  return atLeast(formatted, incomplete);
+}
+
+/**
  * ProductScreen's read-only Per 100g tile value. A per-100g rate rebuilt from
  * a lower bound (mealEntryToProduct on a flagged entry) is a lower bound too,
  * so it gets the same "≥" as the Nutrition preview below it. `column` is the

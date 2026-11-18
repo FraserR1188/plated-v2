@@ -9,8 +9,14 @@
 // ============================================================
 
 import { describe, it, expect } from "vitest";
-import { buildEditPatch, type EditOriginal, type EditState } from "../entryEdit";
-import type { FoodProduct } from "../../types";
+import {
+  buildEditPatch,
+  editPreviewTotals,
+  scaleStoredMacros,
+  type EditOriginal,
+  type EditState,
+} from "../entryEdit";
+import { roundSalt } from "../macros";
 
 const MACRO_KEYS = [
   "calories",
@@ -23,26 +29,23 @@ const MACRO_KEYS = [
   "sugar",
 ];
 
-const product: FoodProduct = {
-  name: "Greek yogurt",
-  brand: "",
-  cal_per100: 97,
-  protein_per100: 9,
-  carbs_per100: 3.9,
-  fat_per100: 5,
-  sat_fat_per100: 3.3,
-  salt_per100: 0.1,
-  fibre_per100: 0,
-  sugar_per100: 3.9,
-};
-
-// The loaded row. eaten_at deliberately carries seconds and milliseconds,
-// as a row logged at "now" does.
+// The loaded row: Greek yogurt at 150 g (97 kcal, 9 g protein … per 100 g).
+// eaten_at deliberately carries seconds and milliseconds, as a row logged
+// at "now" does. PL-010: the row's own eight stored values are what a
+// grams edit scales — never a per-100g rate rebuilt from them.
 const original: EditOriginal = {
   meal_type: "breakfast",
   serving_g: 150,
   eaten_at: "2026-09-20T07:30:42.123+00:00",
   eaten_at_estimated: true,
+  calories: 145.5,
+  protein: 13.5,
+  carbs: 5.85,
+  fat: 7.5,
+  sat_fat: 4.95,
+  salt: 0.15,
+  fibre: 0,
+  sugar: 5.85,
 };
 
 // What handleSubmit resolves an UNTOUCHED time to: the same minute, seconds zeroed.
@@ -53,7 +56,6 @@ const untouched = (over: Partial<EditState> = {}): EditState => ({
   servingText: "150",
   eatenAt: SAME_MINUTE,
   timeTouched: false,
-  product,
   ...over,
 });
 
@@ -92,16 +94,9 @@ describe("buildEditPatch — PL-037: only what changed", () => {
   });
 
   it("serving changed on a row whose small four are NULL → they stay NULL, not 0", () => {
-    const nullSmallFour: FoodProduct = {
-      ...product,
-      sat_fat_per100: undefined,
-      salt_per100: undefined,
-      fibre_per100: undefined,
-      sugar_per100: undefined,
-    };
     const patch = buildEditPatch(
-      original,
-      untouched({ servingText: "200", product: nullSmallFour }),
+      { ...original, sat_fat: null, salt: null, fibre: null, sugar: null },
+      untouched({ servingText: "200" }),
     );
     expect(patch.sat_fat).toBeNull();
     expect(patch.salt).toBeNull();
@@ -146,19 +141,14 @@ describe("buildEditPatch — PL-037: only what changed", () => {
     expect(buildEditPatch(wire, untouched({ servingText: "37.5" }))).toEqual({});
   });
 
-  it("PL-059: a grams change on a lower-bound batch entry rescales from the rate and never touches the flag", () => {
+  it("PL-059: a grams change on a lower-bound batch entry rescales the stored values and never touches the flag", () => {
     // A partial batch, logged at 350 g with salt and fibre as lower bounds,
-    // edited to 175 g. The rate is rebuilt from the stored (partial) values,
-    // so the rescaled numbers are still lower bounds — the row's flag must
-    // survive, which it does only because the patch never names it.
-    const batchRate: FoodProduct = {
-      ...product,
-      salt_per100: 0.2,
-      fibre_per100: 2,
-    };
+    // edited to 175 g. The stored (partial) values are scaled, so the
+    // rescaled numbers are still lower bounds — the row's flag must survive,
+    // which it does only because the patch never names it.
     const patch = buildEditPatch(
-      { ...original, serving_g: 350 },
-      untouched({ servingText: "175", product: batchRate }),
+      { ...original, serving_g: 350, salt: 0.7, fibre: 7 },
+      untouched({ servingText: "175" }),
     );
     expect(patch.salt).toBeCloseTo(0.35);
     expect(patch.fibre).toBeCloseTo(3.5);
@@ -181,5 +171,126 @@ describe("buildEditPatch — PL-037: only what changed", () => {
     void patch.planned;
     expect("date" in patch).toBe(false);
     expect("planned" in patch).toBe(false);
+  });
+});
+
+// ─── PL-010: ratio scaling off the stored values ───────────────────────
+//
+// Device pass 2026-11-18: a chilli entry stored at 713 g, 481 kcal, salt
+// 3.02 g. The edit screen previewed 478 / 2.99 without anything being
+// touched, and a grams edit to 400 g wrote salt 1.68 (a rate rounded to
+// 0.42 × 4) instead of 1.69. Both came from mealEntryToProduct's rounded
+// per-100g rate. The fix copies the bundle pattern (compositions.ts,
+// "Ratio scaling off the item's stored absolute macros"): unchanged grams
+// → the stored values verbatim; otherwise each × (new g / stored g).
+
+const chilli: EditOriginal = {
+  meal_type: "dinner",
+  serving_g: 713,
+  eaten_at: "2026-11-18T18:30:00.000Z",
+  eaten_at_estimated: false,
+  calories: 481,
+  protein: 38.4,
+  carbs: 52.1,
+  fat: 14.7,
+  sat_fat: 5.3,
+  salt: 3.02,
+  fibre: 15.6,
+  sugar: 11.2,
+};
+
+describe("PL-010: the device-pass chilli", () => {
+  it("an unchanged entry previews exactly its stored values: 481 kcal, 3.02 g salt", () => {
+    expect(editPreviewTotals(chilli, 713)).toEqual({
+      calories: 481,
+      protein: 38.4,
+      carbs: 52.1,
+      fat: 14.7,
+      satFat: 5.3,
+      salt: 3.02,
+      fibre: 15.6,
+      sugar: 11.2,
+    });
+  });
+
+  it("a grams edit to 400 g writes salt 3.02 × 400/713 = 1.6942…, which displays as 1.69, not 1.68", () => {
+    const patch = buildEditPatch(
+      chilli,
+      untouched({ mealType: "dinner", servingText: "400", eatenAt: chilli.eaten_at }),
+    );
+    expect(patch.serving_g).toBe(400);
+    expect(patch.salt).toBe(3.02 * (400 / 713));
+    expect(patch.salt).toBeCloseTo(1.6942, 4);
+    expect(roundSalt(patch.salt!)).toBe(1.69);
+    expect(patch.calories).toBe(481 * (400 / 713));
+    // The preview at 400 g shows what will be written.
+    expect(editPreviewTotals(chilli, 400)!.salt).toBe(1.69);
+    expect(editPreviewTotals(chilli, 400)!.calories).toBe(270);
+  });
+});
+
+describe("scaleStoredMacros", () => {
+  it("unchanged grams → the eight stored values verbatim, NULLs included", () => {
+    const row = { ...chilli, fibre: null, sugar: 0 };
+    expect(scaleStoredMacros(row, 713)).toEqual({
+      calories: 481,
+      protein: 38.4,
+      carbs: 52.1,
+      fat: 14.7,
+      sat_fat: 5.3,
+      salt: 3.02,
+      fibre: null,
+      sugar: 0,
+    });
+    // A serving_g that arrives off the wire as a string is still "unchanged".
+    expect(scaleStoredMacros({ ...row, serving_g: "713" as unknown as number }, 713)!.salt).toBe(3.02);
+  });
+
+  it("changed grams → each stored value × (new g / stored g); NULL stays NULL", () => {
+    const s = scaleStoredMacros({ ...chilli, fibre: null }, 356.5)!;
+    expect(s.calories).toBe(481 * (356.5 / 713));
+    expect(s.salt).toBe(3.02 * (356.5 / 713));
+    expect(s.fibre).toBeNull();
+  });
+
+  it("a stored serving_g that is NULL or 0 can't be scaled → null (TodayScreen never opens these for edit)", () => {
+    expect(scaleStoredMacros({ ...chilli, serving_g: null }, 400)).toBeNull();
+    expect(scaleStoredMacros({ ...chilli, serving_g: 0 }, 400)).toBeNull();
+    expect(editPreviewTotals({ ...chilli, serving_g: null }, 400)).toBeNull();
+    // buildEditPatch then sends no serving and no macros, rather than inventing them.
+    const patch = buildEditPatch(
+      { ...chilli, serving_g: null },
+      untouched({ mealType: "dinner", servingText: "400", eatenAt: chilli.eaten_at }),
+    );
+    expect(patch).toEqual({});
+  });
+
+  it("any untouched entry previews at its own display rounding, for 20 000 random rows", () => {
+    // The old path (rate rounded, then × g/100) missed this on most rows;
+    // even an UNROUNDED rate misses it on ~1 in 25 (2.45 → 2.4499…). The
+    // verbatim short-circuit is what makes it exact.
+    let seed = 10;
+    const r = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    for (let i = 0; i < 20000; i++) {
+      const g = Math.round(r() * 1500 * 10) / 10 + 1;
+      const v = (max: number, dp: number) => +(r() * max).toFixed(dp);
+      const row: EditOriginal = {
+        ...chilli,
+        serving_g: g,
+        calories: v(2000, 0),
+        protein: v(150, 1),
+        carbs: v(300, 1),
+        fat: v(120, 1),
+        sat_fat: v(40, 1),
+        salt: v(8, 2),
+        fibre: v(40, 1),
+        sugar: v(90, 1),
+      };
+      const p = editPreviewTotals(row, g)!;
+      expect(p.calories).toBe(Math.round(row.calories));
+      expect(p.protein).toBe(+row.protein.toFixed(1));
+      expect(p.salt).toBe(roundSalt(row.salt!));
+      expect(p.fibre).toBe(+row.fibre!.toFixed(1));
+    }
   });
 });

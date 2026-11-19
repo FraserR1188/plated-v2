@@ -42,6 +42,12 @@ group by 1;
 -- (friends' rows via meal_entries_select_follower). This proves the follower
 -- path is live, so V3's "no own = false row" is a real test, not a vacuous one.
 -- If there is no own = false row here, V3 proves nothing; find out why first.
+-- MEASURED 2026-11-19 (hosted, before the push): own = true 1,486,
+-- own = false 719. Follower path live, so V3 is a real test. V0(a)'s A count
+-- should therefore read 1,486 (plus anything logged since).
+--
+-- Same check against whoop_correlation, MEASURED 2026-11-19: own = true only.
+-- The correlation path doesn't need a view of its own.
 
 
 -- ── V1. OPTIONS — after the push ───────────────────────────────────────────

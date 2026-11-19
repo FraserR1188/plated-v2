@@ -11,6 +11,11 @@
 -- reader's own date|meal_type buckets. MEASURED 2026-11-19 on Robbie's
 -- account at 90 days: 80 own breakfast-days against a panel n of 82, and 5
 -- meal-size dots above 2,000 kcal against 0 such slot-days in user-scoped SQL.
+-- Read directly as `authenticated`, meal_entries returned 1,486 own rows and
+-- 719 friends' rows (MEASURED 2026-11-19).
+--
+-- meal_entries ONLY: whoop_correlation, checked the same way, returned own
+-- rows only (MEASURED 2026-11-19), so the correlation path needs no view.
 --
 -- THE POLICY IS CORRECT AND IS NOT CHANGED HERE. Every app read already
 -- filters explicitly (useStore.ts personal select: .eq("user_id", userId);

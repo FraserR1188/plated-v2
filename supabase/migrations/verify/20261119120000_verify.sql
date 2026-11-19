@@ -34,6 +34,7 @@ where user_id in ('a8435663-72e9-4d33-9c3f-803c4cbda393',
                   '03f2f56a-d923-4acc-8a21-044deec280f7')
 group by 1;
 -- Expect: two rows. Record both counts; V3 and V4 must equal them exactly.
+-- MEASURED 2026-11-19 (hosted): A 1,486; FRIEND 42.
 
 -- (b) As A, the BASE TABLE: the path the dashboard used to read.
 --   select user_id = 'a8435663-72e9-4d33-9c3f-803c4cbda393'::uuid as own, count(*)
@@ -55,6 +56,7 @@ select relname, reloptions
 from pg_class
 where relname = 'my_meal_entries' and relkind = 'v';
 -- Expect: one row, reloptions = {security_invoker=on}.
+-- MEASURED 2026-11-19 (hosted, after push): {security_invoker=on}. PASS.
 
 
 -- ── V2. COLUMNS ────────────────────────────────────────────────────────────
@@ -64,6 +66,8 @@ where table_schema = 'public' and table_name = 'my_meal_entries';
 -- Expect exactly: id, user_id, name, brand, barcode, off_id, custom_food_id,
 -- source, date, meal_type, calories, protein, carbs, fat, planned,
 -- confirmed_at (16). No eaten_at, logged_at or eaten_at_estimated.
+-- MEASURED 2026-11-19 (hosted): 16 columns exactly as listed, no clock-time
+-- columns. PASS.
 
 
 -- ── V3. SCOPING, as A ──────────────────────────────────────────────────────
@@ -72,12 +76,16 @@ where table_schema = 'public' and table_name = 'my_meal_entries';
 -- Expect: ONE row, own = true, count = V0(a)'s A count exactly. Any
 -- own = false row fails the migration. A count below V0(a) means the view
 -- lost own rows (it must not: it adds a WHERE, it doesn't add a gate).
+-- MEASURED 2026-11-19 (hosted): one row, own = true, 1,486 = V0(a). No
+-- own = false row, where the base table in V0(b) gave 719 under the same
+-- role and claims. PASS. This is the check that proves the fix.
 
 
 -- ── V4. SCOPING, as FRIEND ─────────────────────────────────────────────────
 -- Same query as V3, impersonating FRIEND_USER, comparing against FRIEND_USER's id.
 -- Expect: one row, own = true, count = V0(a)'s FRIEND count. Proves the view
 -- scopes to whoever is calling, not to a fixed user.
+-- MEASURED 2026-11-19 (hosted): one row, own = true, 42 = V0(a). PASS.
 
 
 -- ── V5. ANON ───────────────────────────────────────────────────────────────
@@ -85,6 +93,7 @@ where table_schema = 'public' and table_name = 'my_meal_entries';
 --   select count(*) from public.my_meal_entries;
 --   rollback;
 -- Expect: ERROR 42501 permission denied for view my_meal_entries.
+-- MEASURED 2026-11-19 (hosted): 42501. PASS.
 
 
 -- ── V6. READ-ONLY, as A ────────────────────────────────────────────────────
@@ -95,6 +104,7 @@ where table_schema = 'public' and table_name = 'my_meal_entries';
 --   update public.my_meal_entries set name = name where false;
 --   delete from public.my_meal_entries where false;
 -- Expect: each ERROR 42501 permission denied for view my_meal_entries.
+-- MEASURED 2026-11-19 (hosted): insert, update and delete all refused. PASS.
 
 select grantee, string_agg(privilege_type, ', ' order by privilege_type)
 from information_schema.role_table_grants
@@ -103,6 +113,7 @@ group by 1 order by 1;
 -- Expect: authenticated = SELECT only; no anon row. postgres (owner) holds
 -- all privileges; service_role may too via default privileges. That's
 -- harmless: with no JWT sub, auth.uid() is null and the WHERE returns nothing.
+-- MEASURED 2026-11-19 (hosted): authenticated = SELECT only; no anon row. PASS.
 
 
 -- ── V7. DASHBOARD PARITY, as A ─────────────────────────────────────────────
@@ -114,12 +125,15 @@ group by 1 order by 1;
 --     and meal_type = 'breakfast' and date::date >= current_date - 90;
 -- Expect: equal to the same query run as postgres against meal_entries with
 -- `user_id = A` on the same day (80 on 2026-11-19; it moves with the window).
+-- MEASURED: not reported with the 2026-11-19 run. Re-run alongside the
+-- dashboard checklist; the panel's breakfast n must equal it.
 --
 --   select count(*) as slot_days_over_2000 from (
 --     select date, meal_type from public.my_meal_entries
 --     where planned = false or confirmed_at is not null
 --     group by 1, 2 having sum(calories) > 2000) s;
 -- Expect: 0 (MEASURED 0 via user-scoped SQL as postgres, 2026-11-19).
+-- MEASURED 2026-11-19 (hosted, through the view as A): 0. PASS.
 
 
 -- ============================================================================
@@ -128,8 +142,10 @@ group by 1 order by 1;
 -- ============================================================================
 -- [ ] Signed in as A, 90 days: "Meal size by slot" shows no dot above 2,000.
 -- [ ] Breakfast n equals V7's breakfast_days_90.
--- [ ] Habits strip "entries eaten" and "days logged" match the phase 2
---     render-check EXPECTED values (plated/web docs/dashboard-brief-phase2.md).
+-- [ ] Range All: habits strip reads 1,470 entries eaten and 124 days logged;
+--     the most-logged footnote reads 192 of 1,470 (13%). (EXPECTED from
+--     user-scoped SQL 2026-11-19; full table in plated/web
+--     docs/dashboard-brief-phase2.md.)
 -- [ ] Sign out, sign in as FRIEND_USER (or any account following A): only
 --     that account's foods appear in "Most-logged foods"; none of A's.
 -- [ ] After signing out of the dashboard, the phone app is still signed in
